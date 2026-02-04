@@ -1,8 +1,51 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/hooks/useAuth';
-import { Mail, Lock, ArrowRight, Eye, EyeOff, Zap } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Eye, EyeOff, XCircle, AlertCircle } from 'lucide-react';
+
+// Modal Dialog Component (Simplified - only error and info)
+interface DialogProps {
+  isOpen: boolean;
+  type: 'error' | 'info';
+  title: string;
+  message: string;
+  onClose: () => void;
+}
+
+const DialogModal = ({ isOpen, type, title, message, onClose }: DialogProps) => {
+  if (!isOpen) return null;
+
+  const iconColor = type === 'error' ? 'text-red-500' : 'text-blue-500';
+  const bgColor = type === 'error' ? 'bg-red-50' : 'bg-blue-50';
+  const borderColor = type === 'error' ? 'border-red-200' : 'border-blue-200';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
+      <div className={`w-full max-w-md rounded-2xl ${bgColor} border ${borderColor} shadow-2xl transform transition-all duration-300 scale-100 animate-scaleIn`}>
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className={`${iconColor} flex-shrink-0`}>
+              {type === 'error' ? <XCircle size={28} /> : <AlertCircle size={28} />}
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">{title}</h3>
+              <p className="text-gray-600">{message}</p>
+            </div>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              onClick={onClose}
+              className="px-6 py-2.5 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors duration-300"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function SignIn() {
   const [formData, setFormData] = useState({
@@ -10,193 +53,238 @@ export default function SignIn() {
     password: '',
   });
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [dialog, setDialog] = useState<{
+    isOpen: boolean;
+    type: 'error' | 'info';
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    type: 'error',
+    title: '',
+    message: ''
+  });
 
-  const { login } = useAuth();
+  const { login, user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Handle redirect when user state updates
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      console.log('✅ User authenticated, redirecting based on role:', user.userType);
+      setLoading(false); // Stop loading
+      
+      // Immediate redirect - no delay
+      if (user.userType === 'admin') {
+        navigate('/dashboard/admin', { replace: true });
+      } else {
+        navigate('/dashboard/teacher', { replace: true });
+      }
+    }
+  }, [isAuthenticated, user, navigate]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
-    setError('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setLoading(true);
 
     if (!formData.email || !formData.password) {
-      setError('Please fill in all fields');
+      setDialog({
+        isOpen: true,
+        type: 'error',
+        title: 'Missing Information',
+        message: 'Please enter both email and password'
+      });
+      setLoading(false);
       return;
     }
 
-    setLoading(true);
-    
     try {
-      // Simulate login delay
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // In a real app, you would validate credentials against a backend
-      // For demo purposes, we'll accept any non-empty email/password
-      const newUser = {
-        id: Date.now().toString(),
-        email: formData.email,
-        name: formData.email.split('@')[0],
-        userType: 'teacher' as const,
-      };
-
-      login(newUser);
-      navigate('/dashboard/teacher');
-    } catch (err) {
-      setError('Sign in failed. Please try again.');
-    } finally {
+      await login(formData.email, formData.password);
+      // Auth state will update and useEffect will handle redirect
+      // Don't setLoading(false) here - the useEffect will handle it
+    } catch (err: any) {
+      setDialog({
+        isOpen: true,
+        type: 'error',
+        title: 'Login Failed',
+        message: err.message || 'Unable to sign in. Please check your credentials.'
+      });
       setLoading(false);
     }
   };
 
-  const handleDemoLogin = async (userType: 'admin' | 'teacher') => {
-    setLoading(true);
-    setError('');
+  const handleDialogClose = () => {
+    setDialog(prev => ({ ...prev, isOpen: false }));
+  };
 
-    try {
-      // Simulate login delay
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      const demoUser = {
-        id: '1',
-        email: userType === 'admin' ? 'admin@school.edu' : 'teacher@school.edu',
-        name: userType === 'admin' ? 'Principal Smith' : 'Mr. Johnson',
-        userType: userType,
-        subjects: userType === 'admin' ? undefined : ['Mathematics', 'Physics'],
-      };
-
-      login(demoUser);
-      navigate(userType === 'admin' ? '/dashboard/admin' : '/dashboard/teacher');
-    } catch (err) {
-      setError('Demo login failed. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+  const handleForgotPassword = () => {
+    setDialog({
+      isOpen: true,
+      type: 'info',
+      title: 'Forgot Password',
+      message: 'Please contact your school administrator to reset your password.'
+    });
   };
 
   return (
-    <Layout className="flex items-center justify-center py-8 sm:py-12 px-4">
-      <div className="w-full max-w-md">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-2">Welcome Back</h1>
-          <p className="text-gray-600">Sign in to your account</p>
-        </div>
-
-        {/* Demo Login Buttons */}
-        <div className="space-y-3 mb-8">
-          <button
-            onClick={() => handleDemoLogin('admin')}
-            disabled={loading}
-            className="w-full p-4 border-2 border-blue-300 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 font-semibold flex items-center justify-center gap-2 group"
-          >
-            <Zap size={18} />
-            <span>Demo: Admin Account</span>
-          </button>
-          <button
-            onClick={() => handleDemoLogin('teacher')}
-            disabled={loading}
-            className="w-full p-4 border-2 border-gray-300 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 font-semibold flex items-center justify-center gap-2 group"
-          >
-            <Zap size={18} />
-            <span>Demo: Teacher Account</span>
-          </button>
-        </div>
-
-        {/* Divider */}
-        <div className="relative mb-8">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-300" />
+    <>
+      <DialogModal
+        isOpen={dialog.isOpen}
+        type={dialog.type}
+        title={dialog.title}
+        message={dialog.message}
+        onClose={handleDialogClose}
+      />
+      
+      <Layout className="flex items-center justify-center min-h-screen py-4 px-4">
+        <div className="w-full max-w-md mx-auto">
+          {/* Compact Header for Mobile */}
+          <div className="text-center mb-8">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
+              Welcome Back
+            </h1>
+            <p className="text-gray-600 text-sm sm:text-base">
+              Sign in to KalaboBoarding-SRS
+            </p>
           </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-3 bg-white text-gray-500">Or sign in with your account</span>
-          </div>
-        </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Error Message */}
-          {error && (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-red-700 text-sm font-medium">{error}</p>
+          {/* Success message from signup redirect - Compact */}
+          {location.state?.message && (
+            <div className="mb-6 p-4 bg-green-50 rounded-xl border border-green-200 animate-fadeIn">
+              <div className="flex items-start gap-3">
+                <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-green-700 text-sm font-medium mb-1">Account Created!</p>
+                  <p className="text-green-600 text-xs">
+                    {location.state.message}
+                    {location.state?.email && (
+                      <span className="block mt-1">Email: {location.state.email}</span>
+                    )}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* Email */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Email Address
-            </label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-3.5 text-gray-400" size={20} />
-              <input
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                placeholder="your@email.com"
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-              />
+          {/* Main Form Card */}
+          <div className="bg-white rounded-2xl shadow-lg p-6 sm:p-8 border border-gray-100">
+            <div className="mb-6">
+              <h2 className="text-xl font-bold text-gray-900 text-center">Sign In</h2>
             </div>
-          </div>
 
-          {/* Password */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-3.5 text-gray-400" size={20} />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                name="password"
-                value={formData.password}
-                onChange={handleChange}
-                placeholder="Enter your password"
-                className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-              />
+            {/* Form */}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Email */}
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Email Address
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                  <input
+                    type="email"
+                    name="email"
+                    value={formData.email}
+                    onChange={handleChange}
+                    placeholder="your@email.com"
+                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    required
+                    disabled={loading}
+                    autoComplete="email"
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    name="password"
+                    value={formData.password}
+                    onChange={handleChange}
+                    placeholder="Enter your password"
+                    className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    required
+                    disabled={loading}
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-3.5 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+                    disabled={loading}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Forgot Password Link */}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors"
+                  onClick={handleForgotPassword}
+                >
+                  Forgot password?
+                </button>
+              </div>
+
+              {/* Submit Button */}
               <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-3.5 text-gray-400 hover:text-gray-600 transition-colors"
+                type="submit"
+                disabled={loading}
+                className="w-full mt-4 py-3.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold rounded-xl hover:from-blue-700 hover:to-blue-800 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2 group relative shadow-md hover:shadow-lg"
               >
-                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                {loading ? (
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                    <span>Signing In...</span>
+                  </div>
+                ) : (
+                  <>
+                    <span>Sign In</span>
+                    <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                  </>
+                )}
               </button>
+            </form>
+
+            {/* Sign Up Link */}
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <div className="text-center">
+                <p className="text-gray-600 text-sm">
+                  Don't have an account?{' '}
+                  <Link 
+                    to="/signup" 
+                    className="text-blue-600 font-semibold hover:text-blue-700 transition-colors inline-flex items-center gap-1 group"
+                  >
+                    <span>Create one</span>
+                    <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                  </Link>
+                </p>
+              </div>
             </div>
           </div>
-
-          {/* Submit Button */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full mt-6 py-3.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 group"
-          >
-            {loading ? 'Signing In...' : 'Sign In'}
-            {!loading && <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />}
-          </button>
-        </form>
-
-        {/* Sign Up Link */}
-        <p className="text-center text-gray-600 mt-6">
-          Don't have an account?{' '}
-          <Link to="/signup" className="text-blue-600 font-semibold hover:text-blue-700">
-            Create one
-          </Link>
-        </p>
-
-        {/* Demo Info */}
-        <div className="mt-8 p-4 bg-amber-50 rounded-lg border border-amber-200">
-          <p className="text-sm text-amber-700">
-            <span className="font-semibold">Demo Mode:</span> Click the demo buttons above to test the app with sample admin or teacher accounts. For custom accounts, sign up with your email.
-          </p>
         </div>
-      </div>
-    </Layout>
+      </Layout>
+    </>
   );
 }
