@@ -1,5 +1,6 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import { useResultsAnalytics } from '@/hooks/useResults';
 import {
   Filter,
   TrendingUp,
@@ -18,10 +19,11 @@ import {
   Maximize2,
   Smartphone,
   Tablet,
-  Monitor
+  Monitor,
+  Loader2
 } from 'lucide-react';
 
-// Dynamically import chart components for code splitting (React.lazy instead of Next.js dynamic)
+// Dynamically import chart components for code splitting
 const ResponsiveContainer = lazy(() => 
   import('recharts').then(mod => ({ default: mod.ResponsiveContainer }))
 );
@@ -30,6 +32,9 @@ const BarChart = lazy(() =>
 );
 const LineChart = lazy(() => 
   import('recharts').then(mod => ({ default: mod.LineChart }))
+);
+const PieChart = lazy(() => 
+  import('recharts').then(mod => ({ default: mod.PieChart }))
 );
 const Pie = lazy(() => 
   import('recharts').then(mod => ({ default: mod.Pie }))
@@ -59,19 +64,11 @@ const Line = lazy(() =>
   import('recharts').then(mod => ({ default: mod.Line }))
 );
 
-// Or alternatively, import all at once for better performance
-const ChartFallback = () => (
-  <div className="flex items-center justify-center h-full">
-    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-  </div>
-);
-
 // ==================== TYPES & INTERFACES ====================
 interface GradeDistribution {
-  grade: string;
+  grade: number;
   count: number;
   percentage: number;
-  color: string;
   description: string;
 }
 
@@ -114,8 +111,8 @@ const ChartSkeleton = () => (
 );
 
 const StatsSkeleton = () => (
-  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-    {[1, 2, 3, 4].map((i) => (
+  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+    {[1, 2, 3, 4, 5].map((i) => (
       <div key={i} className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
         <div className="h-4 bg-gray-200 rounded w-24 mb-4"></div>
         <div className="h-8 bg-gray-300 rounded w-20 mb-2"></div>
@@ -189,171 +186,31 @@ const ChartContainer = ({
   );
 };
 
-// ==================== MOBILE-FRIENDLY CHART COMPONENTS ====================
-interface MobileChartProps {
-  data: any[];
-  type: 'bar' | 'line' | 'pie';
-  dataKey: string;
-  height?: number;
-  colors?: string[];
-}
-
-const MobileBarChart = ({ data, dataKey, height = 200, colors = ['#3b82f6'] }: MobileChartProps) => {
-  if (!data || data.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full text-gray-400">
-        No data available
-      </div>
-    );
-  }
-
-  const maxValue = Math.max(...data.map(item => item[dataKey]));
-  
-  return (
-    <div className="h-full flex flex-col">
-      <div className="flex-1 flex items-end gap-1 sm:gap-2 px-2">
-        {data.map((item, index) => {
-          const heightPercentage = (item[dataKey] / maxValue) * 90;
-          return (
-            <div key={index} className="flex-1 flex flex-col items-center">
-              <div
-                className="w-full rounded-t-lg transition-all duration-300 hover:opacity-90"
-                style={{
-                  height: `${heightPercentage}%`,
-                  backgroundColor: colors[index % colors.length],
-                  minHeight: '4px'
-                }}
-                title={`${item[dataKey]}`}
-              />
-              <div className="mt-2 text-xs text-gray-500 truncate max-w-full px-1 text-center">
-                {item.month || item.class || item.grade || item.subject}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="text-xs text-gray-400 text-center mt-4">
-        Tap bars for details
-      </div>
-    </div>
-  );
-};
-
-const MobileLineChart = ({ data, dataKey, height = 200 }: MobileChartProps) => {
-  if (!data || data.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full text-gray-400">
-        No data available
-      </div>
-    );
-  }
-
-  const values = data.map(item => item[dataKey]);
-  const maxValue = Math.max(...values);
-  const minValue = Math.min(...values);
-  const range = maxValue - minValue;
-
-  const points = data.map((item, index) => {
-    const x = (index / (data.length - 1)) * 100;
-    const y = 100 - ((item[dataKey] - minValue) / range) * 100;
-    return `${x}% ${y}%`;
-  }).join(', ');
-
-  return (
-    <div className="h-full relative">
-      <div className="absolute inset-4">
-        <svg viewBox="0 0 100 100" className="w-full h-full">
-          {/* Grid lines */}
-          <line x1="0" y1="25" x2="100" y2="25" stroke="#e5e7eb" strokeWidth="0.5" />
-          <line x1="0" y1="50" x2="100" y2="50" stroke="#e5e7eb" strokeWidth="0.5" />
-          <line x1="0" y1="75" x2="100" y2="75" stroke="#e5e7eb" strokeWidth="0.5" />
-          
-          {/* Line */}
-          <polyline
-            points={points}
-            fill="none"
-            stroke="#3b82f6"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          
-          {/* Points */}
-          {data.map((item, index) => {
-            const x = (index / (data.length - 1)) * 100;
-            const y = 100 - ((item[dataKey] - minValue) / range) * 100;
-            return (
-              <circle
-                key={index}
-                cx={x}
-                cy={y}
-                r="2"
-                fill="#3b82f6"
-                stroke="#ffffff"
-                strokeWidth="1.5"
-              />
-            );
-          })}
-        </svg>
-      </div>
-      <div className="absolute bottom-0 left-0 right-0 flex justify-between text-xs text-gray-500 px-2">
-        {data.map((item, index) => (
-          <span key={index} className="truncate max-w-[60px] sm:max-w-[80px] text-center">
-            {item.month || item.class || item.grade || item.subject}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-};
-
 // ==================== MAIN COMPONENT ====================
 export default function AdminResultsAnalysis() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [selectedClass, setSelectedClass] = useState('all');
-  const [selectedPeriod, setSelectedPeriod] = useState('semester');
+  const [selectedClass, setSelectedClass] = useState<string>('all');
+  const [selectedSubject, setSelectedSubject] = useState<string>('all');
+  const [selectedTerm, setSelectedTerm] = useState<string>('Term 2');
+  const [selectedYear, setSelectedYear] = useState<number>(2024);
   const [viewMode, setViewMode] = useState<'desktop' | 'mobile' | 'tablet'>('desktop');
   const [showDetails, setShowDetails] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [chartsLoaded, setChartsLoaded] = useState(false);
 
-  // Mock data
-  const gradeDistribution: GradeDistribution[] = useMemo(() => [
-    { grade: 'A', count: 145, percentage: 18, color: '#10b981', description: 'Excellent' },
-    { grade: 'B', count: 210, percentage: 28, color: '#3b82f6', description: 'Good' },
-    { grade: 'C', count: 280, percentage: 35, color: '#f59e0b', description: 'Average' },
-    { grade: 'D', count: 95, percentage: 12, color: '#ef4444', description: 'Below Average' },
-    { grade: 'E', count: 45, percentage: 6, color: '#8b5cf6', description: 'Poor' },
-  ], []);
-
-  const performanceTrend: PerformanceTrend[] = useMemo(() => [
-    { month: 'Jan', passRate: 72, avgMarks: 58, improvement: 'up' },
-    { month: 'Feb', passRate: 75, avgMarks: 61, improvement: 'up' },
-    { month: 'Mar', passRate: 78, avgMarks: 64, improvement: 'up' },
-    { month: 'Apr', passRate: 80, avgMarks: 66, improvement: 'stable' },
-    { month: 'May', passRate: 82, avgMarks: 68, improvement: 'up' },
-    { month: 'Jun', passRate: 85, avgMarks: 71, improvement: 'up' },
-  ], []);
-
-  const classComparison: ClassPerformance[] = useMemo(() => [
-    { class: 'Form 4A', form: '4', passRate: 88, avgMarks: 72, totalStudents: 35, improvement: 12 },
-    { class: 'Form 4B', form: '4', passRate: 82, avgMarks: 68, totalStudents: 32, improvement: 8 },
-    { class: 'Form 3A', form: '3', passRate: 85, avgMarks: 70, totalStudents: 38, improvement: 15 },
-    { class: 'Form 3B', form: '3', passRate: 80, avgMarks: 66, totalStudents: 36, improvement: 10 },
-    { class: 'Form 2A', form: '2', passRate: 78, avgMarks: 64, totalStudents: 40, improvement: 5 },
-    { class: 'Form 1A', form: '1', passRate: 75, avgMarks: 61, totalStudents: 42, improvement: 3 },
-  ], []);
-
-  const subjectAnalysis: SubjectAnalysis[] = useMemo(() => [
-    { subject: 'Mathematics', passRate: 92, avgScore: 78, topGrade: 'A', difficulty: 'medium' },
-    { subject: 'English', passRate: 88, avgScore: 75, topGrade: 'B+', difficulty: 'easy' },
-    { subject: 'Science', passRate: 85, avgScore: 72, topGrade: 'B', difficulty: 'hard' },
-    { subject: 'History', passRate: 90, avgScore: 76, topGrade: 'A-', difficulty: 'easy' },
-    { subject: 'Geography', passRate: 87, avgScore: 74, topGrade: 'B+', difficulty: 'medium' },
-  ], []);
-
-  const classes = ['Form 4A', 'Form 4B', 'Form 3A', 'Form 3B', 'Form 2A', 'Form 1A'];
-  const periods = ['week', 'month', 'quarter', 'semester', 'year'];
+  // Use the analytics hook with real data
+  const { 
+    analytics, 
+    results, 
+    classComparison: realClassComparison,
+    isLoading, 
+    isFetching, 
+    refetch 
+  } = useResultsAnalytics({
+    classId: selectedClass !== 'all' ? selectedClass : undefined,
+    subjectId: selectedSubject !== 'all' ? selectedSubject : undefined,
+    term: selectedTerm,
+    year: selectedYear,
+  });
 
   // Check mobile on mount and resize
   useEffect(() => {
@@ -368,23 +225,206 @@ export default function AdminResultsAnalysis() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Simulate loading
+  // Simulate chart loading
   useEffect(() => {
     const timer = setTimeout(() => {
-      setIsLoading(false);
       setChartsLoaded(true);
-    }, 1500);
+    }, 1000);
     return () => clearTimeout(timer);
   }, []);
 
-  // Summary statistics
-  const summaryStats = useMemo(() => ({
-    totalStudents: classComparison.reduce((sum, cls) => sum + cls.totalStudents, 0),
-    averagePassRate: Math.round(classComparison.reduce((sum, cls) => sum + cls.passRate, 0) / classComparison.length),
-    averageScore: Math.round(classComparison.reduce((sum, cls) => sum + cls.avgMarks, 0) / classComparison.length),
-    topGrades: gradeDistribution.find(g => g.grade === 'A')?.count || 0,
-    overallTrend: performanceTrend[performanceTrend.length - 1].improvement,
-  }), [classComparison, gradeDistribution, performanceTrend]);
+  // Calculate grade distribution from real results
+  const gradeDistribution = useMemo((): GradeDistribution[] => {
+    if (!results || results.length === 0) return [];
+
+    const gradeCounts = new Map<number, number>();
+    
+    // Initialize all grades 1-9
+    for (let i = 1; i <= 9; i++) {
+      gradeCounts.set(i, 0);
+    }
+
+    // Count each grade (only end of term results)
+    results
+      .filter(r => r.examType === 'endOfTerm' && r.grade > 0)
+      .forEach(result => {
+        gradeCounts.set(result.grade, (gradeCounts.get(result.grade) || 0) + 1);
+      });
+
+    const total = results.filter(r => r.examType === 'endOfTerm' && r.grade > 0).length;
+
+    return Array.from(gradeCounts.entries()).map(([grade, count]) => ({
+      grade,
+      count,
+      percentage: total > 0 ? Math.round((count / total) * 100) : 0,
+      description: getGradeDescription(grade),
+    })).filter(g => g.count > 0);
+  }, [results]);
+
+  // Calculate performance trend from real results
+  const performanceTrend = useMemo((): PerformanceTrend[] => {
+    if (!results || results.length === 0) return [];
+
+    const examTypes = ['week4', 'week8', 'endOfTerm'] as const;
+    const examLabels = {
+      week4: 'Week 4',
+      week8: 'Week 8',
+      endOfTerm: 'End of Term',
+    };
+
+    const trendData = examTypes.map(examType => {
+      const examResults = results.filter(r => r.examType === examType && r.percentage >= 0);
+      const totalPercentage = examResults.reduce((sum, r) => sum + r.percentage, 0);
+      const avgMarks = examResults.length > 0 ? Math.round(totalPercentage / examResults.length) : 0;
+      const passRate = examResults.length > 0 
+        ? Math.round((examResults.filter(r => r.percentage >= 50).length / examResults.length) * 100)
+        : 0;
+
+      return {
+        month: examLabels[examType],
+        avgMarks,
+        passRate,
+        improvement: 'stable' as const,
+      };
+    });
+
+    // Add improvement indicators
+    return trendData.map((data, index) => {
+      if (index === 0) return data;
+      
+      const prevData = trendData[index - 1];
+      const avgDiff = data.avgMarks - prevData.avgMarks;
+      const passDiff = data.passRate - prevData.passRate;
+      
+      let improvement: 'up' | 'down' | 'stable' = 'stable';
+      if (avgDiff > 2 || passDiff > 3) improvement = 'up';
+      else if (avgDiff < -2 || passDiff < -3) improvement = 'down';
+      
+      return { ...data, improvement };
+    });
+  }, [results]);
+
+  // Use real class comparison data
+  const classComparison = useMemo((): ClassPerformance[] => {
+    if (!realClassComparison || realClassComparison.length === 0) return [];
+
+    return realClassComparison.map(cls => ({
+      class: cls.className,
+      form: cls.form,
+      passRate: cls.passRate,
+      avgMarks: cls.avgMarks,
+      totalStudents: cls.totalStudents,
+      improvement: cls.improvement || 0,
+    }));
+  }, [realClassComparison]);
+
+  // Calculate subject analysis from results
+  const subjectAnalysis = useMemo((): SubjectAnalysis[] => {
+    if (!results || results.length === 0) return [];
+
+    const subjectMap = new Map<string, {
+      subject: string;
+      percentages: number[];
+      grades: number[];
+    }>();
+
+    // Group results by subject
+    results
+      .filter(r => r.examType === 'endOfTerm' && r.percentage >= 0)
+      .forEach(result => {
+        if (!subjectMap.has(result.subjectName)) {
+          subjectMap.set(result.subjectName, {
+            subject: result.subjectName,
+            percentages: [],
+            grades: [],
+          });
+        }
+        
+        const subject = subjectMap.get(result.subjectName)!;
+        subject.percentages.push(result.percentage);
+        subject.grades.push(result.grade);
+      });
+
+    return Array.from(subjectMap.values()).map(subject => {
+      const avgScore = subject.percentages.length > 0 
+        ? Math.round(subject.percentages.reduce((a, b) => a + b, 0) / subject.percentages.length)
+        : 0;
+      
+      const passRate = subject.percentages.length > 0
+        ? Math.round((subject.percentages.filter(p => p >= 50).length / subject.percentages.length) * 100)
+        : 0;
+      
+      // Get most frequent grade
+      const gradeCounts = new Map<number, number>();
+      subject.grades.forEach(grade => {
+        gradeCounts.set(grade, (gradeCounts.get(grade) || 0) + 1);
+      });
+      
+      let topGrade = 'N/A';
+      let maxCount = 0;
+      gradeCounts.forEach((count, grade) => {
+        if (count > maxCount) {
+          maxCount = count;
+          topGrade = grade.toString();
+        }
+      });
+
+      // Determine difficulty based on average score
+      let difficulty: 'easy' | 'medium' | 'hard' = 'medium';
+      if (avgScore >= 70) difficulty = 'easy';
+      else if (avgScore <= 40) difficulty = 'hard';
+
+      return {
+        subject: subject.subject,
+        passRate,
+        avgScore,
+        topGrade,
+        difficulty,
+      };
+    }).sort((a, b) => b.passRate - a.passRate); // Sort by pass rate descending
+  }, [results]);
+
+  // Summary statistics from real analytics
+  const summaryStats = useMemo(() => {
+    if (!analytics) return {
+      totalStudents: 0,
+      averagePassRate: 0,
+      averageScore: 0,
+      topGrades: 0,
+      overallTrend: 'stable' as const,
+      averagePercentage: 0,
+      passRate: 0,
+      topGrade: 'N/A',
+    };
+
+    // Calculate top grades count (grades 1-2)
+    const topGradesCount = gradeDistribution
+      .filter(g => g.grade <= 2)
+      .reduce((sum, g) => sum + g.count, 0);
+
+    // Determine overall trend
+    let overallTrend: 'up' | 'down' | 'stable' = 'stable';
+    if (performanceTrend.length >= 2) {
+      const last = performanceTrend[performanceTrend.length - 1];
+      const first = performanceTrend[0];
+      const avgDiff = last.avgMarks - first.avgMarks;
+      const passDiff = last.passRate - first.passRate;
+      
+      if (avgDiff > 5 || passDiff > 5) overallTrend = 'up';
+      else if (avgDiff < -5 || passDiff < -5) overallTrend = 'down';
+    }
+
+    return {
+      totalStudents: analytics.totalStudents || 0,
+      averagePassRate: Math.round(classComparison.reduce((sum, cls) => sum + cls.passRate, 0) / Math.max(classComparison.length, 1)),
+      averageScore: analytics.averagePercentage || 0,
+      topGrades: topGradesCount,
+      overallTrend,
+      averagePercentage: analytics.averagePercentage || 0,
+      passRate: analytics.passRate || 0,
+      topGrade: analytics.topGrade || 'N/A',
+    };
+  }, [analytics, gradeDistribution, performanceTrend, classComparison]);
 
   const getImprovementIcon = (improvement: string) => {
     switch (improvement) {
@@ -403,39 +443,160 @@ export default function AdminResultsAnalysis() {
     }
   };
 
+  const getGradeColor = (grade: number): string => {
+    if (grade <= 2) return 'bg-green-100 text-green-700';
+    if (grade <= 4) return 'bg-blue-100 text-blue-700';
+    if (grade <= 6) return 'bg-cyan-100 text-cyan-700';
+    if (grade <= 8) return 'bg-yellow-100 text-yellow-700';
+    return 'bg-red-100 text-red-700';
+  };
+
+  // Get unique classes and subjects for filters
+  const classes = useMemo(() => {
+    if (!realClassComparison || realClassComparison.length === 0) return [];
+    return Array.from(new Set(realClassComparison.map(c => c.className))).sort();
+  }, [realClassComparison]);
+
+  const subjects = useMemo(() => {
+    if (!subjectAnalysis || subjectAnalysis.length === 0) return [];
+    return Array.from(new Set(subjectAnalysis.map(s => s.subject))).sort();
+  }, [subjectAnalysis]);
+
+  const periods = ['week', 'month', 'quarter', 'semester', 'year'];
+
+  const ChartFallback = () => (
+    <div className="flex items-center justify-center h-full">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    </div>
+  );
+
+  // Render chart by view mode
   const renderChartByViewMode = (type: 'bar' | 'line' | 'pie', data: any[], dataKey: string, colors?: string[]) => {
     if (isMobile || viewMode === 'mobile') {
-      switch (type) {
-        case 'bar':
-          return <MobileBarChart data={data} type="bar" dataKey={dataKey} colors={colors} />;
-        case 'line':
-          return <MobileLineChart data={data} type="line" dataKey={dataKey} />;
-        case 'pie':
-          // For pie charts on mobile, show simple list with percentages
-          return (
-            <div className="space-y-4">
-              {data.map((item, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div 
-                      className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: colors?.[index] || '#3b82f6' }}
+      // Simple mobile charts (same as before but using real data)
+      if (!data || data.length === 0) {
+        return (
+          <div className="flex items-center justify-center h-full text-gray-400">
+            No data available
+          </div>
+        );
+      }
+
+      if (type === 'bar') {
+        const maxValue = Math.max(...data.map(item => item[dataKey]));
+        
+        return (
+          <div className="h-full flex flex-col">
+            <div className="flex-1 flex items-end gap-1 sm:gap-2 px-2">
+              {data.map((item, index) => {
+                const heightPercentage = (item[dataKey] / maxValue) * 90;
+                return (
+                  <div key={index} className="flex-1 flex flex-col items-center">
+                    <div
+                      className="w-full rounded-t-lg transition-all duration-300 hover:opacity-90"
+                      style={{
+                        height: `${heightPercentage}%`,
+                        backgroundColor: colors?.[index] || '#3b82f6',
+                        minHeight: '4px'
+                      }}
+                      title={`${item[dataKey]}${dataKey.includes('Rate') || dataKey.includes('Marks') ? '%' : ''}`}
                     />
-                    <span className="font-medium text-gray-900">{item.grade || item.subject}</span>
+                    <div className="mt-2 text-xs text-gray-500 truncate max-w-full px-1 text-center">
+                      {item.month || item.class || item.grade || item.subject}
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <div className="font-bold text-gray-900">{item.percentage || item.passRate}%</div>
-                    <div className="text-sm text-gray-500">{item.count || item.avgScore} {item.count ? 'students' : 'avg score'}</div>
-                  </div>
-                </div>
+                );
+              })}
+            </div>
+            <div className="text-xs text-gray-400 text-center mt-4">
+              Tap bars for details
+            </div>
+          </div>
+        );
+      }
+
+      if (type === 'line') {
+        const values = data.map(item => item[dataKey]);
+        const maxValue = Math.max(...values);
+        const minValue = Math.min(...values);
+        const range = maxValue - minValue;
+
+        const points = data.map((item, index) => {
+          const x = (index / (data.length - 1)) * 100;
+          const y = 100 - ((item[dataKey] - minValue) / range) * 100;
+          return `${x}% ${y}%`;
+        }).join(', ');
+
+        return (
+          <div className="h-full relative">
+            <div className="absolute inset-4">
+              <svg viewBox="0 0 100 100" className="w-full h-full">
+                <line x1="0" y1="25" x2="100" y2="25" stroke="#e5e7eb" strokeWidth="0.5" />
+                <line x1="0" y1="50" x2="100" y2="50" stroke="#e5e7eb" strokeWidth="0.5" />
+                <line x1="0" y1="75" x2="100" y2="75" stroke="#e5e7eb" strokeWidth="0.5" />
+                
+                <polyline
+                  points={points}
+                  fill="none"
+                  stroke="#3b82f6"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                
+                {data.map((item, index) => {
+                  const x = (index / (data.length - 1)) * 100;
+                  const y = 100 - ((item[dataKey] - minValue) / range) * 100;
+                  return (
+                    <circle
+                      key={index}
+                      cx={x}
+                      cy={y}
+                      r="2"
+                      fill="#3b82f6"
+                      stroke="#ffffff"
+                      strokeWidth="1.5"
+                    />
+                  );
+                })}
+              </svg>
+            </div>
+            <div className="absolute bottom-0 left-0 right-0 flex justify-between text-xs text-gray-500 px-2">
+              {data.map((item, index) => (
+                <span key={index} className="truncate max-w-[60px] sm:max-w-[80px] text-center">
+                  {item.month || item.class || item.grade || item.subject}
+                </span>
               ))}
             </div>
-          );
+          </div>
+        );
+      }
+
+      if (type === 'pie') {
+        return (
+          <div className="space-y-4">
+            {data.map((item, index) => (
+              <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div 
+                    className="w-3 h-3 rounded-full"
+                    style={{ backgroundColor: colors?.[index] || '#3b82f6' }}
+                  />
+                  <span className="font-medium text-gray-900">{item.grade || item.subject}</span>
+                </div>
+                <div className="text-right">
+                  <div className="font-bold text-gray-900">{item.percentage || item.passRate}%</div>
+                  <div className="text-sm text-gray-500">{item.count || item.avgScore} {item.count ? 'students' : 'avg score'}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
       }
     }
 
     // Desktop/Tablet view with Recharts
-    if (!chartsLoaded) {
+    if (!chartsLoaded || isLoading) {
       return <ChartFallback />;
     }
 
@@ -524,20 +685,47 @@ export default function AdminResultsAnalysis() {
               />
             </LineChart>
           ) : type === 'pie' ? (
-            <>
-              {/* We need to use the Pie component as a child of PieChart */}
-              {/* Since we can't create a PieChart component dynamically, we'll use a different approach */}
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center">
-                  <div className="text-gray-400 mb-2">Pie Chart Loading...</div>
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                </div>
-              </div>
-            </>
+            <PieChart>
+              <Pie
+                data={data}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                label={({ grade, percentage }: any) => `${grade} (${percentage}%)`}
+                outerRadius={100}
+                fill="#8884d8"
+                dataKey="count"
+              >
+                {data.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={colors?.[index] || '#3b82f6'} />
+                ))}
+              </Pie>
+              <Tooltip 
+                formatter={(value: number, name: string, props: any) => [
+                  `${value} students (${props.payload.percentage}%)`,
+                  `Grade ${props.payload.grade} - ${props.payload.description}`
+                ]}
+                contentStyle={{ 
+                  borderRadius: '8px',
+                  border: '1px solid #e5e7eb',
+                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                }}
+              />
+              <Legend />
+            </PieChart>
           ) : null}
         </ResponsiveContainer>
       </Suspense>
     );
+  };
+
+  // Helper function to get grade description
+  const getGradeDescription = (grade: number): string => {
+    if (grade === 1 || grade === 2) return 'Distinction';
+    if (grade === 3 || grade === 4) return 'Merit';
+    if (grade === 5 || grade === 6) return 'Credit';
+    if (grade === 7 || grade === 8) return 'Satisfactory';
+    return 'Fail';
   };
 
   if (isLoading) {
@@ -570,10 +758,10 @@ export default function AdminResultsAnalysis() {
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl lg:text-4xl">
-                Results Analysis
+                Admin Results Analysis
               </h1>
               <p className="text-gray-600 mt-2 text-sm sm:text-base">
-                Comprehensive performance analytics and insights
+                Comprehensive performance analytics and insights across all classes
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -601,6 +789,14 @@ export default function AdminResultsAnalysis() {
                 </button>
               </div>
               <button
+                onClick={() => refetch()}
+                disabled={isFetching}
+                className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+              >
+                <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+              <button
                 onClick={() => setShowDetails(!showDetails)}
                 className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
               >
@@ -627,14 +823,14 @@ export default function AdminResultsAnalysis() {
             </div>
             <div className="flex items-center gap-1 mt-2">
               <TrendingUp size={14} className="text-green-500" />
-              <span className="text-xs text-green-600">+5% from last term</span>
+              <span className="text-xs text-green-600">School-wide</span>
             </div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow">
             <p className="text-gray-600 font-medium text-sm">Avg Pass Rate</p>
             <div className="flex items-baseline gap-2 mt-2">
               <p className="text-2xl sm:text-3xl font-bold text-green-600">{summaryStats.averagePassRate}%</p>
-              <span className="text-sm text-gray-500">school-wide</span>
+              <span className="text-sm text-gray-500">across all classes</span>
             </div>
             <div className="flex items-center gap-1 mt-2">
               {getImprovementIcon(summaryStats.overallTrend)}
@@ -649,25 +845,32 @@ export default function AdminResultsAnalysis() {
             </div>
             <div className="flex items-center gap-1 mt-2">
               <TrendingUp size={14} className="text-green-500" />
-              <span className="text-xs text-green-600">+3.2% improvement</span>
+              <span className="text-xs text-green-600">Term {selectedTerm}</span>
             </div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow">
-            <p className="text-gray-600 font-medium text-sm">Top Grades (A)</p>
+            <p className="text-gray-600 font-medium text-sm">Top Grades (1-2)</p>
             <div className="flex items-baseline gap-2 mt-2">
               <p className="text-2xl sm:text-3xl font-bold text-purple-600">{summaryStats.topGrades}</p>
               <span className="text-sm text-gray-500">students</span>
             </div>
-            <p className="text-xs text-gray-500 mt-2">{gradeDistribution[0].percentage}% of total</p>
+            <p className="text-xs text-gray-500 mt-2">
+              {summaryStats.totalStudents > 0 
+                ? Math.round((summaryStats.topGrades / summaryStats.totalStudents) * 100) 
+                : 0}% of total
+            </p>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow">
             <p className="text-gray-600 font-medium text-sm">Success Rate</p>
             <div className="flex items-baseline gap-2 mt-2">
-              <p className="text-2xl sm:text-3xl font-bold text-amber-600">94%</p>
+              <p className="text-2xl sm:text-3xl font-bold text-amber-600">{summaryStats.passRate}%</p>
               <span className="text-sm text-gray-500">passing</span>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-              <div className="bg-green-500 h-2 rounded-full" style={{ width: '94%' }} />
+              <div 
+                className="bg-green-500 h-2 rounded-full" 
+                style={{ width: `${summaryStats.passRate}%` }} 
+              />
             </div>
           </div>
         </div>
@@ -675,7 +878,7 @@ export default function AdminResultsAnalysis() {
         {/* Filters */}
         <div className="mb-8 bg-white rounded-2xl border border-gray-200 p-4 sm:p-6 shadow-sm">
           <div className="flex flex-col lg:flex-row lg:items-center gap-6">
-            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   <Filter size={16} className="inline mr-2" />
@@ -695,36 +898,46 @@ export default function AdminResultsAnalysis() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   <Filter size={16} className="inline mr-2" />
-                  Time Period
+                  Filter by Subject
                 </label>
                 <select
-                  value={selectedPeriod}
-                  onChange={e => setSelectedPeriod(e.target.value)}
+                  value={selectedSubject}
+                  onChange={e => setSelectedSubject(e.target.value)}
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
                 >
-                  {periods.map(period => (
-                    <option key={period} value={period}>
-                      {period.charAt(0).toUpperCase() + period.slice(1)}
-                    </option>
+                  <option value="all">All Subjects</option>
+                  {subjects.map(subject => (
+                    <option key={subject} value={subject}>{subject}</option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <Filter size={16} className="inline mr-2" />
-                  View Type
+                  Term
                 </label>
-                <div className="flex items-center gap-2">
-                  <button className="p-2 text-blue-600 bg-blue-50 rounded-lg">
-                    <BarChart3 size={18} />
-                  </button>
-                  <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
-                    <LineChartIcon size={18} />
-                  </button>
-                  <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
-                    <PieChartIcon size={18} />
-                  </button>
-                </div>
+                <select
+                  value={selectedTerm}
+                  onChange={e => setSelectedTerm(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                >
+                  <option value="Term 1">Term 1</option>
+                  <option value="Term 2">Term 2</option>
+                  <option value="Term 3">Term 3</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Year
+                </label>
+                <select
+                  value={selectedYear}
+                  onChange={e => setSelectedYear(Number(e.target.value))}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                >
+                  <option value={2024}>2024</option>
+                  <option value={2025}>2025</option>
+                  <option value={2026}>2026</option>
+                </select>
               </div>
             </div>
             {showDetails && (
@@ -735,6 +948,13 @@ export default function AdminResultsAnalysis() {
               </div>
             )}
           </div>
+          <div className="mt-4 text-sm text-gray-600">
+            <p>
+              Showing: {selectedClass === 'all' ? 'All Classes' : selectedClass} • 
+              {selectedSubject === 'all' ? ' All Subjects' : ` ${selectedSubject}`} • 
+              {` ${selectedTerm}, ${selectedYear}`}
+            </p>
+          </div>
         </div>
 
         {/* Charts Grid */}
@@ -742,20 +962,25 @@ export default function AdminResultsAnalysis() {
           {/* Performance Trend */}
           <ChartContainer
             title="Performance Trend"
-            description="Monthly progression of pass rates and average marks"
+            description="Progression of pass rates and average marks across assessments"
             isLoading={isLoading}
+            onRefresh={() => refetch()}
           >
             {renderChartByViewMode('line', performanceTrend, 'passRate')}
           </ChartContainer>
 
           {/* Grade Distribution */}
           <ChartContainer
-            title="Grade Distribution"
+            title="Grade Distribution (1-9 Scale)"
             description="Spread of student performance across grades"
             isLoading={isLoading}
+            onRefresh={() => refetch()}
             className="lg:col-span-2"
           >
-            {renderChartByViewMode('pie', gradeDistribution, 'count', ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'])}
+            {renderChartByViewMode('pie', gradeDistribution, 'count', [
+              '#10b981', '#059669', '#3b82f6', '#2563eb', '#06b6d4', 
+              '#0891b2', '#f59e0b', '#ea580c', '#ef4444'
+            ])}
           </ChartContainer>
 
           {/* Class Comparison */}
@@ -763,12 +988,13 @@ export default function AdminResultsAnalysis() {
             title="Class Performance Comparison"
             description="Pass rates across different classes and forms"
             isLoading={isLoading}
+            onRefresh={() => refetch()}
           >
             {renderChartByViewMode('bar', classComparison, 'passRate')}
           </ChartContainer>
 
           {/* Subject Analysis (Only show on desktop/tablet) */}
-          {(viewMode !== 'mobile') && (
+          {(viewMode !== 'mobile' && subjectAnalysis.length > 0) && (
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="p-6 border-b border-gray-100">
                 <h3 className="text-lg font-bold text-gray-900">Subject Analysis</h3>
@@ -803,7 +1029,7 @@ export default function AdminResultsAnalysis() {
                         </td>
                         <td className="px-6 py-4 font-medium text-gray-900">{subject.avgScore}%</td>
                         <td className="px-6 py-4">
-                          <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
+                          <span className={`px-3 py-1 rounded-full text-sm font-medium ${getGradeColor(parseInt(subject.topGrade) || 9)}`}>
                             {subject.topGrade}
                           </span>
                         </td>
@@ -831,51 +1057,86 @@ export default function AdminResultsAnalysis() {
             <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
               <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Insights</h3>
               <div className="space-y-4">
-                <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-green-600">
-                      <TrendingUp size={20} />
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-gray-900">Strong Performance</h4>
-                      <p className="text-sm text-gray-600">Math pass rate at 92% - highest among subjects</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
-                      <BarChart3 size={20} />
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-gray-900">Grade Distribution</h4>
-                      <p className="text-sm text-gray-600">35% of students achieved C grade - largest group</p>
+                {summaryStats.topGrades > 0 && (
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-green-600">
+                        <TrendingUp size={20} />
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-gray-900">Strong Performance</h4>
+                        <p className="text-sm text-gray-600">
+                          {summaryStats.topGrades} students achieved Distinction grades (1-2)
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center text-amber-600">
-                      <Info size={20} />
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-gray-900">Attention Needed</h4>
-                      <p className="text-sm text-gray-600">6% of students (45) received E grade - needs intervention</p>
+                )}
+                {gradeDistribution.length > 0 && (
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+                        <BarChart3 size={20} />
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-gray-900">Grade Distribution</h4>
+                        <p className="text-sm text-gray-600">
+                          {gradeDistribution.reduce((sum, g) => sum + g.count, 0)} students assessed
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
+                {subjectAnalysis.length > 0 && (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center text-amber-600">
+                        <Info size={20} />
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-gray-900">Top Subject</h4>
+                        <p className="text-sm text-gray-600">
+                          {subjectAnalysis[0]?.subject}: {subjectAnalysis[0]?.passRate}% pass rate
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
         </div>
 
+        {/* Empty State */}
+        {results.length === 0 && !isLoading && (
+          <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center">
+            <div className="text-gray-400 mb-4">
+              <BarChart3 className="w-16 h-16 mx-auto" />
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No Results Data</h3>
+            <p className="text-gray-600 mb-6">
+              No results have been entered for the selected filters. Check back after teachers have entered results.
+            </p>
+            <div className="text-sm text-gray-500">
+              <p>Make sure:</p>
+              <ul className="mt-2 space-y-1">
+                <li>• Teachers have entered results for the selected term</li>
+                <li>• The correct year and term are selected</li>
+                <li>• Results use the correct exam types (Week 4, Week 8, End of Term)</li>
+              </ul>
+            </div>
+          </div>
+        )}
+
         {/* Footer Actions */}
         <div className="mt-8 pt-6 border-t border-gray-200">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="text-sm text-gray-600">
-              <span className="font-medium">Last updated:</span> Today, 11:45 AM
+              <span className="font-medium">Last updated:</span> Just now
               <span className="mx-2">•</span>
               <span className="font-medium">View:</span> {viewMode.charAt(0).toUpperCase() + viewMode.slice(1)}
+              <span className="mx-2">•</span>
+              <span className="font-medium">Data:</span> {results.length} records
             </div>
             <div className="flex items-center gap-3">
               <button className="text-sm text-blue-600 hover:text-blue-800 font-medium">

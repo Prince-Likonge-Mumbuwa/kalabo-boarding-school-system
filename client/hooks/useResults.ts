@@ -1,4 +1,4 @@
-// @/hooks/useResults.ts
+// @/hooks/useResults.ts - UPDATED EXAM TYPES
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { resultsService, StudentResult, ReportCardData } from '@/services/resultsService';
 
@@ -59,7 +59,7 @@ export const useResults = (options?: {
       subjectId: options?.subjectId,
       term: options?.term,
       year: options?.year,
-      examType: options?.examType,
+      examType: options?.examType as 'week4' | 'week8' | 'endOfTerm' | undefined,
     }),
     enabled: shouldFetchAllResults,
     staleTime: 2 * 60 * 1000,
@@ -72,7 +72,7 @@ export const useResults = (options?: {
     ? studentResultsQuery.data
     : allResultsQuery.data;
 
-  // Mutation: Save class results
+  // Mutation: Save class results - UPDATED EXAM TYPES
   const saveResultsMutation = useMutation({
     mutationFn: (data: {
       classId: string;
@@ -81,7 +81,7 @@ export const useResults = (options?: {
       subjectName: string;
       teacherId: string;
       teacherName: string;
-      examType: 'test' | 'midterm' | 'final' | 'assignment';
+      examType: 'week4' | 'week8' | 'endOfTerm'; // CHANGED HERE
       examName: string;
       term: string;
       year: number;

@@ -1,4 +1,4 @@
-// @/pages/teacher/ResultsEntry.tsx - UPDATED WITH DYNAMIC SUBJECTS
+// @/pages/teacher/ResultsEntry.tsx - UPDATED WITH CORRECT EXAM TYPES
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo } from 'react';
 import { Save, Upload, AlertCircle, Loader2, Users, BookOpen } from 'lucide-react';
@@ -45,7 +45,8 @@ export default function ResultsEntry() {
 
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
-  const [examType, setExamType] = useState<'test' | 'midterm' | 'final' | 'assignment'>('test');
+  // UPDATED: Changed exam type to match resultsService.ts
+  const [examType, setExamType] = useState<'week4' | 'week8' | 'endOfTerm'>('week4');
   const [examName, setExamName] = useState('');
   const [totalMarks, setTotalMarks] = useState(100);
   const [term, setTerm] = useState('Term 1');
@@ -58,11 +59,11 @@ export default function ResultsEntry() {
   // Use the results hook
   const { saveResults, isSaving } = useResults();
 
+  // UPDATED: Exam types to match resultsService.ts (week4, week8, endOfTerm)
   const examTypes = [
-    { value: 'test', label: 'Test' },
-    { value: 'midterm', label: 'Midterm Exam' },
-    { value: 'final', label: 'Final Exam' },
-    { value: 'assignment', label: 'Assignment' },
+    { value: 'week4', label: 'Week 4 Assessment', description: 'First monthly assessment' },
+    { value: 'week8', label: 'Week 8 Assessment', description: 'Mid-term assessment' },
+    { value: 'endOfTerm', label: 'End of Term Exam', description: 'Final term examination' },
   ];
 
   // NEW: Get subjects for the selected class
@@ -181,14 +182,15 @@ export default function ResultsEntry() {
     }
 
     try {
-      const { success, failed } = await saveResults({
+      // UPDATED: examType is now the correct type that matches resultsService.ts
+      await saveResults({
         classId: selectedClass,
         className: selectedClassData.name,
         subjectId: selectedSubject,
         subjectName: selectedSubject,
         teacherId: user.id,
         teacherName: user.name || user.email || 'Unknown',
-        examType,
+        examType, // This now matches the expected type
         examName: examName.trim(),
         term,
         year,
@@ -196,7 +198,7 @@ export default function ResultsEntry() {
         results,
       });
 
-      alert(`Results saved successfully! ${success} students processed, ${failed} failed.`);
+      alert(`Results saved successfully for ${results.length} students!`);
       
       // Clear marks but keep students list
       setStudents(students.map(s => ({ ...s, marks: '' })));
@@ -216,20 +218,20 @@ export default function ResultsEntry() {
   const filledCount = students.filter(s => s.marks && s.marks !== '').length;
   const totalStudents = students.length;
 
+  // UPDATED: This function should match the 1-9 grading system from resultsService.ts
   const getGrade = (marks: number): string => {
     const percentage = (marks / totalMarks) * 100;
-    if (percentage >= 90) return 'A+';
-    if (percentage >= 85) return 'A';
-    if (percentage >= 80) return 'A-';
-    if (percentage >= 75) return 'B+';
-    if (percentage >= 70) return 'B';
-    if (percentage >= 65) return 'B-';
-    if (percentage >= 60) return 'C+';
-    if (percentage >= 55) return 'C';
-    if (percentage >= 50) return 'C-';
-    if (percentage >= 45) return 'D+';
-    if (percentage >= 40) return 'D';
-    return 'F';
+    
+    // Convert to 1-9 scale like resultsService.ts does
+    if (percentage >= 75) return '1 (Distinction)';
+    if (percentage >= 70) return '2 (Distinction)';
+    if (percentage >= 65) return '3 (Merit)';
+    if (percentage >= 60) return '4 (Merit)';
+    if (percentage >= 55) return '5 (Credit)';
+    if (percentage >= 50) return '6 (Credit)';
+    if (percentage >= 45) return '7 (Satisfactory)';
+    if (percentage >= 40) return '8 (Satisfactory)';
+    return '9 (Fail)';
   };
 
   if (loadingClasses || loadingAssignments) {
@@ -389,14 +391,19 @@ export default function ResultsEntry() {
             <label className="block text-sm font-medium text-gray-700 mb-2">Exam Type *</label>
             <select
               value={examType}
-              onChange={e => setExamType(e.target.value as any)}
+              onChange={e => setExamType(e.target.value as 'week4' | 'week8' | 'endOfTerm')}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
               disabled={!selectedClass}
             >
               {examTypes.map(type => (
-                <option key={type.value} value={type.value}>{type.label}</option>
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
               ))}
             </select>
+            <p className="text-xs text-gray-500 mt-1">
+              {examTypes.find(t => t.value === examType)?.description}
+            </p>
           </div>
 
           <div className="lg:col-span-2">
@@ -405,7 +412,7 @@ export default function ResultsEntry() {
               type="text"
               value={examName}
               onChange={e => setExamName(e.target.value)}
-              placeholder="e.g., Test 1, Midterm Examination, Final Assessment"
+              placeholder={`e.g., ${examTypes.find(t => t.value === examType)?.label} - ${selectedSubject || 'Subject'}`}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
               disabled={!selectedClass}
             />
@@ -473,6 +480,7 @@ export default function ResultsEntry() {
                   {selectedSubject && (
                     <span className="ml-2 text-blue-600">• Subject: {selectedSubject}</span>
                   )}
+                  <span className="ml-2 text-blue-600">• Exam: {examTypes.find(t => t.value === examType)?.label}</span>
                 </div>
               </div>
             </div>
@@ -484,7 +492,7 @@ export default function ResultsEntry() {
                     <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Student ID</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Marks (out of {totalMarks})</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Percentage</th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Grade</th>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Grade (1-9 Scale)</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Status</th>
                   </tr>
                 </thead>
@@ -520,10 +528,10 @@ export default function ResultsEntry() {
                         <td className="px-6 py-4">
                           {marksNum !== null ? (
                             <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                              grade.startsWith('A') ? 'bg-green-100 text-green-700' :
-                              grade.startsWith('B') ? 'bg-blue-100 text-blue-700' :
-                              grade.startsWith('C') ? 'bg-yellow-100 text-yellow-700' :
-                              grade.startsWith('D') ? 'bg-orange-100 text-orange-700' :
+                              grade.startsWith('1') || grade.startsWith('2') ? 'bg-green-100 text-green-700' :
+                              grade.startsWith('3') || grade.startsWith('4') ? 'bg-blue-100 text-blue-700' :
+                              grade.startsWith('5') || grade.startsWith('6') ? 'bg-yellow-100 text-yellow-700' :
+                              grade.startsWith('7') || grade.startsWith('8') ? 'bg-orange-100 text-orange-700' :
                               'bg-red-100 text-red-700'
                             }`}>
                               {grade}
@@ -597,10 +605,11 @@ export default function ResultsEntry() {
           </div>
         )}
 
-        {/* Help Text */}
+        {/* Help Text - UPDATED FOR 1-9 GRADING SYSTEM */}
         <div className="text-sm text-gray-500 mt-4">
-          <p>• <strong>Grade Scale:</strong> A+ (90-100%), A (85-89%), A- (80-84%), B+ (75-79%), B (70-74%), B- (65-69%), C+ (60-64%), C (55-59%), C- (50-54%), D+ (45-49%), D (40-44%), F (0-39%)</p>
-          <p className="mt-1">• <strong>Passing Mark:</strong> 50% or higher of total marks</p>
+          <p>• <strong>1-9 Grading Scale:</strong> 1-2 (Distinction: 70-100%), 3-4 (Merit: 60-69%), 5-6 (Credit: 50-59%), 7-8 (Satisfactory: 40-49%), 9 (Fail: 0-39%)</p>
+          <p className="mt-1">• <strong>Passing Mark:</strong> 50% or higher (Grade 6 or better)</p>
+          <p className="mt-1">• <strong>Exam Types:</strong> Week 4 (first assessment), Week 8 (mid-term), End of Term (final exam)</p>
           <p className="mt-1">• All fields marked with * are required</p>
           <p className="mt-1">• Subjects shown are based on your class assignments configured by the administrator</p>
         </div>
