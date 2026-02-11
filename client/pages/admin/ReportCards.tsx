@@ -1,8 +1,11 @@
+// @/pages/admin/ReportCards.tsx - FULLY REWRITTEN WITH PROPER INTEGRATION
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
-import { useReportCards } from '@/hooks/useResults';
+import { useReportCards, useReportReadiness } from '@/hooks/useResults';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
+import { useSchoolLearners } from '@/hooks/useSchoolLearners';
+import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useAuth } from '@/hooks/useAuth';
 import {
   Download,
@@ -24,6 +27,11 @@ import {
   Calendar,
   Users,
   Award,
+  AlertTriangle,
+  Info,
+  RefreshCw,
+  User,
+  GraduationCap
 } from 'lucide-react';
 
 // ==================== TYPES & INTERFACES ====================
@@ -35,8 +43,10 @@ interface SubjectResult {
   week4: number;
   week8: number;
   endOfTerm: number;
-  grade: number; // 1-9 scale
+  grade: number;
   comment: string;
+  isComplete: boolean;
+  missingExams: string[];
 }
 
 interface StudentReportCard {
@@ -46,7 +56,7 @@ interface StudentReportCard {
   className: string;
   classId: string;
   form: string;
-  grade: number; // Overall grade 1-9
+  grade: number;
   position: string;
   gender: string;
   totalMarks: number;
@@ -60,9 +70,10 @@ interface StudentReportCard {
   generatedDate: string;
   term: string;
   year: number;
+  isComplete: boolean;
+  completionPercentage: number;
 }
 
-// ==================== GRADING SYSTEM (1-9 SCALE) ====================
 const GRADE_SYSTEM = {
   1: { min: 75, max: 100, description: 'Distinction', color: 'bg-gradient-to-r from-green-500 to-emerald-600', textColor: 'text-green-600' },
   2: { min: 70, max: 74, description: 'Distinction', color: 'bg-gradient-to-r from-green-400 to-green-500', textColor: 'text-green-600' },
@@ -102,7 +113,6 @@ const getGradeComment = (grade: number): string => {
   return comments[gradeKey] || 'Performance assessment pending.';
 };
 
-// ==================== SKELETON COMPONENTS ====================
 const CardSkeleton = () => (
   <div className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
     <div className="flex items-start justify-between mb-4">
@@ -122,31 +132,37 @@ const CardSkeleton = () => (
   </div>
 );
 
-// ==================== MODAL COMPONENTS ====================
-interface ReportDetailModalProps {
+// ==================== MISSING DATA MODAL ====================
+interface MissingDataModalProps {
   isOpen: boolean;
   onClose: () => void;
-  reportCard: StudentReportCard | null;
-  onAction: (action: 'download' | 'email' | 'print' | 'share', studentId: string) => void;
+  classReadiness: any;
+  teacherAssignments: any[];
 }
 
-const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDetailModalProps) => {
-  if (!isOpen || !reportCard) return null;
-
-  const gradeInfo = getGradeInfo(reportCard.grade);
+const MissingDataModal = ({ isOpen, onClose, classReadiness, teacherAssignments }: MissingDataModalProps) => {
+  if (!isOpen || !classReadiness) return null;
+  
+  const incompleteStudents = classReadiness.studentDetails.filter((s: any) => !s.isReady);
+  
+  // Create a map of subject to teacher for quick lookup
+  const subjectTeacherMap = new Map<string, string>();
+  teacherAssignments.forEach(assignment => {
+    subjectTeacherMap.set(assignment.subject, assignment.teacherName || 'Assigned Teacher');
+  });
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="fixed inset-0 bg-black/50 transition-opacity" onClick={onClose} />
-      
       <div className="flex min-h-full items-center justify-center p-4">
         <div className="relative bg-white rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
-          {/* Modal Header */}
           <div className="p-6 border-b border-gray-200">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">Academic Report Card</h2>
-                <p className="text-gray-600">{reportCard.term}, {reportCard.year} • Detailed Performance Report</p>
+                <h2 className="text-2xl font-bold text-gray-900">Missing Results Data</h2>
+                <p className="text-gray-600 mt-1">
+                  {incompleteStudents.length} student{incompleteStudents.length !== 1 ? 's' : ''} have incomplete data
+                </p>
               </div>
               <button
                 onClick={onClose}
@@ -156,18 +172,114 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
               </button>
             </div>
           </div>
-
-          {/* Modal Content */}
           <div className="flex-1 overflow-y-auto p-6">
-            {/* School Header */}
+            <div className="space-y-4">
+              {incompleteStudents.map((student: any) => (
+                <div key={student.studentId} className="bg-yellow-50 border-l-4 border-yellow-500 rounded-r-lg p-4">
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <h3 className="font-semibold text-gray-900">{student.studentName}</h3>
+                      <p className="text-sm text-gray-600">ID: {student.studentId}</p>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-bold text-yellow-700">
+                        {Math.round((student.completeSubjects / student.totalSubjects) * 100)}%
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        {student.completeSubjects}/{student.totalSubjects} subjects
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-gray-700">Missing Data:</p>
+                    {student.missingData.map((missing: any, idx: number) => (
+                      <div key={idx} className="ml-4 p-2 bg-white rounded border border-yellow-200">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <p className="font-medium text-gray-900">{missing.subject}</p>
+                            <p className="text-sm text-gray-600">
+                              Teacher: {subjectTeacherMap.get(missing.subject) || missing.teacherName || 'Not assigned'}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm text-red-600 font-medium">
+                              Missing: {missing.missingExamTypes.join(', ')}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="p-6 border-t border-gray-200 bg-gray-50">
+            <div className="flex justify-between items-center">
+              <p className="text-sm text-gray-600">
+                These students need teachers to complete results entry before accurate reports can be generated.
+              </p>
+              <button
+                onClick={onClose}
+                className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==================== REPORT DETAIL MODAL ====================
+interface ReportDetailModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  reportCard: StudentReportCard | null;
+  onAction: (action: 'download' | 'email' | 'print' | 'share', studentId: string) => void;
+}
+
+const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDetailModalProps) => {
+  if (!isOpen || !reportCard) return null;
+  const gradeInfo = getGradeInfo(reportCard.grade);
+  
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="fixed inset-0 bg-black/50 transition-opacity" onClick={onClose} />
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div className="relative bg-white rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+          <div className="p-6 border-b border-gray-200">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Academic Report Card</h2>
+                <p className="text-gray-600">{reportCard.term}, {reportCard.year} • Detailed Performance Report</p>
+                {!reportCard.isComplete && (
+                  <div className="mt-2 flex items-center gap-2 text-yellow-700">
+                    <AlertTriangle size={16} />
+                    <span className="text-sm font-medium">
+                      Incomplete Data ({reportCard.completionPercentage}% complete)
+                    </span>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6">
             <div className="text-center mb-8 border-b pb-6">
               <h1 className="text-xl font-bold uppercase">Republic of Zambia</h1>
               <h2 className="text-lg font-semibold">Ministry of Education</h2>
               <h3 className="text-lg font-semibold text-blue-600">Kalabo Boarding Secondary School</h3>
               <p className="text-gray-600 mt-2">P.O. Box 110, Kalabo, Zambia</p>
             </div>
-
-            {/* Student Information */}
+            
             <div className="mb-8">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                 <div>
@@ -206,8 +318,7 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
                 </div>
               </div>
             </div>
-
-            {/* Subjects Table */}
+            
             <div className="mb-8">
               <h3 className="text-lg font-bold text-gray-900 mb-4">Academic Performance</h3>
               <div className="overflow-x-auto">
@@ -227,13 +338,28 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
                     {reportCard.subjects.map((subject, index) => {
                       const subjectGradeInfo = getGradeInfo(subject.grade);
                       return (
-                        <tr key={index} className="hover:bg-gray-50">
-                          <td className="border border-gray-300 px-4 py-3 font-medium">{subject.subjectName}</td>
+                        <tr key={index} className={`hover:bg-gray-50 ${!subject.isComplete ? 'bg-yellow-50' : ''}`}>
+                          <td className="border border-gray-300 px-4 py-3 font-medium">
+                            {subject.subjectName}
+                            {!subject.isComplete && (
+                              <span className="ml-2 text-xs text-yellow-700">⚠️ Incomplete</span>
+                            )}
+                          </td>
                           <td className="border border-gray-300 px-4 py-3 text-sm text-gray-600">{subject.teacherName}</td>
-                          <td className="border border-gray-300 px-4 py-3">{subject.week4 >= 0 ? `${subject.week4}%` : 'X'}</td>
-                          <td className="border border-gray-300 px-4 py-3">{subject.week8 >= 0 ? `${subject.week8}%` : 'X'}</td>
+                          <td className="border border-gray-300 px-4 py-3">
+                            {subject.week4 >= 0 ? `${subject.week4}%` : (
+                              <span className="text-yellow-600">—</span>
+                            )}
+                          </td>
+                          <td className="border border-gray-300 px-4 py-3">
+                            {subject.week8 >= 0 ? `${subject.week8}%` : (
+                              <span className="text-yellow-600">—</span>
+                            )}
+                          </td>
                           <td className="border border-gray-300 px-4 py-3 font-semibold">
-                            {subject.endOfTerm >= 0 ? `${subject.endOfTerm}%` : 'X'}
+                            {subject.endOfTerm >= 0 ? `${subject.endOfTerm}%` : (
+                              <span className="text-yellow-600">—</span>
+                            )}
                           </td>
                           <td className="border border-gray-300 px-4 py-3">
                             <span className={`px-3 py-1 rounded-full text-white font-bold ${subjectGradeInfo.color}`}>
@@ -246,14 +372,13 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
                         </tr>
                       );
                     })}
-                    {/* Summary Row */}
                     <tr className="bg-gray-50 font-semibold">
                       <td className="border border-gray-300 px-4 py-3" colSpan={2}>Overall Average</td>
                       <td className="border border-gray-300 px-4 py-3">
                         {Math.round(
                           reportCard.subjects
                             .filter(s => s.week4 >= 0)
-                            .reduce((sum, s) => sum + s.week4, 0) / 
+                            .reduce((sum, s) => sum + s.week4, 0) /
                           (reportCard.subjects.filter(s => s.week4 >= 0).length || 1)
                         )}%
                       </td>
@@ -261,7 +386,7 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
                         {Math.round(
                           reportCard.subjects
                             .filter(s => s.week8 >= 0)
-                            .reduce((sum, s) => sum + s.week8, 0) / 
+                            .reduce((sum, s) => sum + s.week8, 0) /
                           (reportCard.subjects.filter(s => s.week8 >= 0).length || 1)
                         )}%
                       </td>
@@ -279,8 +404,7 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
                 </table>
               </div>
             </div>
-
-            {/* Teacher's Comment */}
+            
             <div className="mb-8">
               <h3 className="text-lg font-bold text-gray-900 mb-4">Class Teacher's Comment</h3>
               <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r">
@@ -290,8 +414,8 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
                     <p className="text-sm text-gray-600">
                       <span className="font-medium">Status:</span>{' '}
                       <span className={`ml-2 px-3 py-1 rounded-full text-sm font-semibold ${
-                        reportCard.status === 'pass' 
-                          ? 'bg-green-100 text-green-800' 
+                        reportCard.status === 'pass'
+                          ? 'bg-green-100 text-green-800'
                           : 'bg-red-100 text-red-800'
                       }`}>
                         {reportCard.status === 'pass' ? (
@@ -317,8 +441,7 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
                 </div>
               </div>
             </div>
-
-            {/* Grading System Reference */}
+            
             <div className="mb-8 bg-blue-50 p-4 rounded-lg border border-blue-200">
               <h4 className="font-bold text-blue-900 mb-3">Grading System Reference</h4>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
@@ -348,8 +471,7 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
                 </div>
               </div>
             </div>
-
-            {/* Parent's Section */}
+            
             <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
               <h4 className="font-bold text-blue-900 mb-2">To Parents/Guardians:</h4>
               <p className="text-blue-800 text-sm mb-3">
@@ -367,12 +489,13 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
               </div>
             </div>
           </div>
-
-          {/* Modal Footer */}
           <div className="p-6 border-t border-gray-200 bg-gray-50">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="text-sm text-gray-600">
                 Report generated: {reportCard.generatedDate}
+                {!reportCard.isComplete && (
+                  <span className="ml-2 text-yellow-700">• Incomplete ({reportCard.completionPercentage}%)</span>
+                )}
               </div>
               <div className="flex flex-wrap gap-3">
                 <button
@@ -413,18 +536,18 @@ interface StudentCardProps {
 
 const StudentCard = ({ reportCard, onViewDetails }: StudentCardProps) => {
   const gradeInfo = getGradeInfo(reportCard.grade);
-
-  const getImprovementIcon = (improvement: StudentReportCard['improvement']) => {
-    switch (improvement) {
-      case 'improved': return <TrendingUp size={14} className="text-green-500" />;
-      case 'declined': return <TrendingDown size={14} className="text-red-500" />;
-      default: return null;
-    }
-  };
-
+  
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-all cursor-pointer"
-         onClick={() => onViewDetails(reportCard.studentId)}>
+    <div className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-all cursor-pointer relative"
+      onClick={() => onViewDetails(reportCard.studentId)}>
+      {!reportCard.isComplete && (
+        <div className="absolute top-3 right-3">
+          <div className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs font-semibold rounded-full flex items-center gap-1">
+            <AlertTriangle size={12} />
+            {reportCard.completionPercentage}%
+          </div>
+        </div>
+      )}
       <div className="flex items-start justify-between mb-4">
         <div>
           <h3 className="font-bold text-gray-900 text-lg mb-1">{reportCard.studentName}</h3>
@@ -438,7 +561,6 @@ const StudentCard = ({ reportCard, onViewDetails }: StudentCardProps) => {
           {getGradeDisplay(reportCard.grade)}
         </div>
       </div>
-
       <div className="space-y-3 mb-4">
         <div>
           <p className="text-xs text-gray-500">Grade & Position</p>
@@ -464,7 +586,6 @@ const StudentCard = ({ reportCard, onViewDetails }: StudentCardProps) => {
           </div>
         </div>
       </div>
-
       <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors font-medium">
         <Eye size={18} />
         View Report
@@ -478,7 +599,6 @@ const StudentCard = ({ reportCard, onViewDetails }: StudentCardProps) => {
 export default function ReportCards() {
   const { user } = useAuth();
   const { classes, isLoading: loadingClasses } = useSchoolClasses();
-  
   const [selectedClass, setSelectedClass] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedForm, setSelectedForm] = useState<string>('all');
@@ -487,14 +607,28 @@ export default function ReportCards() {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
-
+  const [showMissingDataModal, setShowMissingDataModal] = useState(false);
+  const [includeIncomplete, setIncludeIncomplete] = useState(true);
+  const [markMissing, setMarkMissing] = useState(true);
   const debouncedSearch = useDebounce(searchTerm, 300);
+
+  // Get teacher assignments for all teachers (admin view)
+  const { 
+    assignments: allTeacherAssignments, 
+    isLoading: loadingAssignments,
+    refetch: refetchAssignments
+  } = useTeacherAssignments();
+
+  // Get learners for selected class
+  const { 
+    learners, 
+    isLoading: loadingLearners 
+  } = useSchoolLearners(selectedClass !== 'all' ? selectedClass : undefined);
 
   // Automatically select class for teachers
   useEffect(() => {
     if (user?.userType === 'teacher' && classes.length > 0 && selectedClass === 'all') {
-      // Find teacher's assigned class
-      const teacherClass = classes.find(cls => 
+      const teacherClass = classes.find(cls =>
         cls.teachers?.includes(user.id) || cls.formTeacherId === user.id
       );
       if (teacherClass) {
@@ -503,49 +637,68 @@ export default function ReportCards() {
     }
   }, [classes, user, selectedClass]);
 
-  // Fetch report cards
-  const { 
-    reportCards = [], 
-    isLoading, 
-    refetch 
-  } = useReportCards({
+  // Get teacher assignments filtered by selected class
+  const classTeacherAssignments = useMemo(() => {
+    if (!selectedClass || selectedClass === 'all' || !allTeacherAssignments) return [];
+    return allTeacherAssignments.filter(a => a.classId === selectedClass);
+  }, [selectedClass, allTeacherAssignments]);
+
+  // Get unique subjects for selected class
+  const subjectsInClass = useMemo(() => {
+    if (!classTeacherAssignments.length) return [];
+    return Array.from(new Set(classTeacherAssignments.map(a => a.subject)));
+  }, [classTeacherAssignments]);
+
+  // Use report readiness hook
+  const {
+    classReadiness,
+    isLoading: loadingReadiness,
+    refetch: refetchReadiness,
+  } = useReportReadiness({
     classId: selectedClass !== 'all' ? selectedClass : undefined,
     term: selectedTerm,
     year: selectedYear,
   });
 
+  // Fetch report cards
+  const {
+    reportCards = [],
+    isLoading,
+    refetch,
+    bulkSummary,
+  } = useReportCards({
+    classId: selectedClass !== 'all' ? selectedClass : undefined,
+    term: selectedTerm,
+    year: selectedYear,
+    includeIncomplete,
+    markMissing,
+  });
+
   // Filter report cards
   const filteredRecords = useMemo(() => {
     if (!reportCards || reportCards.length === 0) return [];
-    
     return reportCards.filter(record => {
       const matchesSearch = !debouncedSearch ||
         record.studentName.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
         record.studentId.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
         record.className.toLowerCase().includes(debouncedSearch.toLowerCase());
-      
       const matchesClass = selectedClass === 'all' || record.classId === selectedClass;
       const matchesStatus = selectedStatus === 'all' || record.status === selectedStatus;
       const matchesForm = selectedForm === 'all' || record.form === selectedForm;
-      
       return matchesSearch && matchesClass && matchesStatus && matchesForm;
     });
   }, [reportCards, debouncedSearch, selectedClass, selectedStatus, selectedForm]);
 
-  // Get unique values for filters
   const classOptions = useMemo(() => {
     const uniqueClasses = Array.from(new Set(
       (reportCards || []).map(r => ({ id: r.classId, name: r.className }))
     ));
-    
-    // Also include classes from the classes hook for teachers who haven't generated reports yet
     const allClasses = [...uniqueClasses];
     classes.forEach(cls => {
       if (!allClasses.some(c => c.id === cls.id)) {
         allClasses.push({ id: cls.id, name: cls.name });
       }
     });
-    
     return allClasses;
   }, [reportCards, classes]);
 
@@ -568,35 +721,35 @@ export default function ReportCards() {
       share: `Sharing report for ${student?.studentName}`
     };
     alert(actionMap[action]);
-    // TODO: Implement actual actions
   };
 
   const handleBatchAction = (action: 'download' | 'email') => {
     const actionText = action === 'download' ? 'Download' : 'Email';
     alert(`${actionText}ing ${filteredRecords.length} reports...`);
-    // TODO: Implement batch actions
   };
 
   const selectedReportCard = reportCards?.find(s => s.studentId === selectedStudent);
 
-  // Statistics
   const stats = useMemo(() => ({
     totalStudents: filteredRecords.length,
-    averagePercentage: filteredRecords.length > 0 
+    averagePercentage: filteredRecords.length > 0
       ? Math.round(filteredRecords.reduce((sum, r) => sum + r.percentage, 0) / filteredRecords.length)
       : 0,
     passRate: filteredRecords.length > 0
       ? Math.round((filteredRecords.filter(r => r.status === 'pass').length / filteredRecords.length) * 100)
       : 0,
-    topGrades: filteredRecords.filter(r => r.grade <= 2).length, // Grades 1-2 (Distinction)
+    topGrades: filteredRecords.filter(r => r.grade <= 2).length,
+    completeReports: filteredRecords.filter(r => r.isComplete).length,
+    incompleteReports: filteredRecords.filter(r => !r.isComplete).length,
   }), [filteredRecords]);
 
-  // Terms and years
   const terms = ['Term 1', 'Term 2', 'Term 3'];
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
-  if (isLoading || loadingClasses) {
+  const isLoadingAll = isLoading || loadingClasses || loadingReadiness || loadingAssignments;
+
+  if (isLoadingAll) {
     return (
       <DashboardLayout activeTab="reports">
         <div className="p-6 space-y-8">
@@ -630,7 +783,6 @@ export default function ReportCards() {
     <>
       <DashboardLayout activeTab="reports">
         <div className="min-h-screen bg-gray-50 p-6">
-          {/* Header */}
           <div className="mb-8">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
               <div>
@@ -640,6 +792,17 @@ export default function ReportCards() {
                 </p>
               </div>
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    refetchReadiness();
+                    refetchAssignments();
+                  }}
+                  className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  title="Refresh readiness status"
+                >
+                  <RefreshCw size={18} />
+                  Refresh
+                </button>
                 <button
                   onClick={() => handleBatchAction('download')}
                   className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
@@ -660,33 +823,131 @@ export default function ReportCards() {
             </div>
           </div>
 
-          {/* Summary Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          {/* Class Readiness Alert with proper integration */}
+          {classReadiness && selectedClass !== 'all' && (
+            <div className={`mb-8 p-6 rounded-xl border-2 ${
+              classReadiness.completionPercentage === 100
+                ? 'bg-green-50 border-green-200'
+                : 'bg-yellow-50 border-yellow-300'
+            }`}>
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-3">
+                    {classReadiness.completionPercentage === 100 ? (
+                      <CheckCircle className="text-green-600" size={24} />
+                    ) : (
+                      <AlertTriangle className="text-yellow-600" size={24} />
+                    )}
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">
+                        {classReadiness.className} Readiness Status
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        {classReadiness.readyStudents} of {classReadiness.totalStudents} students have complete data
+                      </p>
+                      {/* Show subjects taught in this class */}
+                      {subjectsInClass.length > 0 && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          Subjects: {subjectsInClass.join(', ')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Teachers assigned to this class */}
+                  {classTeacherAssignments.length > 0 && (
+                    <div className="mb-4 p-3 bg-white rounded-lg border border-gray-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <GraduationCap size={16} className="text-blue-600" />
+                        <span className="text-sm font-medium text-gray-700">Teachers:</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {Array.from(new Set(classTeacherAssignments.map(a => a.teacherName))).map((teacher, idx) => (
+                          <span key={idx} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
+                            {teacher}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="grid grid-cols-3 gap-4 mb-3">
+                    <div className="bg-white rounded-lg p-3 border border-gray-200">
+                      <div className="text-2xl font-bold text-green-600">{classReadiness.readyStudents}</div>
+                      <div className="text-sm text-gray-600">Complete</div>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 border border-gray-200">
+                      <div className="text-2xl font-bold text-yellow-600">{classReadiness.incompleteStudents}</div>
+                      <div className="text-sm text-gray-600">Incomplete</div>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 border border-gray-200">
+                      <div className="text-2xl font-bold text-blue-600">{classReadiness.completionPercentage}%</div>
+                      <div className="text-sm text-gray-600">Ready</div>
+                    </div>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-3">
+                    <div
+                      className={`h-3 rounded-full transition-all ${
+                        classReadiness.completionPercentage === 100 ? 'bg-green-500' : 'bg-yellow-500'
+                      }`}
+                      style={{ width: `${classReadiness.completionPercentage}%` }}
+                    />
+                  </div>
+                </div>
+                {classReadiness.incompleteStudents > 0 && (
+                  <button
+                    onClick={() => setShowMissingDataModal(true)}
+                    className="ml-4 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors text-sm font-medium"
+                  >
+                    View Missing Data →
+                  </button>
+                )}
+              </div>
+              {classReadiness.completionPercentage < 100 && (
+                <div className="mt-4 p-3 bg-yellow-100 rounded-lg">
+                  <p className="text-sm text-yellow-800">
+                    <Info size={14} className="inline mr-1" />
+                    {classReadiness.incompleteStudents} student{classReadiness.incompleteStudents !== 1 ? 's' : ''} missing results.
+                    Reports can still be generated but will be marked as incomplete.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
             <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <p className="text-gray-600">Total Students</p>
+              <p className="text-gray-600 text-sm">Total Students</p>
               <p className="text-3xl font-bold text-gray-900 mt-2">{stats.totalStudents}</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <p className="text-gray-600">Avg Percentage</p>
+              <p className="text-gray-600 text-sm">Avg Percentage</p>
               <p className="text-3xl font-bold text-blue-600 mt-2">{stats.averagePercentage}%</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <p className="text-gray-600">Pass Rate</p>
+              <p className="text-gray-600 text-sm">Pass Rate</p>
               <p className="text-3xl font-bold text-green-600 mt-2">{stats.passRate}%</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <p className="text-gray-600">Distinctions</p>
+              <p className="text-gray-600 text-sm">Distinctions</p>
               <p className="text-3xl font-bold text-purple-600 mt-2">{stats.topGrades}</p>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <p className="text-gray-600 text-sm">Complete</p>
+              <p className="text-3xl font-bold text-green-600 mt-2">{stats.completeReports}</p>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <p className="text-gray-600 text-sm">Incomplete</p>
+              <p className="text-3xl font-bold text-yellow-600 mt-2">{stats.incompleteReports}</p>
             </div>
           </div>
 
-          {/* Filters */}
           <div className="mb-8 bg-white rounded-xl border border-gray-200 p-4">
             <div className="flex items-center gap-2 mb-4">
               <Filter size={20} className="text-gray-500" />
               <h3 className="font-semibold text-gray-900">Filter Report Cards</h3>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   <Search size={16} className="inline mr-1" />
@@ -750,7 +1011,7 @@ export default function ReportCards() {
                   ))}
                 </select>
               </div>
-              <div>
+              <div className="lg:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   <Calendar size={16} className="inline mr-1" />
                   Term & Year
@@ -777,9 +1038,36 @@ export default function ReportCards() {
                 </div>
               </div>
             </div>
+            
+            <div className="mt-4 flex items-center gap-6 p-3 bg-gray-50 rounded-lg">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeIncomplete}
+                  onChange={e => setIncludeIncomplete(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Include incomplete reports</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={markMissing}
+                  onChange={e => setMarkMissing(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Mark missing data in reports</span>
+              </label>
+            </div>
+            
             <div className="mt-4 flex justify-between items-center">
               <p className="text-sm text-gray-600">
                 Showing {filteredRecords.length} of {reportCards.length} report cards
+                {stats.incompleteReports > 0 && (
+                  <span className="ml-2 text-yellow-700">
+                    ({stats.incompleteReports} incomplete)
+                  </span>
+                )}
               </p>
               <button
                 onClick={() => refetch()}
@@ -790,7 +1078,6 @@ export default function ReportCards() {
             </div>
           </div>
 
-          {/* Report Cards Grid */}
           {filteredRecords.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {filteredRecords.map((reportCard) => (
@@ -806,7 +1093,7 @@ export default function ReportCards() {
               <FileText size={48} className="mx-auto text-gray-300 mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">No report cards found</h3>
               <p className="text-gray-600 mb-4">
-                {reportCards.length === 0 
+                {reportCards.length === 0
                   ? `No report cards have been generated for ${selectedTerm} ${selectedYear}. Generate results first.`
                   : 'Try adjusting your filters to find what you\'re looking for.'
                 }
@@ -836,8 +1123,7 @@ export default function ReportCards() {
           )}
         </div>
       </DashboardLayout>
-
-      {/* Report Detail Modal */}
+      
       {selectedReportCard && (
         <ReportDetailModal
           isOpen={showReportModal}
@@ -847,6 +1133,15 @@ export default function ReportCards() {
           }}
           reportCard={selectedReportCard}
           onAction={handleModalAction}
+        />
+      )}
+      
+      {classReadiness && (
+        <MissingDataModal
+          isOpen={showMissingDataModal}
+          onClose={() => setShowMissingDataModal(false)}
+          classReadiness={classReadiness}
+          teacherAssignments={classTeacherAssignments}
         />
       )}
     </>

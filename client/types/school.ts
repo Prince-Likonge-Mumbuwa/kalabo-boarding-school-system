@@ -61,6 +61,21 @@ export interface Class {
   updatedAt?: Date;
 }
 
+// ==================== NEW: TEACHER ASSIGNMENT INTERFACE ====================
+export interface TeacherAssignment {
+  id: string;
+  teacherId: string;
+  teacherName: string;
+  teacherEmail?: string;
+  classId: string;
+  className: string;
+  subject: string;
+  isFormTeacher: boolean;
+  assignedAt?: Date;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
 // For CSV imports (must match service layer field names)
 export interface CSVImportData {
   name: string;

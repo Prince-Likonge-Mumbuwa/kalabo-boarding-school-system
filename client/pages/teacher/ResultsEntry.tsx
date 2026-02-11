@@ -1,12 +1,13 @@
-// @/pages/teacher/ResultsEntry.tsx - UPDATED WITH CORRECT EXAM TYPES
+// @/pages/teacher/ResultsEntry.tsx - FULLY REWRITTEN WITH PROPER INTEGRATION
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo } from 'react';
-import { Save, Upload, AlertCircle, Loader2, Users, BookOpen } from 'lucide-react';
+import { Save, Upload, AlertCircle, Loader2, Users, BookOpen, CheckCircle, XCircle, Info, TrendingUp, Award, GraduationCap } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { useResults } from '@/hooks/useResults';
+import { useResults, useSubjectCompletion } from '@/hooks/useResults';
 import { learnerService } from '@/services/schoolService';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
+import { calculateGrade, getGradeDescription, getGradeDisplay } from '@/services/resultsService';
 
 interface StudentResultInput {
   id: string;
@@ -19,24 +20,20 @@ export default function ResultsEntry() {
   const { user } = useAuth();
   const isTeacher = user?.userType === 'teacher';
 
-  // Fetch all active classes
   const { 
     classes: allClasses, 
     isLoading: loadingClasses 
   } = useSchoolClasses({ isActive: true });
 
-  // NEW: Fetch teacher assignments to get subjects
   const {
     assignments,
     getSubjectsForClass,
     isLoading: loadingAssignments
   } = useTeacherAssignments(user?.id);
 
-  // Find classes assigned to this teacher
   const assignedClasses = useMemo(() => {
     if (!user?.id || !allClasses.length) return [];
     
-    // Filter classes where this teacher is in the teachers array
     return allClasses.filter(cls => 
       cls.teachers?.includes(user.id) || 
       cls.formTeacherId === user.id
@@ -45,7 +42,6 @@ export default function ResultsEntry() {
 
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
-  // UPDATED: Changed exam type to match resultsService.ts
   const [examType, setExamType] = useState<'week4' | 'week8' | 'endOfTerm'>('week4');
   const [examName, setExamName] = useState('');
   const [totalMarks, setTotalMarks] = useState(100);
@@ -55,34 +51,88 @@ export default function ResultsEntry() {
   const [students, setStudents] = useState<StudentResultInput[]>([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [selectedClassData, setSelectedClassData] = useState<any>(null);
+  const [showAbsentHelp, setShowAbsentHelp] = useState(false);
+  const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
+  const [existingResultsCount, setExistingResultsCount] = useState(0);
 
-  // Use the results hook
-  const { saveResults, isSaving } = useResults();
+  // Use the enhanced results hook
+  const { 
+    saveResults, 
+    isSaving,
+    checkExisting,
+    isCheckingExisting 
+  } = useResults();
 
-  // UPDATED: Exam types to match resultsService.ts (week4, week8, endOfTerm)
+  // Get subject completion status
+  const {
+    completionStatus,
+    isLoading: loadingCompletion,
+    refetch: refetchCompletion
+  } = useSubjectCompletion({
+    classId: selectedClass,
+    term,
+    year,
+  });
+
   const examTypes = [
     { value: 'week4', label: 'Week 4 Assessment', description: 'First monthly assessment' },
     { value: 'week8', label: 'Week 8 Assessment', description: 'Mid-term assessment' },
     { value: 'endOfTerm', label: 'End of Term Exam', description: 'Final term examination' },
   ];
 
-  // NEW: Get subjects for the selected class
   const availableSubjects = useMemo(() => {
     if (!selectedClass || !user?.id) return [];
     return getSubjectsForClass(selectedClass);
   }, [selectedClass, user?.id, getSubjectsForClass]);
 
-  // NEW: Auto-select subject if only one is available
   useEffect(() => {
     if (availableSubjects.length === 1 && !selectedSubject) {
       setSelectedSubject(availableSubjects[0]);
     } else if (availableSubjects.length > 0 && !availableSubjects.includes(selectedSubject)) {
-      // Reset subject if currently selected subject is not in the available list
       setSelectedSubject('');
     }
-  }, [availableSubjects]);
+  }, [availableSubjects, selectedSubject]);
 
-  // Load students when class changes
+  useEffect(() => {
+    if (selectedSubject && examType) {
+      const typeLabel = examTypes.find(t => t.value === examType)?.label || '';
+      setExamName(`${typeLabel} - ${selectedSubject}`);
+    }
+  }, [selectedSubject, examType]);
+
+  // NEW: Enhanced existing results check that considers teacher assignments
+  useEffect(() => {
+    const checkExistingResults = async () => {
+      if (!selectedClass || !selectedSubject || !user?.id) {
+        setShowOverwriteWarning(false);
+        setExistingResultsCount(0);
+        return;
+      }
+
+      try {
+        const existing = await checkExisting({
+          classId: selectedClass,
+          subjectId: selectedSubject,
+          examType,
+          term,
+          year,
+        });
+
+        if (existing.exists) {
+          setShowOverwriteWarning(true);
+          setExistingResultsCount(existing.count);
+        } else {
+          setShowOverwriteWarning(false);
+          setExistingResultsCount(0);
+        }
+      } catch (error) {
+        console.error('Error checking existing results:', error);
+      }
+    };
+
+    checkExistingResults();
+  }, [selectedClass, selectedSubject, examType, term, year, checkExisting]);
+
   useEffect(() => {
     const loadStudents = async () => {
       if (!selectedClass) {
@@ -93,7 +143,6 @@ export default function ResultsEntry() {
 
       setLoadingStudents(true);
       try {
-        // Find the selected class data from assignedClasses
         const classInfo = assignedClasses.find(c => c.id === selectedClass);
         setSelectedClassData(classInfo);
         
@@ -104,8 +153,9 @@ export default function ResultsEntry() {
           return;
         }
         
-        // Load students for this class
         const learners = await learnerService.getLearnersByClass(selectedClass);
+        learners.sort((a, b) => a.name.localeCompare(b.name));
+        
         setStudents(
           learners.map(learner => ({
             id: learner.id,
@@ -128,12 +178,12 @@ export default function ResultsEntry() {
   }, [selectedClass, assignedClasses]);
 
   const handleMarksChange = (studentId: string, marks: string) => {
-    // Only allow numbers
-    if (marks && !/^\d*$/.test(marks)) return;
+    if (marks && marks.toLowerCase() !== 'x' && !/^\d*$/.test(marks)) return;
     
-    // Don't allow marks > totalMarks
-    const marksNum = parseInt(marks);
-    if (marks && marksNum > totalMarks) return;
+    if (marks && marks.toLowerCase() !== 'x') {
+      const marksNum = parseInt(marks);
+      if (marksNum > totalMarks) return;
+    }
 
     setStudents(students.map(s =>
       s.id === studentId ? { ...s, marks } : s
@@ -167,72 +217,173 @@ export default function ResultsEntry() {
       return;
     }
 
-    // Prepare results data
     const results = students
-      .filter(s => s.marks !== '') // Only include students with marks entered
-      .map(s => ({
-        studentId: s.studentId,
-        studentName: s.name,
-        marks: parseInt(s.marks),
-      }));
+      .filter(s => s.marks !== '')
+      .map(s => {
+        const marks = s.marks.toLowerCase() === 'x' 
+          ? -1 
+          : parseInt(s.marks);
+
+        return {
+          studentId: s.studentId,
+          studentName: s.name,
+          marks,
+        };
+      });
 
     if (results.length === 0) {
       alert('Please enter marks for at least one student');
       return;
     }
 
+    // NEW: Enhanced confirmation with teacher assignment context
+    const absentCount = results.filter(r => r.marks === -1).length;
+    const presentCount = results.length - absentCount;
+    
+    let confirmMessage = `You are about to save results for ${results.length} students:\n\n` +
+      `• Present: ${presentCount}\n` +
+      `• Absent: ${absentCount}\n\n` +
+      `Subject: ${selectedSubject}\n` +
+      `Exam: ${examName}\n` +
+      `Term: ${term}, ${year}\n\n`;
+
+    // NEW: Add overwrite warning
+    if (showOverwriteWarning) {
+      confirmMessage += `⚠️ WARNING: This will OVERWRITE ${existingResultsCount} existing results!\n\n`;
+    }
+
+    confirmMessage += 'Continue?';
+
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
     try {
-      // UPDATED: examType is now the correct type that matches resultsService.ts
-      await saveResults({
+      const response = await saveResults({
         classId: selectedClass,
         className: selectedClassData.name,
         subjectId: selectedSubject,
         subjectName: selectedSubject,
         teacherId: user.id,
         teacherName: user.name || user.email || 'Unknown',
-        examType, // This now matches the expected type
+        examType,
         examName: examName.trim(),
         term,
         year,
         totalMarks,
         results,
+        overwrite: showOverwriteWarning,
       });
 
-      alert(`Results saved successfully for ${results.length} students!`);
+      // NEW: Show completion status after save
+      const wasOverwritten = response.overwritten ? ' (existing results overwritten)' : '';
+      alert(`✅ Results saved successfully for ${results.length} students${wasOverwritten}!`);
       
       // Clear marks but keep students list
       setStudents(students.map(s => ({ ...s, marks: '' })));
-      setExamName('');
+      
+      // Refresh completion status
+      refetchCompletion();
       
     } catch (error: any) {
       console.error('Error saving results:', error);
-      alert(`Failed to save results: ${error.message || 'Please try again.'}`);
+      alert(`❌ Failed to save results: ${error.message || 'Please try again.'}`);
     }
   };
 
   const handleImportFromExcel = () => {
-    // TODO: Implement Excel import functionality
-    alert('Excel import functionality coming soon!');
+    alert('📊 Excel import functionality coming soon! You will be able to upload a spreadsheet with student marks.');
+  };
+
+  const handleQuickFillPass = () => {
+    if (!confirm('Fill all empty fields with 60% (pass mark)? This will not overwrite existing entries.')) {
+      return;
+    }
+    
+    const passMarks = Math.ceil(totalMarks * 0.6);
+    setStudents(students.map(s => 
+      s.marks === '' ? { ...s, marks: passMarks.toString() } : s
+    ));
+  };
+
+  const handleMarkAllAbsent = () => {
+    if (!confirm('Mark all students as absent (X)? This will overwrite all current entries.')) {
+      return;
+    }
+    
+    setStudents(students.map(s => ({ ...s, marks: 'X' })));
+  };
+
+  const handleClearAll = () => {
+    if (!confirm('Clear all entered marks? This cannot be undone.')) {
+      return;
+    }
+    
+    setStudents(students.map(s => ({ ...s, marks: '' })));
   };
 
   const filledCount = students.filter(s => s.marks && s.marks !== '').length;
   const totalStudents = students.length;
+  const absentCount = students.filter(s => s.marks.toLowerCase() === 'x').length;
+  const presentCount = filledCount - absentCount;
 
-  // UPDATED: This function should match the 1-9 grading system from resultsService.ts
-  const getGrade = (marks: number): string => {
-    const percentage = (marks / totalMarks) * 100;
+  const getGrade = (marks: string): string => {
+    if (!marks) return '—';
+    if (marks.toLowerCase() === 'x') return 'X (Absent)';
     
-    // Convert to 1-9 scale like resultsService.ts does
-    if (percentage >= 75) return '1 (Distinction)';
-    if (percentage >= 70) return '2 (Distinction)';
-    if (percentage >= 65) return '3 (Merit)';
-    if (percentage >= 60) return '4 (Merit)';
-    if (percentage >= 55) return '5 (Credit)';
-    if (percentage >= 50) return '6 (Credit)';
-    if (percentage >= 45) return '7 (Satisfactory)';
-    if (percentage >= 40) return '8 (Satisfactory)';
-    return '9 (Fail)';
+    const marksNum = parseInt(marks);
+    const percentage = (marksNum / totalMarks) * 100;
+    const grade = calculateGrade(percentage);
+    const description = getGradeDescription(grade);
+    
+    return `${getGradeDisplay(grade)} (${description})`;
   };
+
+  const getGradeColor = (marks: string): string => {
+    if (!marks) return 'text-gray-400';
+    if (marks.toLowerCase() === 'x') return 'text-gray-600';
+    
+    const marksNum = parseInt(marks);
+    const percentage = (marksNum / totalMarks) * 100;
+    const grade = calculateGrade(percentage);
+    
+    if (grade <= 2) return 'text-green-600';
+    if (grade <= 4) return 'text-blue-600';
+    if (grade <= 6) return 'text-cyan-600';
+    if (grade <= 8) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  // NEW: Enhanced subject completion that integrates with teacher assignments
+  const currentSubjectCompletion = useMemo(() => {
+    if (!selectedSubject || !completionStatus.length) return null;
+    return completionStatus.find(s => s.subjectName === selectedSubject);
+  }, [selectedSubject, completionStatus]);
+
+  // NEW: Calculate overall class readiness based on teacher assignments
+  const classReadiness = useMemo(() => {
+    if (!selectedClass || !assignments.length || !completionStatus.length) return null;
+    
+    // Get all subjects assigned to this class
+    const classAssignments = assignments.filter(a => a.classId === selectedClass);
+    const assignedSubjects = Array.from(new Set(classAssignments.map(a => a.subject)));
+    
+    // Get completion status for assigned subjects only
+    const completedSubjects = assignedSubjects.filter(subject => {
+      const completion = completionStatus.find(c => c.subjectName === subject);
+      return completion && completion.percentComplete === 100;
+    });
+    
+    const completionPercentage = Math.round((completedSubjects.length / assignedSubjects.length) * 100);
+    
+    return {
+      totalSubjects: assignedSubjects.length,
+      completedSubjects: completedSubjects.length,
+      completionPercentage,
+      assignedSubjects,
+      completedSubjectsList: completedSubjects,
+    };
+  }, [selectedClass, assignments, completionStatus]);
 
   if (loadingClasses || loadingAssignments) {
     return (
@@ -257,7 +408,7 @@ export default function ResultsEntry() {
           <div className="flex items-center gap-2 bg-blue-50 px-4 py-2 rounded-lg">
             <BookOpen className="text-blue-600" size={20} />
             <span className="text-blue-700 font-medium">
-              {assignedClasses.length} Class{assignedClasses.length !== 1 ? 'es' : ''} Assigned
+              {assignedClasses.length} Class{assignedClasses.length !== 1 ? 'es' : ''} • {assignments.length} Subject{assignments.length !== 1 ? 's' : ''}
             </span>
           </div>
         </div>
@@ -290,22 +441,237 @@ export default function ResultsEntry() {
           </div>
         )}
 
-        {/* Info Alert */}
+        {/* NEW: Class Readiness Overview */}
+        {classReadiness && (
+          <div className={`p-6 rounded-xl border-2 ${
+            classReadiness.completionPercentage === 100
+              ? 'bg-green-50 border-green-200'
+              : 'bg-yellow-50 border-yellow-300'
+          }`}>
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-3">
+                  {classReadiness.completionPercentage === 100 ? (
+                    <CheckCircle className="text-green-600" size={24} />
+                  ) : (
+                    <AlertCircle className="text-yellow-600" size={24} />
+                  )}
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">
+                      {selectedClassData?.name} Overall Readiness
+                    </h3>
+                    <p className="text-sm text-gray-600">
+                      {classReadiness.completedSubjects} of {classReadiness.totalSubjects} subjects fully completed
+                    </p>
+                  </div>
+                </div>
+                
+                {/* Subjects breakdown */}
+                <div className="mb-4">
+                  <p className="text-sm font-medium text-gray-700 mb-2">Assigned Subjects:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {classReadiness.assignedSubjects.map((subject, idx) => {
+                      const isCompleted = classReadiness.completedSubjectsList.includes(subject);
+                      const subjectCompletion = completionStatus.find(c => c.subjectName === subject);
+                      return (
+                        <div
+                          key={idx}
+                          className={`px-3 py-1 rounded-full text-xs font-medium ${
+                            isCompleted
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-yellow-100 text-yellow-800'
+                          }`}
+                          title={
+                            subjectCompletion
+                              ? `${subjectCompletion.percentComplete}% complete`
+                              : 'Not started'
+                          }
+                        >
+                          {subject} {isCompleted ? '✓' : subjectCompletion ? `(${subjectCompletion.percentComplete}%)` : '(0%)'}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-3 gap-4 mb-3">
+                  <div className="bg-white rounded-lg p-3 border border-gray-200">
+                    <div className="text-2xl font-bold text-green-600">{classReadiness.completedSubjects}</div>
+                    <div className="text-sm text-gray-600">Complete</div>
+                  </div>
+                  <div className="bg-white rounded-lg p-3 border border-gray-200">
+                    <div className="text-2xl font-bold text-yellow-600">
+                      {classReadiness.totalSubjects - classReadiness.completedSubjects}
+                    </div>
+                    <div className="text-sm text-gray-600">Incomplete</div>
+                  </div>
+                  <div className="bg-white rounded-lg p-3 border border-gray-200">
+                    <div className="text-2xl font-bold text-blue-600">{classReadiness.completionPercentage}%</div>
+                    <div className="text-sm text-gray-600">Ready</div>
+                  </div>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-3">
+                  <div
+                    className={`h-3 rounded-full transition-all ${
+                      classReadiness.completionPercentage === 100 ? 'bg-green-500' : 'bg-yellow-500'
+                    }`}
+                    style={{ width: `${classReadiness.completionPercentage}%` }}
+                  />
+                </div>
+              </div>
+              {classReadiness.completionPercentage < 100 && (
+                <div className="ml-4 text-right">
+                  <p className="text-sm text-gray-600 mb-2">Next Steps:</p>
+                  <div className="text-xs text-yellow-700 space-y-1">
+                    {classReadiness.assignedSubjects
+                      .filter(subject => !classReadiness.completedSubjectsList.includes(subject))
+                      .slice(0, 2)
+                      .map((subject, idx) => (
+                        <div key={idx}>• Complete {subject}</div>
+                      ))}
+                    {classReadiness.assignedSubjects.filter(subject => !classReadiness.completedSubjectsList.includes(subject)).length > 2 && (
+                      <div>• ...and {classReadiness.assignedSubjects.filter(subject => !classReadiness.completedSubjectsList.includes(subject)).length - 2} more</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            {classReadiness.completionPercentage === 100 && (
+              <div className="mt-4 p-3 bg-green-200 border border-green-400 rounded-lg">
+                <p className="text-green-800 font-medium text-center flex items-center justify-center gap-2">
+                  <TrendingUp size={18} />
+                  🎉 All subjects completed! Students can now receive complete report cards.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Overwrite Warning Alert */}
+        {showOverwriteWarning && (
+          <div className="flex gap-4 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded-r-lg">
+            <AlertCircle className="text-yellow-600 flex-shrink-0 mt-0.5" size={20} />
+            <div className="flex-1">
+              <p className="text-yellow-900 font-medium">⚠️ Results Already Exist</p>
+              <p className="text-yellow-700 text-sm mt-1">
+                You have already entered {examTypes.find(t => t.value === examType)?.label} results for {selectedSubject} 
+                ({existingResultsCount} students). Saving will <strong>overwrite</strong> the existing results.
+              </p>
+              <p className="text-yellow-600 text-xs mt-2">
+                Make sure this is what you want before clicking Save.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Subject Completion Tracker */}
+        {currentSubjectCompletion && (
+          <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl p-6">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <Award className="text-green-600" size={20} />
+                  Completion Progress: {selectedSubject}
+                </h3>
+                <p className="text-gray-600 text-sm mt-1">Track which exam types have been entered</p>
+              </div>
+              <div className="text-right">
+                <div className="text-3xl font-bold text-green-700">
+                  {currentSubjectCompletion.percentComplete}%
+                </div>
+                <div className="text-sm text-gray-600">Complete</div>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-3 gap-4">
+              <div className={`p-4 rounded-lg border-2 ${
+                currentSubjectCompletion.week4Complete 
+                  ? 'bg-green-100 border-green-500' 
+                  : 'bg-gray-100 border-gray-300'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-gray-900">Week 4</span>
+                  {currentSubjectCompletion.week4Complete ? (
+                    <CheckCircle className="text-green-600" size={20} />
+                  ) : (
+                    <XCircle className="text-gray-400" size={20} />
+                  )}
+                </div>
+                <p className="text-sm text-gray-600">
+                  {currentSubjectCompletion.enteredStudents.week4}/{currentSubjectCompletion.totalStudents} students
+                </p>
+              </div>
+              
+              <div className={`p-4 rounded-lg border-2 ${
+                currentSubjectCompletion.week8Complete 
+                  ? 'bg-green-100 border-green-500' 
+                  : 'bg-gray-100 border-gray-300'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-gray-900">Week 8</span>
+                  {currentSubjectCompletion.week8Complete ? (
+                    <CheckCircle className="text-green-600" size={20} />
+                  ) : (
+                    <XCircle className="text-gray-400" size={20} />
+                  )}
+                </div>
+                <p className="text-sm text-gray-600">
+                  {currentSubjectCompletion.enteredStudents.week8}/{currentSubjectCompletion.totalStudents} students
+                </p>
+              </div>
+              
+              <div className={`p-4 rounded-lg border-2 ${
+                currentSubjectCompletion.endOfTermComplete 
+                  ? 'bg-green-100 border-green-500' 
+                  : 'bg-gray-100 border-gray-300'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-gray-900">End of Term</span>
+                  {currentSubjectCompletion.endOfTermComplete ? (
+                    <CheckCircle className="text-green-600" size={20} />
+                  ) : (
+                    <XCircle className="text-gray-400" size={20} />
+                  )}
+                </div>
+                <p className="text-sm text-gray-600">
+                  {currentSubjectCompletion.enteredStudents.endOfTerm}/{currentSubjectCompletion.totalStudents} students
+                </p>
+              </div>
+            </div>
+            
+            {currentSubjectCompletion.percentComplete === 100 && (
+              <div className="mt-4 p-3 bg-green-200 border border-green-400 rounded-lg">
+                <p className="text-green-800 font-medium text-center flex items-center justify-center gap-2">
+                  <TrendingUp size={18} />
+                  🎉 All exam types completed for {selectedSubject}! Students can now receive complete report cards.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Progress Alert */}
         {totalStudents > 0 && (
           <div className="flex gap-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <AlertCircle className="text-blue-600 flex-shrink-0 mt-0.5" size={20} />
             <div className="flex-1">
               <p className="text-blue-900 font-medium">Entry Progress</p>
               <p className="text-blue-700 text-sm mt-1">
-                You have entered marks for <span className="font-bold">{filledCount}</span> out of{' '}
-                <span className="font-bold">{totalStudents}</span> students{' '}
-                ({totalStudents > 0 ? ((filledCount / totalStudents) * 100).toFixed(0) : 0}%)
+                <span className="font-bold">{filledCount}</span> of <span className="font-bold">{totalStudents}</span> students ({totalStudents > 0 ? Math.round((filledCount / totalStudents) * 100) : 0}%)
+                {absentCount > 0 && <> • <span className="font-bold">{absentCount}</span> marked absent</>}
+                {presentCount > 0 && <> • <span className="font-bold">{presentCount}</span> with marks</>}
               </p>
               {selectedClassData && selectedSubject && (
                 <p className="text-blue-600 text-xs mt-2">
-                  Class: {selectedClassData.name} • Subject: {selectedSubject} • Students: {totalStudents} • Term: {term} • Year: {year}
+                  {selectedClassData.name} • {selectedSubject} • {examTypes.find(t => t.value === examType)?.label} • {term} {year}
                 </p>
               )}
+              <div className="w-full bg-blue-200 rounded-full h-2 mt-3">
+                <div 
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                  style={{ width: `${totalStudents > 0 ? (filledCount / totalStudents) * 100 : 0}%` }}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -338,7 +704,7 @@ export default function ResultsEntry() {
               value={selectedClass}
               onChange={e => {
                 setSelectedClass(e.target.value);
-                setSelectedSubject(''); // Reset subject when class changes
+                setSelectedSubject('');
               }}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
               disabled={assignedClasses.length === 0}
@@ -355,7 +721,6 @@ export default function ResultsEntry() {
             )}
           </div>
           
-          {/* NEW: Dynamic Subject Selection */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Subject *
@@ -382,7 +747,7 @@ export default function ResultsEntry() {
             </select>
             {selectedClass && availableSubjects.length === 0 && (
               <p className="text-red-500 text-xs mt-1">
-                You are not assigned to teach any subject for this class. Contact your administrator.
+                You are not assigned to teach any subject for this class
               </p>
             )}
           </div>
@@ -459,6 +824,57 @@ export default function ResultsEntry() {
           </div>
         </div>
 
+        {/* Quick Actions */}
+        {students.length > 0 && (
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Info size={18} className="text-gray-500" />
+                <span className="text-sm font-medium text-gray-700">Quick Actions</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleQuickFillPass}
+                  className="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
+                >
+                  Fill 60% (Pass)
+                </button>
+                <button
+                  onClick={handleMarkAllAbsent}
+                  className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  Mark All Absent
+                </button>
+                <button
+                  onClick={handleClearAll}
+                  className="px-3 py-1.5 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                >
+                  Clear All
+                </button>
+                <button
+                  onClick={() => setShowAbsentHelp(!showAbsentHelp)}
+                  className="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
+                >
+                  {showAbsentHelp ? 'Hide' : 'Show'} Help
+                </button>
+              </div>
+            </div>
+            
+            {showAbsentHelp && (
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                <p className="font-medium mb-1">💡 Tips for entering marks:</p>
+                <ul className="list-disc list-inside space-y-1 ml-2">
+                  <li>Enter marks as numbers (0-{totalMarks})</li>
+                  <li>Type <strong>"X"</strong> or <strong>"x"</strong> to mark a student as absent</li>
+                  <li>Leave blank to skip a student (you can enter their marks later)</li>
+                  <li>Grades are calculated automatically using the 1-9 Zambian scale</li>
+                  <li>Use Quick Actions above to speed up data entry</li>
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Results Entry Table */}
         {loadingStudents ? (
           <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
@@ -480,7 +896,7 @@ export default function ResultsEntry() {
                   {selectedSubject && (
                     <span className="ml-2 text-blue-600">• Subject: {selectedSubject}</span>
                   )}
-                  <span className="ml-2 text-blue-600">• Exam: {examTypes.find(t => t.value === examType)?.label}</span>
+                  <span className="ml-2 text-blue-600">• {examTypes.find(t => t.value === examType)?.label}</span>
                 </div>
               </div>
             </div>
@@ -488,66 +904,73 @@ export default function ResultsEntry() {
               <table className="w-full">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">#</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Student Name</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Student ID</th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Marks (out of {totalMarks})</th>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Marks (/{totalMarks})</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Percentage</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Grade (1-9 Scale)</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {students.map((student) => {
-                    const marksNum = student.marks ? parseInt(student.marks) : null;
-                    const percentage = marksNum !== null ? ((marksNum / totalMarks) * 100).toFixed(1) : null;
-                    const grade = marksNum !== null ? getGrade(marksNum) : '-';
-                    const isPassing = marksNum !== null && marksNum >= (totalMarks * 0.5);
+                  {students.map((student, index) => {
+                    const isAbsent = student.marks.toLowerCase() === 'x';
+                    const marksNum = isAbsent ? -1 : (student.marks ? parseInt(student.marks) : null);
+                    const percentage = marksNum !== null && marksNum >= 0 
+                      ? ((marksNum / totalMarks) * 100).toFixed(1) 
+                      : null;
+                    const grade = marksNum !== null ? getGrade(student.marks) : '—';
+                    const isPassing = marksNum !== null && marksNum >= 0 && marksNum >= (totalMarks * 0.5);
 
                     return (
                       <tr key={student.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4 text-gray-600">{index + 1}</td>
                         <td className="px-6 py-4 font-medium text-gray-900">{student.name}</td>
-                        <td className="px-6 py-4 text-gray-600 font-mono">{student.studentId}</td>
+                        <td className="px-6 py-4 text-gray-600 font-mono text-sm">{student.studentId}</td>
                         <td className="px-6 py-4">
                           <input
-                            type="number"
-                            min="0"
-                            max={totalMarks}
+                            type="text"
                             value={student.marks}
                             onChange={e => handleMarksChange(student.id, e.target.value)}
-                            placeholder="0"
-                            className="w-28 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center font-semibold transition-colors"
+                            placeholder="0 or X"
+                            className="w-28 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center font-semibold transition-colors uppercase"
                           />
                         </td>
                         <td className="px-6 py-4">
-                          {percentage !== null ? (
+                          {isAbsent ? (
+                            <span className="font-semibold text-gray-500">Absent</span>
+                          ) : percentage !== null ? (
                             <span className="font-semibold text-gray-900">{percentage}%</span>
                           ) : (
-                            <span className="text-gray-400">-</span>
+                            <span className="text-gray-400">—</span>
                           )}
                         </td>
                         <td className="px-6 py-4">
-                          {marksNum !== null ? (
-                            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                              grade.startsWith('1') || grade.startsWith('2') ? 'bg-green-100 text-green-700' :
-                              grade.startsWith('3') || grade.startsWith('4') ? 'bg-blue-100 text-blue-700' :
-                              grade.startsWith('5') || grade.startsWith('6') ? 'bg-yellow-100 text-yellow-700' :
-                              grade.startsWith('7') || grade.startsWith('8') ? 'bg-orange-100 text-orange-700' :
-                              'bg-red-100 text-red-700'
-                            }`}>
-                              {grade}
-                            </span>
-                          ) : (
-                            <span className="text-gray-500">-</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                            student.marks
-                              ? isPassing ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                              : 'bg-gray-100 text-gray-700'
-                          }`}>
-                            {student.marks ? (isPassing ? '✓ Pass' : '✗ Fail') : 'Pending'}
+                          <span className={`font-semibold ${getGradeColor(student.marks)}`}>
+                            {grade}
                           </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {student.marks ? (
+                            isAbsent ? (
+                              <span className="px-3 py-1 rounded-full text-sm font-semibold bg-gray-100 text-gray-700">
+                                ✗ Absent
+                              </span>
+                            ) : isPassing ? (
+                              <span className="px-3 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-700">
+                                ✓ Pass
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-700">
+                                ✗ Fail
+                              </span>
+                            )
+                          ) : (
+                            <span className="px-3 py-1 rounded-full text-sm font-semibold bg-gray-100 text-gray-700">
+                              Pending
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -605,13 +1028,33 @@ export default function ResultsEntry() {
           </div>
         )}
 
-        {/* Help Text - UPDATED FOR 1-9 GRADING SYSTEM */}
-        <div className="text-sm text-gray-500 mt-4">
-          <p>• <strong>1-9 Grading Scale:</strong> 1-2 (Distinction: 70-100%), 3-4 (Merit: 60-69%), 5-6 (Credit: 50-59%), 7-8 (Satisfactory: 40-49%), 9 (Fail: 0-39%)</p>
-          <p className="mt-1">• <strong>Passing Mark:</strong> 50% or higher (Grade 6 or better)</p>
-          <p className="mt-1">• <strong>Exam Types:</strong> Week 4 (first assessment), Week 8 (mid-term), End of Term (final exam)</p>
-          <p className="mt-1">• All fields marked with * are required</p>
-          <p className="mt-1">• Subjects shown are based on your class assignments configured by the administrator</p>
+        {/* Help Text */}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+          <h3 className="font-bold text-blue-900 mb-3">Understanding the Grading System</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <h4 className="font-medium text-blue-800 mb-2">1-9 Grading Scale</h4>
+              <ul className="text-sm text-blue-700 space-y-1">
+                <li>• <span className="font-semibold">1-2:</span> Distinction (70-100%)</li>
+                <li>• <span className="font-semibold">3-4:</span> Merit (60-69%)</li>
+                <li>• <span className="font-semibold">5-6:</span> Credit (50-59%)</li>
+                <li>• <span className="font-semibold">7-8:</span> Satisfactory (40-49%)</li>
+                <li>• <span className="font-semibold">9:</span> Fail (0-39%)</li>
+                <li>• <span className="font-semibold">X:</span> Absent</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-medium text-blue-800 mb-2">Important Notes</h4>
+              <ul className="text-sm text-blue-700 space-y-1">
+                <li>• Passing mark is <strong>50% (Grade 6 or better)</strong></li>
+                <li>• All fields marked with * are required</li>
+                <li>• Subjects are based on your class assignments</li>
+                <li>• Results can be edited later if needed</li>
+                <li>• Data is saved securely and backs up automatically</li>
+                <li>• <strong>Complete all 3 exam types (Week 4, Week 8, End of Term) for each subject to enable full report card generation</strong></li>
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
     </DashboardLayout>

@@ -1,4 +1,4 @@
-// @/services/schoolService.ts - COMPLETE VERSION WITH SUBJECT SUPPORT
+// @/services/schoolService.ts - COMPLETE VERSION WITH SUBJECT SUPPORT AND TEACHER ASSIGNMENTS
 import {
   collection,
   query,
@@ -21,7 +21,15 @@ import {
   setDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { Class, Learner, Teacher, DashboardStats, ClassCSVImportData, CSVImportData } from '@/types/school';
+import { 
+  Class, 
+  Learner, 
+  Teacher, 
+  DashboardStats, 
+  ClassCSVImportData, 
+  CSVImportData,
+  TeacherAssignment // NEW: Import the TeacherAssignment interface
+} from '@/types/school';
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -688,16 +696,9 @@ export const teacherService = {
   },
 
   /**
-   * Get teacher assignments with subject information
+   * Get teacher assignments for a specific teacher
    */
-  getTeacherAssignments: async (teacherId: string): Promise<Array<{
-    id: string;
-    teacherId: string;
-    classId: string;
-    className: string;
-    subject: string;
-    isFormTeacher: boolean;
-  }>> => {
+  getTeacherAssignments: async (teacherId: string): Promise<TeacherAssignment[]> => {
     try {
       const assignmentsRef = collection(db, 'teacher_assignments');
       const q = query(
@@ -711,14 +712,83 @@ export const teacherService = {
         return {
           id: doc.id,
           teacherId: data.teacherId,
+          teacherName: data.teacherName || '',
+          teacherEmail: data.teacherEmail,
           classId: data.classId,
-          className: data.className,
+          className: data.className || '',
           subject: data.subject || '',
           isFormTeacher: data.isFormTeacher || false,
-        };
+          assignedAt: toDate(data.assignedAt),
+          createdAt: toDate(data.createdAt),
+          updatedAt: toDate(data.updatedAt),
+        } as TeacherAssignment;
       });
     } catch (error) {
       console.error('Error fetching teacher assignments:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * NEW: Get all teacher assignments across all classes
+   */
+  getAllTeacherAssignments: async (): Promise<TeacherAssignment[]> => {
+    try {
+      const assignmentsRef = collection(db, 'teacher_assignments');
+      const snapshot = await getDocs(assignmentsRef);
+      
+      return snapshot.docs.map(doc => {
+        const data = doc.data() as DocumentData;
+        return {
+          id: doc.id,
+          teacherId: data.teacherId,
+          teacherName: data.teacherName || '',
+          teacherEmail: data.teacherEmail,
+          classId: data.classId,
+          className: data.className || '',
+          subject: data.subject || '',
+          isFormTeacher: data.isFormTeacher || false,
+          assignedAt: toDate(data.assignedAt),
+          createdAt: toDate(data.createdAt),
+          updatedAt: toDate(data.updatedAt),
+        } as TeacherAssignment;
+      });
+    } catch (error) {
+      console.error('Error fetching all teacher assignments:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * NEW: Get teacher assignments filtered by class
+   */
+  getTeacherAssignmentsByClass: async (classId: string): Promise<TeacherAssignment[]> => {
+    try {
+      const assignmentsRef = collection(db, 'teacher_assignments');
+      const q = query(
+        assignmentsRef,
+        where('classId', '==', classId)
+      );
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => {
+        const data = doc.data() as DocumentData;
+        return {
+          id: doc.id,
+          teacherId: data.teacherId,
+          teacherName: data.teacherName || '',
+          teacherEmail: data.teacherEmail,
+          classId: data.classId,
+          className: data.className || '',
+          subject: data.subject || '',
+          isFormTeacher: data.isFormTeacher || false,
+          assignedAt: toDate(data.assignedAt),
+          createdAt: toDate(data.createdAt),
+          updatedAt: toDate(data.updatedAt),
+        } as TeacherAssignment;
+      });
+    } catch (error) {
+      console.error('Error fetching teacher assignments by class:', error);
       throw error;
     }
   },
