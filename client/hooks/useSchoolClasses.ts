@@ -1,18 +1,31 @@
+// @/hooks/useSchoolClasses.ts - ENHANCED WITH SUBJECT NORMALIZATION
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { classService, parseClassName } from '@/services/schoolService';
 import { Class, ClassCSVImportData } from '@/types/school';
+import { normalizeSubjectName } from '@/services/resultsService'; // IMPORT normalization utility
 
 interface ClassFilters {
   year?: number;
   isActive?: boolean;
   type?: 'grade' | 'form';
   searchTerm?: string;
-  teacherId?: string; // ADDED: Support for filtering by teacher
+  teacherId?: string;
 }
 
 interface CreateClassData {
   name: string;
   year: number;
+}
+
+// ENHANCED: Class interface now includes teacherAssignments field
+export interface EnhancedClass extends Class {
+  teacherAssignments?: Array<{
+    id: string;
+    subject: string;
+    subjectId: string; // Normalized subject ID
+    teacherId: string;
+    teacherName: string;
+  }>;
 }
 
 export const useSchoolClasses = (filters?: ClassFilters) => {
@@ -21,10 +34,40 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
   // Query: Get classes with filters
   const classesQuery = useQuery({
     queryKey: ['classes', filters],
-    queryFn: () => classService.getClasses(filters),
-    staleTime: 30 * 1000, // 30 seconds - shorter to see updates faster
-    gcTime: 5 * 60 * 1000, // 5 minutes (formerly cacheTime)
-    refetchOnWindowFocus: true, // Refetch when user returns to tab
+    queryFn: async () => {
+      const classes = await classService.getClasses(filters);
+      
+      // ENHANCED: For each class, fetch its teacher assignments
+      // This ensures we have normalized subject IDs available
+      const enhancedClasses = await Promise.all(
+        classes.map(async (cls: Class) => {
+          try {
+            // Fetch teacher assignments for this class
+            const assignments = await classService.getTeacherAssignmentsByClass(cls.id);
+            
+            // Normalize subject names in assignments
+            const normalizedAssignments = assignments.map((assignment: any) => ({
+              ...assignment,
+              subjectId: normalizeSubjectName(assignment.subject || '')
+            }));
+            
+            return {
+              ...cls,
+              teacherAssignments: normalizedAssignments
+            } as EnhancedClass;
+          } catch (error) {
+            // If assignments fetch fails, return class without assignments
+            console.warn(`Could not fetch assignments for class ${cls.id}:`, error);
+            return cls as EnhancedClass;
+          }
+        })
+      );
+      
+      return enhancedClasses;
+    },
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
   });
 
   // Mutation: Create new class
@@ -47,15 +90,12 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
       return classService.createClass(classData);
     },
     onMutate: async (newClass) => {
-      // Cancel outgoing refetches
       await queryClient.cancelQueries({ queryKey: ['classes'] });
 
-      // Snapshot previous value for rollback
       const previousClasses = queryClient.getQueryData(['classes', filters]);
 
-      // Optimistically update UI with temporary class
       const parsed = parseClassName(newClass.name);
-      const optimisticClass: Class = {
+      const optimisticClass: EnhancedClass = {
         id: `temp-${Date.now()}`,
         name: newClass.name.trim(),
         year: newClass.year,
@@ -65,17 +105,17 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
         isActive: true,
         students: 0,
         teachers: [],
+        teacherAssignments: [], // Initialize empty assignments
         createdAt: new Date(),
       };
 
-      queryClient.setQueryData(['classes', filters], (old: Class[] = []) => {
+      queryClient.setQueryData(['classes', filters], (old: EnhancedClass[] = []) => {
         return [...old, optimisticClass];
       });
 
       return { previousClasses };
     },
     onError: (error, variables, context) => {
-      // Rollback on error
       if (context?.previousClasses) {
         queryClient.setQueryData(['classes', filters], context.previousClasses);
       }
@@ -85,10 +125,9 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
       console.log('Class created successfully:', newClass);
     },
     onSettled: () => {
-      // Always refetch after mutation (success or error)
       queryClient.invalidateQueries({ 
         queryKey: ['classes'],
-        refetchType: 'active' // Only refetch active queries
+        refetchType: 'active'
       });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },
@@ -120,7 +159,6 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
       console.error('Bulk import failed:', error);
     },
     onSettled: () => {
-      // Invalidate all class queries after bulk import
       queryClient.invalidateQueries({ 
         queryKey: ['classes'],
         refetchType: 'active'
@@ -139,8 +177,7 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
       
       const previousClasses = queryClient.getQueryData(['classes', filters]);
 
-      // Optimistically update
-      queryClient.setQueryData(['classes', filters], (old: Class[] = []) => {
+      queryClient.setQueryData(['classes', filters], (old: EnhancedClass[] = []) => {
         return old.map(cls => 
           cls.id === classId ? { ...cls, ...updates } : cls
         );
@@ -160,6 +197,34 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     },
   });
 
+  // Mutation: Refresh teacher assignments for a class
+  const refreshAssignmentsMutation = useMutation({
+    mutationFn: async (classId: string) => {
+      const assignments = await classService.getTeacherAssignmentsByClass(classId);
+      return {
+        classId,
+        assignments: assignments.map((a: any) => ({
+          ...a,
+          subjectId: normalizeSubjectName(a.subject || '')
+        }))
+      };
+    },
+    onSuccess: ({ classId, assignments }) => {
+      // Update the class in the cache with fresh assignments
+      queryClient.setQueryData(['classes', filters], (old: EnhancedClass[] = []) => {
+        return old.map(cls => 
+          cls.id === classId 
+            ? { ...cls, teacherAssignments: assignments } 
+            : cls
+        );
+      });
+      
+      // Invalidate related queries
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', classId] });
+      queryClient.invalidateQueries({ queryKey: ['reportReadiness', 'class', classId] });
+    },
+  });
+
   // If teacherId filter is provided, filter the results
   const filteredClasses = filters?.teacherId 
     ? (classesQuery.data || []).filter(cls => 
@@ -169,8 +234,8 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     : (classesQuery.data || []);
 
   return {
-    // Data - return filtered classes if teacherId is provided
-    classes: filteredClasses,
+    // Data - return enhanced classes with normalized assignments
+    classes: filteredClasses as EnhancedClass[],
     
     // Query states
     isLoading: classesQuery.isLoading,
@@ -182,16 +247,19 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     isCreatingClass: createClassMutation.isPending,
     isImportingClasses: bulkImportClassesMutation.isPending,
     isUpdatingClass: updateClassMutation.isPending,
+    isRefreshingAssignments: refreshAssignmentsMutation.isPending,
     
     // Mutations
     createClass: createClassMutation.mutateAsync,
     bulkImportClasses: bulkImportClassesMutation.mutateAsync,
     updateClass: updateClassMutation.mutateAsync,
+    refreshAssignments: refreshAssignmentsMutation.mutateAsync,
     
     // Refetch
     refetch: classesQuery.refetch,
     
     // Helper
     parseClassName,
+    normalizeSubjectName, // EXPOSE normalization utility
   };
 };

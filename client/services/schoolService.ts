@@ -1,4 +1,4 @@
-// @/services/schoolService.ts - COMPLETE VERSION WITH SUBJECT SUPPORT AND TEACHER ASSIGNMENTS
+// @/services/schoolService.ts - ENHANCED WITH SUBJECT NORMALIZATION
 import {
   collection,
   query,
@@ -28,8 +28,12 @@ import {
   DashboardStats, 
   ClassCSVImportData, 
   CSVImportData,
-  TeacherAssignment // NEW: Import the TeacherAssignment interface
+  TeacherAssignment
 } from '@/types/school';
+
+// ==================== IMPORT NORMALIZATION UTILITY ====================
+// IMPORTANT: Use the same normalization function as resultsService
+import { normalizeSubjectName } from './resultsService';
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -400,6 +404,51 @@ export const classService = {
       throw error;
     }
   },
+
+  /**
+   * NEW: Get teacher assignments by class with normalized subjects
+   */
+  getTeacherAssignmentsByClass: async (classId: string): Promise<TeacherAssignment[]> => {
+    try {
+      const assignmentsRef = collection(db, 'teacher_assignments');
+      const q = query(
+        assignmentsRef,
+        where('classId', '==', classId)
+      );
+      
+      const snapshot = await getDocs(q);
+      const assignments = snapshot.docs.map(doc => {
+        const data = doc.data() as DocumentData;
+        const subject = data.subject || '';
+        const normalizedSubject = normalizeSubjectName(subject);
+        
+        return {
+          id: doc.id,
+          teacherId: data.teacherId,
+          teacherName: data.teacherName || '',
+          teacherEmail: data.teacherEmail,
+          classId: data.classId,
+          className: data.className || '',
+          subject: subject,
+          normalizedSubjectId: normalizedSubject, // ADDED: Normalized subject ID
+          isFormTeacher: data.isFormTeacher || false,
+          assignedAt: toDate(data.assignedAt),
+          createdAt: toDate(data.createdAt),
+          updatedAt: toDate(data.updatedAt),
+        } as TeacherAssignment & { normalizedSubjectId: string };
+      });
+      
+      console.log(`📚 Found ${assignments.length} teacher assignments for class ${classId}`);
+      assignments.forEach(a => {
+        console.log(`   - ${a.subject} → Normalized: ${a.normalizedSubjectId} (Teacher: ${a.teacherName})`);
+      });
+      
+      return assignments;
+    } catch (error) {
+      console.error('Error fetching teacher assignments by class:', error);
+      return [];
+    }
+  },
 };
 
 // ==================== LEARNER SERVICE ====================
@@ -619,7 +668,7 @@ export const learnerService = {
   },
 };
 
-// ==================== TEACHER SERVICE (WITH SUBJECT SUPPORT) ====================
+// ==================== TEACHER SERVICE (WITH SUBJECT NORMALIZATION) ====================
 
 export const teacherService = {
   /**
@@ -709,6 +758,9 @@ export const teacherService = {
       const snapshot = await getDocs(q);
       return snapshot.docs.map(doc => {
         const data = doc.data() as DocumentData;
+        const subject = data.subject || '';
+        const normalizedSubject = normalizeSubjectName(subject);
+        
         return {
           id: doc.id,
           teacherId: data.teacherId,
@@ -716,12 +768,13 @@ export const teacherService = {
           teacherEmail: data.teacherEmail,
           classId: data.classId,
           className: data.className || '',
-          subject: data.subject || '',
+          subject: subject,
+          normalizedSubjectId: normalizedSubject, // ADDED: Normalized subject ID
           isFormTeacher: data.isFormTeacher || false,
           assignedAt: toDate(data.assignedAt),
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
-        } as TeacherAssignment;
+        } as TeacherAssignment & { normalizedSubjectId: string };
       });
     } catch (error) {
       console.error('Error fetching teacher assignments:', error);
@@ -730,15 +783,18 @@ export const teacherService = {
   },
 
   /**
-   * NEW: Get all teacher assignments across all classes
+   * Get all teacher assignments across all classes
    */
-  getAllTeacherAssignments: async (): Promise<TeacherAssignment[]> => {
+  getAllTeacherAssignments: async (): Promise<(TeacherAssignment & { normalizedSubjectId: string })[]> => {
     try {
       const assignmentsRef = collection(db, 'teacher_assignments');
       const snapshot = await getDocs(assignmentsRef);
       
       return snapshot.docs.map(doc => {
         const data = doc.data() as DocumentData;
+        const subject = data.subject || '';
+        const normalizedSubject = normalizeSubjectName(subject);
+        
         return {
           id: doc.id,
           teacherId: data.teacherId,
@@ -746,55 +802,31 @@ export const teacherService = {
           teacherEmail: data.teacherEmail,
           classId: data.classId,
           className: data.className || '',
-          subject: data.subject || '',
+          subject: subject,
+          normalizedSubjectId: normalizedSubject,
           isFormTeacher: data.isFormTeacher || false,
           assignedAt: toDate(data.assignedAt),
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
-        } as TeacherAssignment;
+        };
       });
     } catch (error) {
       console.error('Error fetching all teacher assignments:', error);
-      throw error;
+      return [];
     }
   },
 
   /**
-   * NEW: Get teacher assignments filtered by class
+   * Get teacher assignments filtered by class (MOVED TO classService)
+   * Kept for backward compatibility
    */
   getTeacherAssignmentsByClass: async (classId: string): Promise<TeacherAssignment[]> => {
-    try {
-      const assignmentsRef = collection(db, 'teacher_assignments');
-      const q = query(
-        assignmentsRef,
-        where('classId', '==', classId)
-      );
-      
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
-        return {
-          id: doc.id,
-          teacherId: data.teacherId,
-          teacherName: data.teacherName || '',
-          teacherEmail: data.teacherEmail,
-          classId: data.classId,
-          className: data.className || '',
-          subject: data.subject || '',
-          isFormTeacher: data.isFormTeacher || false,
-          assignedAt: toDate(data.assignedAt),
-          createdAt: toDate(data.createdAt),
-          updatedAt: toDate(data.updatedAt),
-        } as TeacherAssignment;
-      });
-    } catch (error) {
-      console.error('Error fetching teacher assignments by class:', error);
-      throw error;
-    }
+    return classService.getTeacherAssignmentsByClass(classId);
   },
 
   /**
    * Assign a teacher to a class with a specific subject
+   * ENHANCED: Normalizes subject before saving
    */
   assignTeacherToClass: async (
     teacherId: string, 
@@ -810,6 +842,10 @@ export const teacherService = {
         throw new Error('Subject is required when assigning a teacher to a class');
       }
       
+      // Normalize subject name for validation
+      const normalizedSubject = normalizeSubjectName(subject);
+      console.log(`Normalized subject: ${subject} → ${normalizedSubject}`);
+      
       // Get teacher and class data
       const teacherRef = doc(db, 'users', teacherId);
       const teacherDoc = await getDoc(teacherRef);
@@ -820,10 +856,10 @@ export const teacherService = {
       
       const teacherData = teacherDoc.data() as DocumentData;
       
-      // Validate that the teacher actually teaches this subject
-      const teacherSubjects = teacherData.subjects || [];
-      if (!teacherSubjects.includes(subject)) {
-        throw new Error(`Teacher does not teach ${subject}. Their subjects are: ${teacherSubjects.join(', ')}`);
+      // Validate that the teacher actually teaches this subject (using normalized comparison)
+      const teacherSubjects = (teacherData.subjects || []).map((s: string) => normalizeSubjectName(s));
+      if (!teacherSubjects.includes(normalizedSubject)) {
+        throw new Error(`Teacher does not teach ${subject} (normalized: ${normalizedSubject}). Their subjects are: ${teacherData.subjects.join(', ')}`);
       }
       
       const classRef = doc(db, 'classes', classId);
@@ -850,8 +886,9 @@ export const teacherService = {
         // Teacher already assigned to this class
         const existingAssignment = existingSnapshot.docs[0];
         const existingData = existingAssignment.data();
+        const existingNormalizedSubject = normalizeSubjectName(existingData.subject || '');
         
-        if (existingData.subject === subject) {
+        if (existingNormalizedSubject === normalizedSubject) {
           // Same subject, just update isFormTeacher if needed
           if (isFormTeacher !== existingData.isFormTeacher) {
             const batch = writeBatch(db);
@@ -886,7 +923,7 @@ export const teacherService = {
       // Use writeBatch for atomic updates
       const batch = writeBatch(db);
       
-      // 1. Create assignment in teacher_assignments collection with SUBJECT
+      // 1. Create assignment in teacher_assignments collection with normalized subject
       const assignmentRef = doc(collection(db, 'teacher_assignments'));
       batch.set(assignmentRef, {
         teacherId,
@@ -894,14 +931,15 @@ export const teacherService = {
         teacherEmail: teacherData.email,
         classId,
         className: classData.name,
-        subject,
+        subject, // Store original subject name
+        normalizedSubject, // Store normalized subject ID for matching
         isFormTeacher,
         assignedAt: serverTimestamp(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
       
-      console.log('Teacher assignment document queued with subject:', subject);
+      console.log('Teacher assignment document queued with subject:', subject, '(normalized:', normalizedSubject, ')');
       
       // 2. Update the class document to track teachers
       batch.update(classRef, {
@@ -1013,3 +1051,6 @@ export const teacherService = {
     }
   },
 };
+
+// ==================== EXPORT NORMALIZATION UTILITY ====================
+export { normalizeSubjectName };

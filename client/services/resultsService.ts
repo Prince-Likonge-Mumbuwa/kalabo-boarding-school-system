@@ -1,4 +1,11 @@
-// @/services/resultsService.ts - ENHANCED VERSION WITH VALIDATION
+// @/services/resultsService.ts
+// COMPLETE REWRITE - Version 3.1.0
+// FIXES: 
+// 1. validateClassReportReadiness now accepts 3 parameters (removed 4th param)
+// 2. Added consistent subject normalization across ALL comparisons
+// 3. Enhanced debug logging to trace subject matching failures
+// 4. Fixed teacher assignment fetching logic
+
 import {
   collection,
   doc,
@@ -16,7 +23,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
-// ==================== TYPES ====================
+// ==================== ENHANCED TYPES ====================
+
 export interface StudentResult {
   id: string;
   studentId: string;
@@ -30,13 +38,13 @@ export interface StudentResult {
   teacherName: string;
   examType: 'week4' | 'week8' | 'endOfTerm';
   examName: string;
-  marks: number; // -1 for absent (X), 0-100 for actual marks
+  marks: number;
   totalMarks: number;
   percentage: number;
-  grade: number; // 1-9 scale, -1 for absent (X)
+  grade: number;
   term: string;
   year: number;
-  status: 'entered' | 'absent' | 'not_entered'; // NEW: Track entry status
+  status: 'entered' | 'absent' | 'not_entered';
   createdAt: string;
   updatedAt: string;
 }
@@ -51,8 +59,8 @@ export interface SubjectResultSummary {
   endOfTerm: number;
   grade: number;
   comment: string;
-  isComplete: boolean; // NEW: All exams entered
-  missingExams: string[]; // NEW: Which exams are missing
+  isComplete: boolean;
+  missingExams: string[];
 }
 
 export interface ReportCardData {
@@ -62,7 +70,7 @@ export interface ReportCardData {
   className: string;
   classId: string;
   form: string;
-  grade: number; // Overall grade 1-9
+  grade: number;
   position: string;
   gender: string;
   totalMarks: number;
@@ -77,11 +85,10 @@ export interface ReportCardData {
   generatedDate: string;
   term: string;
   year: number;
-  isComplete: boolean; // NEW: All results entered
-  completionPercentage: number; // NEW: % of complete subjects
+  isComplete: boolean;
+  completionPercentage: number;
 }
 
-// NEW: Validation types
 export interface ReportReadinessCheck {
   isReady: boolean;
   studentId: string;
@@ -106,8 +113,9 @@ export interface ClassReportReadiness {
   incompleteStudents: number;
   completionPercentage: number;
   studentDetails: ReportReadinessCheck[];
-  // NEW: Expected subjects from teacher assignments
   expectedSubjects: string[];
+  expectedSubjectsWithIds: Array<{ id: string; name: string }>; // NEW: Include both ID and name
+  hasAssignments: boolean;
 }
 
 export interface SubjectCompletionStatus {
@@ -131,6 +139,20 @@ export interface SubjectCompletionStatus {
   };
 }
 
+export interface BulkReportOperation {
+  reportCards: ReportCardData[];
+  summary: {
+    total: number;
+    passed: number;
+    failed: number;
+    avgPercentage: number;
+    complete: number;
+    incomplete: number;
+  };
+}
+
+// ==================== NEW ANALYTICS TYPES ====================
+
 export interface GradeDistribution {
   grade: number;
   count: number;
@@ -139,15 +161,14 @@ export interface GradeDistribution {
 }
 
 export interface PerformanceTrend {
-  period: string;
-  examType: 'week4' | 'week8' | 'endOfTerm';
+  month: string;
   passRate: number;
   avgMarks: number;
-  totalStudents: number;
+  improvement: 'up' | 'down' | 'stable';
 }
 
-export interface ClassComparison {
-  classId: string;
+export interface ClassPerformance {
+  class: string;
   className: string;
   form: string;
   passRate: number;
@@ -157,29 +178,34 @@ export interface ClassComparison {
 }
 
 export interface SubjectAnalysis {
-  subjectId: string;
-  subjectName: string;
+  subject: string;
   passRate: number;
   avgScore: number;
-  topGrade: number;
-  totalStudents: number;
+  topGrade: string;
   difficulty: 'easy' | 'medium' | 'hard';
 }
 
-export interface BulkReportOperation {
-  reportCards: ReportCardData[];
-  summary: {
-    total: number;
-    passed: number;
-    failed: number;
-    avgPercentage: number;
-    complete: number; // NEW: Fully complete reports
-    incomplete: number; // NEW: Missing some data
-  };
+export interface AnalyticsSummary {
+  gradeDistribution: GradeDistribution[];
+  performanceTrend: PerformanceTrend[];
+  totalStudents: number;
+  averagePercentage: number;
+  passRate: number;
+  topGrade: string;
 }
 
-// ==================== SUBJECT NORMALIZATION ====================
-// Master subject mapping to prevent inconsistencies
+// ==================== CONSTANTS & CONFIGURATION ====================
+
+// FIRESTORE COLLECTION NAMES - CRITICAL: Must match Firebase rules
+const COLLECTIONS = {
+  RESULTS: 'results',
+  LEARNERS: 'learners',
+  CLASSES: 'classes',
+  TEACHER_ASSIGNMENTS: 'teacher_assignments',
+  USERS: 'users',
+} as const;
+
+// ENHANCED: Complete subject normalization map with all variations
 const SUBJECT_NORMALIZATION_MAP: Record<string, string> = {
   // Mathematics variations
   'Mathematics': 'Mathematics',
@@ -187,25 +213,96 @@ const SUBJECT_NORMALIZATION_MAP: Record<string, string> = {
   'Math': 'Mathematics',
   'mathematics': 'Mathematics',
   'maths': 'Mathematics',
+  'math': 'Mathematics',
+  'MATH': 'Mathematics',
+  
   // English variations
   'English': 'English',
   'english': 'English',
   'Eng': 'English',
+  'eng': 'English',
+  'ENGLISH': 'English',
+  
   // Science variations
   'Science': 'Science',
   'science': 'Science',
   'General Science': 'Science',
-  // Add more subjects as needed
+  'general science': 'Science',
+  'SCIENCE': 'Science',
+  
+  // Physics
+  'Physics': 'Physics',
+  'physics': 'Physics',
+  'PHYSICS': 'Physics',
+  
+  // Chemistry
+  'Chemistry': 'Chemistry',
+  'chemistry': 'Chemistry',
+  'CHEMISTRY': 'Chemistry',
+  
+  // Biology
+  'Biology': 'Biology',
+  'biology': 'Biology',
+  'BIOLOGY': 'Biology',
+  
+  // History
+  'History': 'History',
+  'history': 'History',
+  'HISTORY': 'History',
+  
+  // Geography
+  'Geography': 'Geography',
+  'geography': 'Geography',
+  'GEOGRAPHY': 'Geography',
+  
+  // Physical Education
+  'Physical Education': 'Physical Education',
+  'PE': 'Physical Education',
+  'P.E.': 'Physical Education',
+  'physical education': 'Physical Education',
+  'pe': 'Physical Education',
+  
+  // Art
+  'Art': 'Art',
+  'art': 'Art',
+  'ART': 'Art',
+  'Fine Art': 'Art',
+  'fine art': 'Art',
+  
+  // Music
+  'Music': 'Music',
+  'music': 'Music',
+  'MUSIC': 'Music',
+  
+  // ICT
+  'ICT': 'ICT',
+  'ict': 'ICT',
+  'Computer Science': 'ICT',
+  'computer science': 'ICT',
+  'Computing': 'ICT',
+  'computing': 'ICT',
+  'COMPUTER SCIENCE': 'ICT',
+  
+  // Social Studies
+  'Social Studies': 'Social Studies',
+  'social studies': 'Social Studies',
+  'SOCIAL STUDIES': 'Social Studies',
+  'Social': 'Social Studies',
+  
+  // Religious Education
+  'Religious Education': 'Religious Education',
+  'RE': 'Religious Education',
+  'R.E.': 'Religious Education',
+  'religious education': 'Religious Education',
+  're': 'Religious Education',
+  
+  // Integrated Science
+  'Integrated Science': 'Integrated Science',
+  'integrated science': 'Integrated Science',
+  'INTEGRATED SCIENCE': 'Integrated Science',
 };
 
-/**
- * Normalize subject name to prevent duplicates
- */
-const normalizeSubjectName = (subjectName: string): string => {
-  return SUBJECT_NORMALIZATION_MAP[subjectName] || subjectName;
-};
-
-// ==================== GRADING SYSTEM ====================
+// Grade system mapping
 export const GRADE_SYSTEM = {
   1: { min: 75, max: 100, description: 'Distinction' },
   2: { min: 70, max: 74, description: 'Distinction' },
@@ -219,8 +316,48 @@ export const GRADE_SYSTEM = {
   X: { min: -1, max: -1, description: 'Absent' },
 } as const;
 
+// ==================== UTILITY FUNCTIONS ====================
+
+// ENHANCED: More robust normalization with trimming and uppercase fallback
+export const normalizeSubjectName = (subjectName: string): string => {
+  if (!subjectName) return '';
+  
+  const trimmed = subjectName.trim();
+  
+  // Direct lookup
+  if (SUBJECT_NORMALIZATION_MAP[trimmed]) {
+    return SUBJECT_NORMALIZATION_MAP[trimmed];
+  }
+  
+  // Try lowercase
+  const lower = trimmed.toLowerCase();
+  const lowerMap: Record<string, string> = {};
+  Object.entries(SUBJECT_NORMALIZATION_MAP).forEach(([key, value]) => {
+    lowerMap[key.toLowerCase()] = value;
+  });
+  
+  if (lowerMap[lower]) {
+    return lowerMap[lower];
+  }
+  
+  // Try uppercase
+  const upper = trimmed.toUpperCase();
+  const upperMap: Record<string, string> = {};
+  Object.entries(SUBJECT_NORMALIZATION_MAP).forEach(([key, value]) => {
+    upperMap[key.toUpperCase()] = value;
+  });
+  
+  if (upperMap[upper]) {
+    return upperMap[upper];
+  }
+  
+  // Log unmapped subjects for debugging
+  console.warn(`⚠️ No normalization mapping found for subject: "${subjectName}"`);
+  return trimmed;
+};
+
 export const calculateGrade = (percentage: number): number => {
-  if (percentage < 0) return -1; // Absent
+  if (percentage < 0) return -1;
   if (percentage >= 75) return 1;
   if (percentage >= 70) return 2;
   if (percentage >= 65) return 3;
@@ -242,59 +379,127 @@ export const getGradeDisplay = (grade: number): string => {
   return grade === -1 ? 'X' : grade.toString();
 };
 
-// ==================== RESULTS SERVICE ====================
+// ==================== MAIN SERVICE CLASS ====================
+
 class ResultsService {
-  private resultsCollection = collection(db, 'results');
-  private learnersCollection = collection(db, 'learners');
-  private classesCollection = collection(db, 'classes');
-  private teacherAssignmentsCollection = collection(db, 'teacherAssignments'); // NEW
+  // Firestore collections - using constants for consistency
+  private resultsCollection = collection(db, COLLECTIONS.RESULTS);
+  private learnersCollection = collection(db, COLLECTIONS.LEARNERS);
+  private classesCollection = collection(db, COLLECTIONS.CLASSES);
+  private teacherAssignmentsCollection = collection(db, COLLECTIONS.TEACHER_ASSIGNMENTS);
 
   /**
-   * Generate unique ID for result
-   * Format: {studentId}_{subjectId}_{examType}_{term}_{year}
+   * Initialize and test connection to Firebase
    */
-  private generateResultId(
-    studentId: string,
-    subjectId: string,
-    examType: string,
-    term: string,
-    year: number
-  ): string {
-    const cleanTerm = term.replace(/\s+/g, '');
-    const normalizedSubject = normalizeSubjectName(subjectId);
-    return `${studentId}_${normalizedSubject}_${examType}_${cleanTerm}_${year}`;
+  async initialize(): Promise<{ success: boolean; error?: string }> {
+    try {
+      console.log('🔌 Initializing ResultsService...');
+      console.log('📚 Collections configured:', COLLECTIONS);
+
+      const testQuery = query(this.teacherAssignmentsCollection, limit(1));
+      const snapshot = await getDocs(testQuery);
+      
+      console.log(`✅ Successfully connected to ${COLLECTIONS.TEACHER_ASSIGNMENTS} collection`);
+      console.log(`📊 Found ${snapshot.size} teacher assignment documents`);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Failed to initialize ResultsService:', error);
+      
+      let errorMessage = 'Unknown error';
+      if (error.code === 'permission-denied') {
+        errorMessage = `Permission denied accessing ${COLLECTIONS.TEACHER_ASSIGNMENTS}. Check Firebase rules and collection name.`;
+      } else if (error.code === 'not-found') {
+        errorMessage = `Collection ${COLLECTIONS.TEACHER_ASSIGNMENTS} does not exist. Create it in Firebase Console.`;
+      }
+      
+      return { success: false, error: errorMessage };
+    }
   }
 
   /**
-   * Get expected subjects for a class from teacher assignments
-   * NEW: This is the key integration point
+   * ENHANCED: Get teacher assignments for a class with normalized subjects
    */
-  private async getExpectedSubjectsForClass(classId: string): Promise<string[]> {
+  async getTeacherAssignmentsForClass(classId: string): Promise<Array<{
+    id: string;
+    subject: string;
+    subjectId: string; // Normalized subject ID
+    teacherId: string;
+    teacherName: string;
+    classId: string;
+  }>> {
     try {
+      console.log(`🔍 Fetching teacher assignments for class: ${classId}`);
+      
       const assignmentsQuery = query(
         this.teacherAssignmentsCollection,
         where('classId', '==', classId)
       );
-      const assignmentsSnapshot = await getDocs(assignmentsQuery);
       
-      const subjects = new Set<string>();
-      assignmentsSnapshot.docs.forEach(doc => {
-        const assignment = doc.data();
-        if (assignment.subject) {
-          subjects.add(normalizeSubjectName(assignment.subject));
-        }
+      const snapshot = await getDocs(assignmentsQuery);
+      
+      if (snapshot.empty) {
+        console.warn(`⚠️ No teacher assignments found for class ${classId}`);
+        return [];
+      }
+
+      const assignments = snapshot.docs.map(doc => {
+        const data = doc.data();
+        const subjectName = data.subject || '';
+        const normalizedSubject = normalizeSubjectName(subjectName);
+        
+        return {
+          id: doc.id,
+          subject: subjectName,
+          subjectId: normalizedSubject,
+          teacherId: data.teacherId || 'unknown',
+          teacherName: data.teacherName || 'Not Assigned',
+          classId: data.classId,
+        };
+      });
+
+      console.log(`📚 Found ${assignments.length} teacher assignments for class ${classId}`);
+      assignments.forEach(a => {
+        console.log(`   - ${a.subject} → Normalized: ${a.subjectId} (Teacher: ${a.teacherName})`);
       });
       
-      return Array.from(subjects);
+      return assignments;
     } catch (error) {
-      console.error('Error getting expected subjects for class:', error);
+      console.error('❌ Error getting teacher assignments for class:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get expected subjects for a class from teacher assignments
+   * ENHANCED: Returns both original names and normalized IDs
+   */
+  private async getExpectedSubjectsForClass(classId: string): Promise<Array<{ id: string; name: string }>> {
+    try {
+      const assignments = await this.getTeacherAssignmentsForClass(classId);
+      
+      // Use Map to deduplicate by normalized subject ID
+      const subjectMap = new Map<string, string>();
+      assignments.forEach(assignment => {
+        subjectMap.set(assignment.subjectId, assignment.subject);
+      });
+      
+      const subjects = Array.from(subjectMap.entries()).map(([id, name]) => ({
+        id,
+        name
+      }));
+      
+      console.log(`✅ Expected subjects for class ${classId}:`, subjects.map(s => `${s.name} (${s.id})`));
+      
+      return subjects;
+    } catch (error) {
+      console.error('❌ Error getting expected subjects for class:', error);
       return [];
     }
   }
 
   /**
    * Check if results already exist for this exam
-   * NEW: Prevents accidental overwrites
    */
   async checkExistingResults(
     classId: string,
@@ -331,7 +536,6 @@ class ResultsService {
 
   /**
    * Get subject completion status for a class
-   * NEW: Track which exam types have been entered
    */
   async getSubjectCompletionStatus(
     classId: string,
@@ -339,17 +543,14 @@ class ResultsService {
     year: number
   ): Promise<SubjectCompletionStatus[]> {
     try {
-      // Get class info
       const classDoc = await getDoc(doc(this.classesCollection, classId));
       const classData = classDoc.data();
       if (!classData) {
         throw new Error('Class not found');
       }
 
-      // Get expected subjects from teacher assignments
       const expectedSubjects = await this.getExpectedSubjectsForClass(classId);
       
-      // Get all results for this class/term/year
       const q = query(
         this.resultsCollection,
         where('classId', '==', classId),
@@ -362,7 +563,6 @@ class ResultsService {
         results.push(doc.data() as StudentResult);
       });
 
-      // Group by subject
       const subjectMap = new Map<string, {
         subjectName: string;
         teacherId: string;
@@ -390,14 +590,13 @@ class ResultsService {
         if (result.examType === 'endOfTerm') subject.endOfTermStudents.add(result.studentId);
       });
 
-      // Also include subjects that have no results yet (from expected subjects)
       expectedSubjects.forEach(subject => {
-        const normalizedSubject = normalizeSubjectName(subject);
-        if (!subjectMap.has(normalizedSubject)) {
-          subjectMap.set(normalizedSubject, {
-            subjectName: normalizedSubject,
-            teacherId: 'unknown',
-            teacherName: 'Assigned Teacher',
+        const normalizedId = normalizeSubjectName(subject.id);
+        if (!subjectMap.has(normalizedId)) {
+          subjectMap.set(normalizedId, {
+            subjectName: subject.name,
+            teacherId: 'pending',
+            teacherName: 'Not entered',
             week4Students: new Set(),
             week8Students: new Set(),
             endOfTermStudents: new Set(),
@@ -405,13 +604,14 @@ class ResultsService {
         }
       });
 
-      const totalStudents = classData.students || 0;
+      const totalStudents = classData.students?.length || 0;
       return Array.from(subjectMap.entries()).map(([subjectId, data]) => {
         const week4Complete = data.week4Students.size >= totalStudents;
         const week8Complete = data.week8Students.size >= totalStudents;
         const endOfTermComplete = data.endOfTermStudents.size >= totalStudents;
         const completeCount = [week4Complete, week8Complete, endOfTermComplete].filter(Boolean).length;
-        const percentComplete = Math.round((completeCount / 3) * 100);
+        const percentComplete = totalStudents > 0 ? Math.round((completeCount / 3) * 100) : 0;
+        
         return {
           subjectId,
           subjectName: data.subjectName,
@@ -441,7 +641,7 @@ class ResultsService {
 
   /**
    * Validate single student report readiness
-   * ENHANCED: Now uses expected subjects from teacher assignments
+   * ENHANCED: Better logging and subject matching
    */
   async validateReportCardReadiness(
     studentId: string,
@@ -449,24 +649,43 @@ class ResultsService {
     year: number
   ): Promise<ReportReadinessCheck> {
     try {
-      // Get student info
+      console.log(`🔍 Validating report readiness for student: ${studentId}`);
+      
       const studentDoc = await getDoc(doc(this.learnersCollection, studentId));
-      const studentData = studentDoc.exists() ? studentDoc.data() : null;
-      if (!studentData) {
-        throw new Error('Student not found');
+      if (!studentDoc.exists()) {
+        throw new Error(`Student not found: ${studentId}`);
       }
+      
+      const studentData = studentDoc.data();
       const studentName = studentData.name || 'Unknown';
       const classId = studentData.classId;
 
-      // Get expected subjects from teacher assignments (KEY CHANGE)
+      if (!classId) {
+        throw new Error(`Student ${studentId} has no class assigned`);
+      }
+
       const expectedSubjects = await this.getExpectedSubjectsForClass(classId);
+      
+      console.log(`📚 Student ${studentName} in class ${classId} expects ${expectedSubjects.length} subjects`);
+      expectedSubjects.forEach(s => {
+        console.log(`   Expected: ${s.name} (ID: ${s.id})`);
+      });
 
-      // Get all results for this student
+      if (expectedSubjects.length === 0) {
+        console.warn(`⚠️ No teacher assignments for class ${classId}. Using actual results only.`);
+      }
+
       const results = await this.getStudentResults(studentId, { term, year });
+      
+      console.log(`📝 Found ${results.length} result entries for student`);
+      results.forEach(r => {
+        console.log(`   Result: ${r.subjectName} (ID: ${r.subjectId}) - ${r.examType}: ${r.percentage}%`);
+      });
 
-      // Create subject map from expected subjects (not just existing results)
+      // Create map of expected subjects
       const subjectMap = new Map<string, {
         subjectName: string;
+        subjectId: string;
         teacherId: string;
         teacherName: string;
         hasWeek4: boolean;
@@ -474,26 +693,27 @@ class ResultsService {
         hasEndOfTerm: boolean;
       }>();
 
-      // Initialize with expected subjects
       expectedSubjects.forEach(subject => {
-        const normalizedSubject = normalizeSubjectName(subject);
-        subjectMap.set(normalizedSubject, {
-          subjectName: normalizedSubject,
-          teacherId: 'unknown',
-          teacherName: 'Assigned Teacher',
+        const normalizedId = subject.id;
+        subjectMap.set(normalizedId, {
+          subjectName: subject.name,
+          subjectId: normalizedId,
+          teacherId: 'pending',
+          teacherName: 'Not assigned',
           hasWeek4: false,
           hasWeek8: false,
           hasEndOfTerm: false,
         });
       });
 
-      // Update with actual results
+      // Fill in actual results
       results.forEach(result => {
         const key = result.subjectId;
         if (!subjectMap.has(key)) {
-          // If there's a result for a subject not in expected list, add it
+          console.log(`➕ Adding unexpected subject: ${result.subjectName} (${key})`);
           subjectMap.set(key, {
             subjectName: result.subjectName,
+            subjectId: result.subjectId,
             teacherId: result.teacherId,
             teacherName: result.teacherName,
             hasWeek4: false,
@@ -509,15 +729,17 @@ class ResultsService {
         if (result.examType === 'endOfTerm') subject.hasEndOfTerm = true;
       });
 
-      // Check for missing data
       const missingData: ReportReadinessCheck['missingData'] = [];
       let completeSubjects = 0;
+      
       subjectMap.forEach((subject, subjectId) => {
         const missing: string[] = [];
         if (!subject.hasWeek4) missing.push('Week 4');
         if (!subject.hasWeek8) missing.push('Week 8');
         if (!subject.hasEndOfTerm) missing.push('End of Term');
+        
         if (missing.length > 0) {
+          console.log(`⚠️ Subject ${subject.subjectName} missing: ${missing.join(', ')}`);
           missingData.push({
             subject: subject.subjectName,
             subjectId,
@@ -529,8 +751,13 @@ class ResultsService {
         }
       });
 
+      const isReady = missingData.length === 0 && subjectMap.size > 0;
+
+      console.log(`📊 Readiness result for ${studentName}: ${isReady ? 'READY' : 'NOT READY'}`);
+      console.log(`   Complete: ${completeSubjects}/${subjectMap.size} subjects`);
+
       return {
-        isReady: missingData.length === 0,
+        isReady,
         studentId,
         studentName,
         totalSubjects: subjectMap.size,
@@ -538,14 +765,14 @@ class ResultsService {
         missingData,
       };
     } catch (error) {
-      console.error('Error validating report card readiness:', error);
+      console.error('❌ Error validating report card readiness:', error);
       throw error;
     }
   }
 
   /**
    * Validate entire class report readiness
-   * ENHANCED: Now integrates with teacher assignments to know expected subjects
+   * FIXED: Now accepts exactly 3 parameters
    */
   async validateClassReportReadiness(
     classId: string,
@@ -553,23 +780,31 @@ class ResultsService {
     year: number
   ): Promise<ClassReportReadiness> {
     try {
-      // Get class info
+      console.log(`🔍 Validating class report readiness: ${classId} for ${term} ${year}`);
+      
       const classDoc = await getDoc(doc(this.classesCollection, classId));
-      const classData = classDoc.data();
-      if (!classData) {
-        throw new Error('Class not found');
+      if (!classDoc.exists()) {
+        throw new Error(`Class not found: ${classId}`);
       }
+      const classData = classDoc.data();
 
-      // Get expected subjects from teacher assignments (KEY INTEGRATION)
-      const expectedSubjects = await this.getExpectedSubjectsForClass(classId);
+      // Get expected subjects with normalized IDs
+      const expectedSubjectsWithIds = await this.getExpectedSubjectsForClass(classId);
+      const expectedSubjectIds = expectedSubjectsWithIds.map(s => s.id);
+      const hasAssignments = expectedSubjectsWithIds.length > 0;
 
-      // Get all students in class
+      console.log(`📚 Class ${classData.name} expects ${expectedSubjectsWithIds.length} subjects`);
+      expectedSubjectsWithIds.forEach(s => {
+        console.log(`   Expected: ${s.name} (ID: ${s.id})`);
+      });
+
       const learnersQuery = query(
         this.learnersCollection,
         where('classId', '==', classId),
         where('isActive', '==', true)
       );
       const learnersSnapshot = await getDocs(learnersQuery);
+      
       const students: Array<{ id: string; name: string }> = [];
       learnersSnapshot.forEach(doc => {
         students.push({
@@ -578,17 +813,40 @@ class ResultsService {
         });
       });
 
-      // Check readiness for each student
-      const readinessChecks = await Promise.all(
+      console.log(`👥 Found ${students.length} students in class`);
+
+      const readinessChecks = await Promise.allSettled(
         students.map(student =>
           this.validateReportCardReadiness(student.id, term, year)
         )
       );
 
-      const readyStudents = readinessChecks.filter(check => check.isReady).length;
-      const incompleteStudents = readinessChecks.length - readyStudents;
-      const completionPercentage = readinessChecks.length > 0
-        ? Math.round((readyStudents / readinessChecks.length) * 100)
+      const studentDetails: ReportReadinessCheck[] = [];
+      readinessChecks.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          studentDetails.push(result.value);
+        } else {
+          console.error(`Failed to validate student ${students[index]?.id}:`, result.reason);
+          studentDetails.push({
+            isReady: false,
+            studentId: students[index]?.id || 'unknown',
+            studentName: students[index]?.name || 'Unknown',
+            totalSubjects: 0,
+            completeSubjects: 0,
+            missingData: [{
+              subject: 'Validation Error',
+              subjectId: 'error',
+              teacherName: 'System',
+              missingExamTypes: ['Failed to validate student data'],
+            }],
+          });
+        }
+      });
+
+      const readyStudents = studentDetails.filter(check => check.isReady).length;
+      const incompleteStudents = studentDetails.length - readyStudents;
+      const completionPercentage = studentDetails.length > 0
+        ? Math.round((readyStudents / studentDetails.length) * 100)
         : 0;
 
       return {
@@ -600,18 +858,19 @@ class ResultsService {
         readyStudents,
         incompleteStudents,
         completionPercentage,
-        studentDetails: readinessChecks,
-        expectedSubjects, // NEW: Include expected subjects
+        studentDetails,
+        expectedSubjects: expectedSubjectIds,
+        expectedSubjectsWithIds, // NEW: Pass full subject objects
+        hasAssignments,
       };
     } catch (error) {
-      console.error('Error validating class report readiness:', error);
+      console.error('❌ Error validating class report readiness:', error);
       throw error;
     }
   }
 
   /**
    * Save class results for a specific exam/test
-   * ENHANCED: With validation and duplicate checking
    */
   async saveClassResults(data: {
     classId: string;
@@ -628,17 +887,15 @@ class ResultsService {
     results: Array<{
       studentId: string;
       studentName: string;
-      marks: number; // -1 for absent
+      marks: number;
     }>;
   }, options?: {
     overwrite?: boolean;
   }): Promise<{ success: boolean; count: number; results: StudentResult[]; overwritten: boolean }> {
     try {
-      // Normalize subject name
       const normalizedSubjectId = normalizeSubjectName(data.subjectId);
       const normalizedSubjectName = normalizeSubjectName(data.subjectName);
 
-      // Check for existing results
       const existing = await this.checkExistingResults(
         data.classId,
         normalizedSubjectId,
@@ -659,19 +916,16 @@ class ResultsService {
       const savedResults: StudentResult[] = [];
       const now = new Date().toISOString();
 
-      // Get class form/level
       const classDoc = await getDoc(doc(this.classesCollection, data.classId));
       const classData = classDoc.data();
       const form = classData?.level?.toString() || '1';
 
       data.results.forEach(result => {
-        // Calculate percentage and grade
         const percentage = result.marks < 0
           ? -1
           : Math.round((result.marks / data.totalMarks) * 100);
         const grade = calculateGrade(percentage);
 
-        // Determine status
         const status: StudentResult['status'] =
           result.marks < 0 ? 'absent' : 'entered';
 
@@ -727,20 +981,19 @@ class ResultsService {
 
   /**
    * Generate report card for a single student
-   * ENHANCED: With completion tracking and better error handling
    */
   async generateReportCard(
     studentId: string,
     term: string,
     year: number,
     options?: {
-      includeIncomplete?: boolean;  // Generate even if incomplete
-      markMissing?: boolean;        // Mark missing data in report
+      includeIncomplete?: boolean;
+      markMissing?: boolean;
     }
   ): Promise<ReportCardData | null> {
     try {
-      // Check readiness first
       const readiness = await this.validateReportCardReadiness(studentId, term, year);
+      
       if (!readiness.isReady && !options?.includeIncomplete) {
         const missingInfo = readiness.missingData
           .map(m => `${m.subject}: ${m.missingExamTypes.join(', ')}`)
@@ -751,18 +1004,16 @@ class ResultsService {
         );
       }
 
-      // Get all results for this student for the term
       const results = await this.getStudentResults(studentId, { term, year });
       if (results.length === 0) {
         console.log(`⚠️ No results found for student ${studentId} in ${term} ${year}`);
         return null;
       }
 
-      // Get expected subjects from teacher assignments
       const classId = results[0].classId;
       const expectedSubjects = await this.getExpectedSubjectsForClass(classId);
+      const expectedSubjectIds = expectedSubjects.map(s => s.id);
 
-      // Create subject map initialized with expected subjects
       const subjectMap = new Map<string, {
         subjectId: string;
         subjectName: string;
@@ -776,14 +1027,13 @@ class ResultsService {
         hasEndOfTerm: boolean;
       }>();
 
-      // Initialize with expected subjects
       expectedSubjects.forEach(subject => {
-        const normalizedSubject = normalizeSubjectName(subject);
-        subjectMap.set(normalizedSubject, {
-          subjectId: normalizedSubject,
-          subjectName: normalizedSubject,
-          teacherId: 'unknown',
-          teacherName: 'Assigned Teacher',
+        const normalizedId = subject.id;
+        subjectMap.set(normalizedId, {
+          subjectId: normalizedId,
+          subjectName: subject.name,
+          teacherId: 'pending',
+          teacherName: 'Not assigned',
           week4: -1,
           week8: -1,
           endOfTerm: -1,
@@ -793,11 +1043,9 @@ class ResultsService {
         });
       });
 
-      // Update with actual results
       results.forEach(result => {
         const key = result.subjectId;
         if (!subjectMap.has(key)) {
-          // Handle unexpected subjects (shouldn't happen normally)
           subjectMap.set(key, {
             subjectId: result.subjectId,
             subjectName: result.subjectName,
@@ -828,19 +1076,16 @@ class ResultsService {
         }
       });
 
-      // Convert to array and calculate subject grades
       const subjects: SubjectResultSummary[] = Array.from(subjectMap.values()).map(subject => {
         const endOfTerm = subject.endOfTerm;
         const grade = calculateGrade(endOfTerm);
 
-        // Determine missing exams
         const missingExams: string[] = [];
         if (!subject.hasWeek4) missingExams.push('Week 4');
         if (!subject.hasWeek8) missingExams.push('Week 8');
         if (!subject.hasEndOfTerm) missingExams.push('End of Term');
         const isComplete = missingExams.length === 0;
 
-        // Generate comment
         let comment = this.generateSubjectComment(grade, endOfTerm);
         if (!isComplete && options?.markMissing) {
           comment = `⚠️ Missing: ${missingExams.join(', ')}. ${comment}`;
@@ -861,7 +1106,6 @@ class ResultsService {
         };
       });
 
-      // Calculate overall statistics (using endOfTerm results only)
       const validSubjects = subjects.filter(s => s.endOfTerm >= 0);
       const totalPercentage = validSubjects.reduce((sum, s) => sum + s.endOfTerm, 0);
       const averagePercentage = validSubjects.length > 0
@@ -869,24 +1113,17 @@ class ResultsService {
         : 0;
       const overallGrade = calculateGrade(averagePercentage);
 
-      // Calculate completion percentage
       const completeSubjects = subjects.filter(s => s.isComplete).length;
       const completionPercentage = subjects.length > 0
         ? Math.round((completeSubjects / subjects.length) * 100)
         : 0;
 
-      // Get student information
       const firstResult = results[0];
       const learnerDoc = await getDoc(doc(this.learnersCollection, studentId));
       const learnerData = learnerDoc.exists() ? learnerDoc.data() : null;
 
-      // Calculate position in class
       const position = await this.calculatePosition(studentId, firstResult.classId, term, year);
-
-      // Determine improvement trend
       const improvement = await this.calculateImprovement(studentId, term, year);
-
-      // Generate comprehensive teacher comment
       const teachersComment = this.generateTeacherComment(
         overallGrade,
         averagePercentage,
@@ -919,7 +1156,6 @@ class ResultsService {
         completionPercentage,
       };
 
-      console.log(`✅ Generated report card for ${firstResult.studentName} - ${averagePercentage}% (${getGradeDescription(overallGrade)}) - ${completionPercentage}% complete`);
       return reportCard;
     } catch (error) {
       console.error('Error generating report card:', error);
@@ -929,7 +1165,6 @@ class ResultsService {
 
   /**
    * Generate report cards for entire class
-   * ENHANCED: With validation and completion tracking
    */
   async generateClassReportCards(
     classId: string,
@@ -941,27 +1176,40 @@ class ResultsService {
     }
   ): Promise<BulkReportOperation> {
     try {
-      // Validate class readiness first
       const classReadiness = await this.validateClassReportReadiness(classId, term, year);
+      
       console.log(`📊 Class Readiness: ${classReadiness.readyStudents}/${classReadiness.totalStudents} students ready (${classReadiness.completionPercentage}%)`);
 
-      // Get all students in the class
-      const classResults = await this.getAllResults({ classId, term, year });
-      const studentIds = Array.from(new Set(classResults.map(r => r.studentId)));
+      const learnersQuery = query(
+        this.learnersCollection,
+        where('classId', '==', classId),
+        where('isActive', '==', true)
+      );
+      const learnersSnapshot = await getDocs(learnersQuery);
+      
+      const studentIds = learnersSnapshot.docs.map(doc => doc.id);
       console.log(`📄 Generating ${studentIds.length} report cards for class...`);
 
-      // Generate report card for each student
       const reportCardsPromises = studentIds.map(studentId =>
         this.generateReportCard(studentId, term, year, options)
       );
-      const reportCardsResults = await Promise.all(reportCardsPromises);
+      
+      const reportCardsResults = await Promise.allSettled(reportCardsPromises);
 
-      // Filter out null results
-      const reportCards = reportCardsResults.filter(
-        (card): card is ReportCardData => card !== null
-      );
+      const reportCards: ReportCardData[] = [];
+      const errors: Array<{ studentId: string; error: string }> = [];
 
-      // Calculate summary statistics
+      reportCardsResults.forEach((result, index) => {
+        if (result.status === 'fulfilled' && result.value !== null) {
+          reportCards.push(result.value);
+        } else if (result.status === 'rejected') {
+          errors.push({
+            studentId: studentIds[index],
+            error: result.reason?.message || 'Unknown error',
+          });
+        }
+      });
+
       const passed = reportCards.filter(r => r.status === 'pass').length;
       const failed = reportCards.filter(r => r.status === 'fail').length;
       const complete = reportCards.filter(r => r.isComplete).length;
@@ -982,12 +1230,285 @@ class ResultsService {
         },
       };
     } catch (error) {
-      console.error('Error generating class report cards:', error);
+      console.error('❌ Error generating class report cards:', error);
       throw error;
     }
   }
 
-  // ... [Rest of the existing methods remain the same]
+  // ==================== ANALYTICS METHODS ====================
+
+  /**
+   * Calculate class comparison statistics
+   */
+  async calculateClassComparison(options?: {
+    term?: string;
+    year?: number;
+  }): Promise<ClassPerformance[]> {
+    try {
+      const constraints = [];
+      if (options?.term) constraints.push(where('term', '==', options.term));
+      if (options?.year) constraints.push(where('year', '==', options.year));
+      
+      let q;
+      if (constraints.length > 0) {
+        q = query(this.resultsCollection, ...constraints);
+      } else {
+        q = query(this.resultsCollection);
+      }
+      
+      const snapshot = await getDocs(q);
+      const results: StudentResult[] = [];
+      snapshot.forEach(doc => {
+        results.push(doc.data() as StudentResult);
+      });
+
+      const classMap = new Map<string, {
+        className: string;
+        form: string;
+        percentages: number[];
+        students: Set<string>;
+      }>();
+
+      results
+        .filter(r => r.examType === 'endOfTerm' && r.percentage >= 0)
+        .forEach(result => {
+          const key = result.classId;
+          if (!classMap.has(key)) {
+            classMap.set(key, {
+              className: result.className,
+              form: result.form,
+              percentages: [],
+              students: new Set(),
+            });
+          }
+          const classData = classMap.get(key)!;
+          classData.percentages.push(result.percentage);
+          classData.students.add(result.studentId);
+        });
+
+      return Array.from(classMap.entries()).map(([classId, data]) => {
+        const avgMarks = data.percentages.length > 0
+          ? Math.round(data.percentages.reduce((a, b) => a + b, 0) / data.percentages.length)
+          : 0;
+        const passRate = data.percentages.length > 0
+          ? Math.round((data.percentages.filter(p => p >= 50).length / data.percentages.length) * 100)
+          : 0;
+
+        return {
+          class: data.className,
+          className: data.className,
+          form: data.form,
+          passRate,
+          avgMarks,
+          totalStudents: data.students.size,
+          improvement: 0,
+        };
+      }).sort((a, b) => b.passRate - a.passRate);
+    } catch (error) {
+      console.error('Error calculating class comparison:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Calculate subject analysis
+   */
+  async calculateSubjectAnalysis(options?: {
+    term?: string;
+    year?: number;
+    classId?: string;
+  }): Promise<SubjectAnalysis[]> {
+    try {
+      const constraints = [];
+      if (options?.term) constraints.push(where('term', '==', options.term));
+      if (options?.year) constraints.push(where('year', '==', options.year));
+      if (options?.classId) constraints.push(where('classId', '==', options.classId));
+      
+      let q;
+      if (constraints.length > 0) {
+        q = query(this.resultsCollection, ...constraints);
+      } else {
+        q = query(this.resultsCollection);
+      }
+      
+      const snapshot = await getDocs(q);
+      const results: StudentResult[] = [];
+      snapshot.forEach(doc => {
+        results.push(doc.data() as StudentResult);
+      });
+
+      const subjectMap = new Map<string, {
+        subject: string;
+        percentages: number[];
+        grades: number[];
+      }>();
+
+      results
+        .filter(r => r.examType === 'endOfTerm' && r.percentage >= 0)
+        .forEach(result => {
+          const key = result.subjectId;
+          if (!subjectMap.has(key)) {
+            subjectMap.set(key, {
+              subject: result.subjectName,
+              percentages: [],
+              grades: [],
+            });
+          }
+          const subject = subjectMap.get(key)!;
+          subject.percentages.push(result.percentage);
+          subject.grades.push(result.grade);
+        });
+
+      return Array.from(subjectMap.entries()).map(([subjectId, data]) => {
+        const avgScore = data.percentages.length > 0
+          ? Math.round(data.percentages.reduce((a, b) => a + b, 0) / data.percentages.length)
+          : 0;
+        const passRate = data.percentages.length > 0
+          ? Math.round((data.percentages.filter(p => p >= 50).length / data.percentages.length) * 100)
+          : 0;
+
+        const gradeCounts = new Map<number, number>();
+        data.grades.forEach(grade => {
+          gradeCounts.set(grade, (gradeCounts.get(grade) || 0) + 1);
+        });
+
+        let topGrade = 'N/A';
+        let maxCount = 0;
+        gradeCounts.forEach((count, grade) => {
+          if (count > maxCount) {
+            maxCount = count;
+            topGrade = grade.toString();
+          }
+        });
+
+        let difficulty: 'easy' | 'medium' | 'hard' = 'medium';
+        if (avgScore >= 70) difficulty = 'easy';
+        else if (avgScore <= 40) difficulty = 'hard';
+
+        return {
+          subject: data.subject,
+          passRate,
+          avgScore,
+          topGrade,
+          difficulty,
+        };
+      }).sort((a, b) => b.passRate - a.passRate);
+    } catch (error) {
+      console.error('Error calculating subject analysis:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Calculate grade distribution from results
+   */
+  calculateGradeDistribution(results: StudentResult[]): GradeDistribution[] {
+    const gradeCounts = new Map<number, number>();
+    
+    for (let i = 1; i <= 9; i++) {
+      gradeCounts.set(i, 0);
+    }
+
+    results
+      .filter(r => r.examType === 'endOfTerm' && r.grade > 0)
+      .forEach(result => {
+        gradeCounts.set(result.grade, (gradeCounts.get(result.grade) || 0) + 1);
+      });
+
+    const total = results.filter(r => r.examType === 'endOfTerm' && r.grade > 0).length;
+
+    return Array.from(gradeCounts.entries())
+      .map(([grade, count]) => ({
+        grade,
+        count,
+        percentage: total > 0 ? Math.round((count / total) * 100) : 0,
+        description: getGradeDescription(grade),
+      }))
+      .filter(g => g.count > 0);
+  }
+
+  /**
+   * Calculate performance trend from results
+   */
+  calculatePerformanceTrend(results: StudentResult[]): PerformanceTrend[] {
+    const examTypes = ['week4', 'week8', 'endOfTerm'] as const;
+    const examLabels = {
+      week4: 'Week 4',
+      week8: 'Week 8',
+      endOfTerm: 'End of Term',
+    };
+
+    const trendData = examTypes.map(examType => {
+      const examResults = results.filter(r => r.examType === examType && r.percentage >= 0);
+      const totalPercentage = examResults.reduce((sum, r) => sum + r.percentage, 0);
+      const avgMarks = examResults.length > 0 ? Math.round(totalPercentage / examResults.length) : 0;
+      const passRate = examResults.length > 0 
+        ? Math.round((examResults.filter(r => r.percentage >= 50).length / examResults.length) * 100)
+        : 0;
+
+      return {
+        month: examLabels[examType],
+        avgMarks,
+        passRate,
+        improvement: 'stable' as const,
+      };
+    });
+
+    return trendData.map((data, index) => {
+      if (index === 0) return data;
+      
+      const prevData = trendData[index - 1];
+      const avgDiff = data.avgMarks - prevData.avgMarks;
+      const passDiff = data.passRate - prevData.passRate;
+      
+      let improvement: 'up' | 'down' | 'stable' = 'stable';
+      if (avgDiff > 2 || passDiff > 3) improvement = 'up';
+      else if (avgDiff < -2 || passDiff < -3) improvement = 'down';
+      
+      return { ...data, improvement };
+    });
+  }
+
+  /**
+   * Get complete analytics summary
+   */
+  async getAnalyticsSummary(options?: {
+    term?: string;
+    year?: number;
+    classId?: string;
+  }): Promise<AnalyticsSummary> {
+    try {
+      const results = await this.getAllResults(options);
+      
+      return {
+        gradeDistribution: this.calculateGradeDistribution(results),
+        performanceTrend: this.calculatePerformanceTrend(results),
+        totalStudents: Array.from(new Set(results.map(r => r.studentId))).length,
+        averagePercentage: results.length > 0
+          ? Math.round(
+              results
+                .filter(r => r.percentage >= 0)
+                .reduce((sum, r) => sum + r.percentage, 0) / 
+              Math.max(results.filter(r => r.percentage >= 0).length, 1)
+            )
+          : 0,
+        passRate: results.length > 0
+          ? Math.round(
+              (results.filter(r => r.percentage >= 50).length / 
+               Math.max(results.filter(r => r.percentage >= 0).length, 1)) * 100
+            )
+          : 0,
+        topGrade: results.length > 0
+          ? Math.min(...results.filter(r => r.grade > 0).map(r => r.grade)).toString()
+          : 'N/A',
+      };
+    } catch (error) {
+      console.error('Error getting analytics summary:', error);
+      throw error;
+    }
+  }
+
+  // ==================== QUERY METHODS ====================
 
   async getTeacherResults(
     teacherId: string,
@@ -1000,6 +1521,7 @@ class ResultsService {
   ): Promise<StudentResult[]> {
     try {
       const constraints = [where('teacherId', '==', teacherId)];
+      
       if (filters?.classId) {
         constraints.push(where('classId', '==', filters.classId));
       }
@@ -1013,18 +1535,20 @@ class ResultsService {
       if (filters?.year) {
         constraints.push(where('year', '==', filters.year));
       }
+      
       const q = query(
         this.resultsCollection,
         ...constraints,
         orderBy('className'),
         orderBy('studentName')
       );
+      
       const snapshot = await getDocs(q);
       const results: StudentResult[] = [];
       snapshot.forEach(doc => {
         results.push(doc.data() as StudentResult);
       });
-      console.log(`📊 Fetched ${results.length} results for teacher ${teacherId}`);
+      
       return results;
     } catch (error) {
       console.error('Error fetching teacher results:', error);
@@ -1042,6 +1566,7 @@ class ResultsService {
   ): Promise<StudentResult[]> {
     try {
       const constraints = [where('studentId', '==', studentId)];
+      
       if (filters?.term) {
         constraints.push(where('term', '==', filters.term));
       }
@@ -1052,12 +1577,14 @@ class ResultsService {
         const normalizedSubject = normalizeSubjectName(filters.subjectId);
         constraints.push(where('subjectId', '==', normalizedSubject));
       }
+      
       const q = query(this.resultsCollection, ...constraints, orderBy('subjectName'));
       const snapshot = await getDocs(q);
       const results: StudentResult[] = [];
       snapshot.forEach(doc => {
         results.push(doc.data() as StudentResult);
       });
+      
       return results;
     } catch (error) {
       console.error('Error fetching student results:', error);
@@ -1074,6 +1601,7 @@ class ResultsService {
   }): Promise<StudentResult[]> {
     try {
       const constraints = [];
+      
       if (filters?.classId) constraints.push(where('classId', '==', filters.classId));
       if (filters?.subjectId) {
         const normalizedSubject = normalizeSubjectName(filters.subjectId);
@@ -1082,24 +1610,27 @@ class ResultsService {
       if (filters?.term) constraints.push(where('term', '==', filters.term));
       if (filters?.year) constraints.push(where('year', '==', filters.year));
       if (filters?.examType) constraints.push(where('examType', '==', filters.examType));
+      
       let q;
       if (constraints.length > 0) {
         q = query(this.resultsCollection, ...constraints);
       } else {
         q = query(this.resultsCollection);
       }
+      
       const snapshot = await getDocs(q);
       const results: StudentResult[] = [];
       snapshot.forEach(doc => {
         results.push(doc.data() as StudentResult);
       });
+      
       results.sort((a, b) => {
         if (a.className !== b.className) {
           return a.className.localeCompare(b.className);
         }
         return a.studentName.localeCompare(b.studentName);
       });
-      console.log(`📊 Fetched ${results.length} total results`);
+      
       return results;
     } catch (error) {
       console.error('Error fetching all results:', error);
@@ -1122,21 +1653,26 @@ class ResultsService {
         where('classId', '==', classId),
         where('subjectId', '==', normalizedSubject)
       ];
+      
       if (filters?.term) constraints.push(where('term', '==', filters.term));
       if (filters?.year) constraints.push(where('year', '==', filters.year));
       if (filters?.examType) constraints.push(where('examType', '==', filters.examType));
+      
       const q = query(this.resultsCollection, ...constraints, orderBy('studentName'));
       const snapshot = await getDocs(q);
       const results: StudentResult[] = [];
       snapshot.forEach(doc => {
         results.push(doc.data() as StudentResult);
       });
+      
       return results;
     } catch (error) {
       console.error('Error fetching class subject results:', error);
       throw error;
     }
   }
+
+  // ==================== UPDATE METHODS ====================
 
   async updateStudentResult(
     resultId: string,
@@ -1147,6 +1683,7 @@ class ResultsService {
       const percentage = marks < 0 ? -1 : Math.round((marks / totalMarks) * 100);
       const grade = calculateGrade(percentage);
       const status: StudentResult['status'] = marks < 0 ? 'absent' : 'entered';
+      
       const docRef = doc(this.resultsCollection, resultId);
       await updateDoc(docRef, {
         marks,
@@ -1156,6 +1693,7 @@ class ResultsService {
         status,
         updatedAt: new Date().toISOString(),
       });
+      
       const updatedDoc = await getDoc(docRef);
       return updatedDoc.data() as StudentResult;
     } catch (error) {
@@ -1164,179 +1702,23 @@ class ResultsService {
     }
   }
 
-  calculateGradeDistribution(results: StudentResult[]): GradeDistribution[] {
-    const gradeCounts = new Map<number, number>();
-    for (let i = 1; i <= 9; i++) {
-      gradeCounts.set(i, 0);
-    }
-    results.forEach(result => {
-      if (result.grade > 0) {
-        gradeCounts.set(result.grade, (gradeCounts.get(result.grade) || 0) + 1);
-      }
-    });
-    const total = results.filter(r => r.grade > 0).length;
-    return Array.from(gradeCounts.entries()).map(([grade, count]) => ({
-      grade,
-      count,
-      percentage: total > 0 ? Math.round((count / total) * 100) : 0,
-      description: getGradeDescription(grade),
-    }));
-  }
+  // ==================== PRIVATE HELPER METHODS ====================
 
-  calculatePerformanceTrend(results: StudentResult[]): PerformanceTrend[] {
-    const examTypes: Array<'week4' | 'week8' | 'endOfTerm'> = ['week4', 'week8', 'endOfTerm'];
-    const trends = new Map<string, {
-      total: number;
-      count: number;
-      passed: number;
-      examType: 'week4' | 'week8' | 'endOfTerm';
-    }>();
-    const labels = {
-      week4: 'Week 4 Assessment',
-      week8: 'Week 8 Assessment',
-      endOfTerm: 'End of Term Exam',
-    };
-    examTypes.forEach(examType => {
-      trends.set(examType, { total: 0, count: 0, passed: 0, examType });
-    });
-    results.forEach(result => {
-      if (trends.has(result.examType)) {
-        const trend = trends.get(result.examType)!;
-        if (result.percentage >= 0) {
-          trend.total += result.percentage;
-          trend.count += 1;
-          if (result.percentage >= 50) trend.passed += 1;
-        }
-      }
-    });
-    return Array.from(trends.entries()).map(([key, data]) => ({
-      period: labels[key as 'week4' | 'week8' | 'endOfTerm'],
-      examType: data.examType,
-      avgMarks: data.count > 0 ? Math.round(data.total / data.count) : 0,
-      passRate: data.count > 0 ? Math.round((data.passed / data.count) * 100) : 0,
-      totalStudents: data.count,
-    }));
-  }
-
-  async calculateClassComparison(filters?: {
-    term?: string;
-    year?: number;
-  }): Promise<ClassComparison[]> {
-    try {
-      const results = await this.getAllResults({
-        ...filters,
-        examType: 'endOfTerm',
-      });
-      const classMap = new Map<string, {
-        classId: string;
-        className: string;
-        form: string;
-        total: number;
-        count: number;
-        passed: number;
-      }>();
-      results.forEach(result => {
-        if (!classMap.has(result.classId)) {
-          classMap.set(result.classId, {
-            classId: result.classId,
-            className: result.className,
-            form: result.form,
-            total: 0,
-            count: 0,
-            passed: 0,
-          });
-        }
-        const classData = classMap.get(result.classId)!;
-        if (result.percentage >= 0) {
-          classData.total += result.percentage;
-          classData.count += 1;
-          if (result.percentage >= 50) classData.passed += 1;
-        }
-      });
-      return Array.from(classMap.values())
-        .map(data => ({
-          classId: data.classId,
-          className: data.className,
-          form: data.form,
-          avgMarks: data.count > 0 ? Math.round(data.total / data.count) : 0,
-          passRate: data.count > 0 ? Math.round((data.passed / data.count) * 100) : 0,
-          totalStudents: data.count,
-          improvement: 0,
-        }))
-        .sort((a, b) => b.avgMarks - a.avgMarks);
-    } catch (error) {
-      console.error('Error calculating class comparison:', error);
-      throw error;
-    }
-  }
-
-  async calculateSubjectAnalysis(filters?: {
-    term?: string;
-    year?: number;
-    classId?: string;
-  }): Promise<SubjectAnalysis[]> {
-    try {
-      const results = await this.getAllResults({
-        ...filters,
-        examType: 'endOfTerm',
-      });
-      const subjectMap = new Map<string, {
-        subjectId: string;
-        subjectName: string;
-        percentages: number[];
-        grades: number[];
-      }>();
-      results.forEach(result => {
-        if (result.percentage < 0) return;
-        const key = result.subjectId;
-        if (!subjectMap.has(key)) {
-          subjectMap.set(key, {
-            subjectId: result.subjectId,
-            subjectName: result.subjectName,
-            percentages: [],
-            grades: [],
-          });
-        }
-        const subject = subjectMap.get(key)!;
-        subject.percentages.push(result.percentage);
-        subject.grades.push(result.grade);
-      });
-      return Array.from(subjectMap.values())
-        .map(subject => {
-          const avgScore = Math.round(
-            subject.percentages.reduce((a, b) => a + b, 0) / subject.percentages.length
-          );
-          const passRate = Math.round(
-            (subject.percentages.filter(p => p >= 50).length / subject.percentages.length) * 100
-          );
-          const gradeCounts = new Map<number, number>();
-          subject.grades.forEach(grade => {
-            gradeCounts.set(grade, (gradeCounts.get(grade) || 0) + 1);
-          });
-          const topGrade = Array.from(gradeCounts.entries())
-            .sort((a, b) => b[1] - a[1])[0]?.[0] || 9;
-          let difficulty: 'easy' | 'medium' | 'hard' = 'medium';
-          if (avgScore >= 70) difficulty = 'easy';
-          else if (avgScore <= 45) difficulty = 'hard';
-          return {
-            subjectId: subject.subjectId,
-            subjectName: subject.subjectName,
-            passRate,
-            avgScore,
-            topGrade,
-            totalStudents: subject.percentages.length,
-            difficulty,
-          };
-        })
-        .sort((a, b) => b.passRate - a.passRate);
-    } catch (error) {
-      console.error('Error calculating subject analysis:', error);
-      throw error;
-    }
+  private generateResultId(
+    studentId: string,
+    subjectId: string,
+    examType: string,
+    term: string,
+    year: number
+  ): string {
+    const cleanTerm = term.replace(/\s+/g, '');
+    const normalizedSubject = normalizeSubjectName(subjectId);
+    return `${studentId}_${normalizedSubject}_${examType}_${cleanTerm}_${year}`;
   }
 
   private generateSubjectComment(grade: number, percentage: number): string {
     if (percentage < 0) return 'Student was absent for this assessment.';
+    
     const comments: Record<number, string> = {
       1: 'Outstanding performance showing exceptional mastery of concepts.',
       2: 'Excellent work with strong understanding demonstrated throughout.',
@@ -1348,6 +1730,7 @@ class ResultsService {
       8: 'Below expectations; requires additional support and guidance.',
       9: 'Needs immediate intervention and intensive remedial work.',
     };
+    
     return comments[grade] || 'Assessment pending.';
   }
 
@@ -1360,6 +1743,7 @@ class ResultsService {
     const validSubjects = subjects.filter(s => s.endOfTerm >= 0);
     const passCount = validSubjects.filter(s => s.endOfTerm >= 50).length;
     const totalSubjects = validSubjects.length;
+    
     const sortedSubjects = [...validSubjects].sort((a, b) => b.endOfTerm - a.endOfTerm);
     const strongest = sortedSubjects[0];
     const weakest = sortedSubjects[sortedSubjects.length - 1];
@@ -1391,6 +1775,7 @@ class ResultsService {
         where('year', '==', year),
         where('examType', '==', 'endOfTerm')
       );
+      
       const snapshot = await getDocs(q);
       const results: StudentResult[] = [];
       snapshot.forEach(doc => results.push(doc.data() as StudentResult));
@@ -1398,6 +1783,7 @@ class ResultsService {
       if (results.length === 0) return '1/1';
 
       const studentAverages = new Map<string, { name: string; percentages: number[] }>();
+      
       results.forEach(result => {
         if (result.percentage < 0) return;
         if (!studentAverages.has(result.studentId)) {
@@ -1420,6 +1806,7 @@ class ResultsService {
       const position = rankings.findIndex(r => r.studentId === studentId) + 1;
       const total = rankings.length;
       const suffix = this.getOrdinalSuffix(position);
+      
       return `${position}${suffix} of ${total}`;
     } catch (error) {
       console.error('Error calculating position:', error);
@@ -1450,6 +1837,7 @@ class ResultsService {
         term: currentTerm,
         year: currentYear,
       });
+      
       const currentEndOfTerm = currentResults.filter(r => r.examType === 'endOfTerm' && r.percentage >= 0);
       const currentAvg = currentEndOfTerm.length > 0
         ? currentEndOfTerm.reduce((sum, r) => sum + r.percentage, 0) / currentEndOfTerm.length
@@ -1459,12 +1847,14 @@ class ResultsService {
         term: previousTerm,
         year: previousYear,
       });
+      
       const previousEndOfTerm = previousResults.filter(r => r.examType === 'endOfTerm' && r.percentage >= 0);
       const previousAvg = previousEndOfTerm.length > 0
         ? previousEndOfTerm.reduce((sum, r) => sum + r.percentage, 0) / previousEndOfTerm.length
         : 0;
 
       if (previousAvg === 0) return 'stable';
+      
       const difference = currentAvg - previousAvg;
       if (difference > 3) return 'improved';
       if (difference < -3) return 'declined';
@@ -1476,4 +1866,5 @@ class ResultsService {
   }
 }
 
+// Export singleton instance
 export const resultsService = new ResultsService();

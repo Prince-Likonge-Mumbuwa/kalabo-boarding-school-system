@@ -253,12 +253,14 @@ export default function AdminResultsAnalysis() {
 
     const total = results.filter(r => r.examType === 'endOfTerm' && r.grade > 0).length;
 
-    return Array.from(gradeCounts.entries()).map(([grade, count]) => ({
-      grade,
-      count,
-      percentage: total > 0 ? Math.round((count / total) * 100) : 0,
-      description: getGradeDescription(grade),
-    })).filter(g => g.count > 0);
+    return Array.from(gradeCounts.entries())
+      .map(([grade, count]) => ({
+        grade,
+        count,
+        percentage: total > 0 ? Math.round((count / total) * 100) : 0,
+        description: getGradeDescription(grade),
+      }))
+      .filter(g => g.count > 0);
   }, [results]);
 
   // Calculate performance trend from real results
@@ -304,7 +306,7 @@ export default function AdminResultsAnalysis() {
     });
   }, [results]);
 
-  // Use real class comparison data
+  // Use real class comparison data with proper type casting
   const classComparison = useMemo((): ClassPerformance[] => {
     if (!realClassComparison || realClassComparison.length === 0) return [];
 
@@ -451,18 +453,18 @@ export default function AdminResultsAnalysis() {
     return 'bg-red-100 text-red-700';
   };
 
-  // Get unique classes and subjects for filters
-  const classes = useMemo(() => {
-    if (!realClassComparison || realClassComparison.length === 0) return [];
+  // Get unique classes and subjects for filters - FIXED: Properly typed now
+  const classes = useMemo((): string[] => {
+    if (!realClassComparison || !Array.isArray(realClassComparison) || realClassComparison.length === 0) {
+      return [];
+    }
     return Array.from(new Set(realClassComparison.map(c => c.className))).sort();
   }, [realClassComparison]);
 
-  const subjects = useMemo(() => {
+  const subjects = useMemo((): string[] => {
     if (!subjectAnalysis || subjectAnalysis.length === 0) return [];
     return Array.from(new Set(subjectAnalysis.map(s => s.subject))).sort();
   }, [subjectAnalysis]);
-
-  const periods = ['week', 'month', 'quarter', 'semester', 'year'];
 
   const ChartFallback = () => (
     <div className="flex items-center justify-center h-full">

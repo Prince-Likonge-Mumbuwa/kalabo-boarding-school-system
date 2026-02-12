@@ -1,4 +1,4 @@
-// @/hooks/useResults.ts - ENHANCED VERSION WITH VALIDATION
+// @/hooks/useResults.ts - ENHANCED VERSION WITH FIXED PARAMETERS
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   resultsService, 
@@ -9,7 +9,6 @@ import {
   ReportReadinessCheck,
   ClassReportReadiness,
 } from '@/services/resultsService';
-import { teacherService } from '@/services/schoolService'; // NEW: Import teacher service
 
 // ==================== MAIN RESULTS HOOK ====================
 
@@ -76,7 +75,6 @@ export const useResults = (options?: {
     ? studentResultsQuery.data
     : allResultsQuery.data;
 
-  // NEW: Check for existing results before saving
   const checkExistingMutation = useMutation({
     mutationFn: (data: {
       classId: string;
@@ -111,7 +109,7 @@ export const useResults = (options?: {
         studentName: string;
         marks: number;
       }>;
-      overwrite?: boolean; // NEW: Allow overwriting
+      overwrite?: boolean;
     }) => resultsService.saveClassResults(data, { overwrite: data.overwrite }),
     onSuccess: (data, variables) => {
       console.log(`✅ Saved ${data.count} results successfully${data.overwritten ? ' (overwritten)' : ''}`);
@@ -120,9 +118,8 @@ export const useResults = (options?: {
       queryClient.invalidateQueries({ queryKey: ['analytics'] });
       queryClient.invalidateQueries({ queryKey: ['reportCards'] });
       queryClient.invalidateQueries({ queryKey: ['subjectAnalysis'] });
-      queryClient.invalidateQueries({ queryKey: ['subjectCompletion'] }); // NEW
-      queryClient.invalidateQueries({ queryKey: ['reportReadiness'] }); // NEW
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments'] }); // NEW: Also invalidate assignments
+      queryClient.invalidateQueries({ queryKey: ['subjectCompletion'] });
+      queryClient.invalidateQueries({ queryKey: ['reportReadiness'] });
     },
     onError: (error) => {
       console.error('❌ Failed to save results:', error);
@@ -150,7 +147,6 @@ export const useResults = (options?: {
     isError: teacherResultsQuery.isError || studentResultsQuery.isError || allResultsQuery.isError,
     error: teacherResultsQuery.error || studentResultsQuery.error || allResultsQuery.error,
     
-    // NEW: Validation methods
     checkExisting: checkExistingMutation.mutateAsync,
     isCheckingExisting: checkExistingMutation.isPending,
     
@@ -167,7 +163,7 @@ export const useResults = (options?: {
   };
 };
 
-// ==================== NEW: SUBJECT COMPLETION HOOK ====================
+// ==================== SUBJECT COMPLETION HOOK ====================
 
 export const useSubjectCompletion = (options: {
   classId?: string;
@@ -200,8 +196,9 @@ export const useSubjectCompletion = (options: {
   };
 };
 
-// ==================== ENHANCED: REPORT READINESS HOOK ====================
-// This hook now integrates with teacher assignments to know expected subjects
+// ==================== FIXED: REPORT READINESS HOOK ====================
+// FIXED: Removed 4th parameter from validateClassReportReadiness call
+// FIXED: Now uses resultsService.getTeacherAssignmentsForClass directly
 
 export const useReportReadiness = (options: {
   studentId?: string;
@@ -211,21 +208,13 @@ export const useReportReadiness = (options: {
 }) => {
   const queryClient = useQueryClient();
 
-  // NEW: Fetch teacher assignments for the class to know expected subjects
+  // FIXED: Use resultsService.getTeacherAssignmentsForClass directly
   const teacherAssignmentsQuery = useQuery({
     queryKey: ['teacherAssignments', 'class', options.classId],
     queryFn: async () => {
       if (!options.classId) return [];
-      // This assumes we have a method to get assignments by class
-      // If not available, we'll need to get all assignments and filter
-      try {
-        // Try to get assignments by class if the service supports it
-        return await teacherService.getTeacherAssignmentsByClass(options.classId);
-      } catch (error) {
-        // Fallback: get all assignments and filter (less efficient but works)
-        const allAssignments = await teacherService.getAllTeacherAssignments();
-        return allAssignments.filter(a => a.classId === options.classId);
-      }
+      // Direct call to resultsService which now has the method
+      return resultsService.getTeacherAssignmentsForClass(options.classId);
     },
     enabled: !!options.classId,
     staleTime: 5 * 60 * 1000,
@@ -246,35 +235,17 @@ export const useReportReadiness = (options: {
     staleTime: 2 * 60 * 1000,
   });
 
-  // Class-wide readiness check - ENHANCED with teacher assignments
+  // FIXED: Class-wide readiness check - now passes exactly 3 parameters
   const classReadinessQuery = useQuery({
     queryKey: ['reportReadiness', 'class', options.classId, options.term, options.year],
     queryFn: async () => {
       if (!options.classId) throw new Error('Class ID required');
       
-      // Get teacher assignments for this class to know expected subjects
-      let expectedSubjects: string[] = [];
-      try {
-        const assignments = await teacherService.getTeacherAssignmentsByClass(options.classId);
-        expectedSubjects = Array.from(new Set(assignments.map(a => a.subject)));
-      } catch (error) {
-        // If we can't get assignments by class, try to get all and filter
-        try {
-          const allAssignments = await teacherService.getAllTeacherAssignments();
-          const classAssignments = allAssignments.filter(a => a.classId === options.classId);
-          expectedSubjects = Array.from(new Set(classAssignments.map(a => a.subject)));
-        } catch (assignmentError) {
-          console.warn('Could not fetch teacher assignments for readiness validation:', assignmentError);
-          // Continue with existing logic if assignments unavailable
-        }
-      }
-      
-      // Call the enhanced validation method
+      // FIXED: Only passing 3 parameters as required by the method signature
       return resultsService.validateClassReportReadiness(
         options.classId,
         options.term,
-        options.year,
-        expectedSubjects // Pass expected subjects to validation
+        options.year
       );
     },
     enabled: !!options.classId && !options.studentId,
@@ -289,7 +260,7 @@ export const useReportReadiness = (options: {
     classReadiness: classReadinessQuery.data,
     
     // Teacher assignments data
-    teacherAssignments: teacherAssignmentsQuery.data,
+    teacherAssignments: teacherAssignmentsQuery.data || [],
     assignmentsLoading: teacherAssignmentsQuery.isLoading,
     
     // Loading states
@@ -379,7 +350,7 @@ export const useResultsAnalytics = (options?: {
         )
       : 0,
     topGrade: resultsQuery.data.length > 0
-      ? Math.max(...resultsQuery.data.filter(r => r.grade > 0).map(r => r.grade))
+      ? Math.min(...resultsQuery.data.filter(r => r.grade > 0).map(r => r.grade)).toString()
       : 'N/A',
   } : null;
 
@@ -409,8 +380,8 @@ export const useReportCards = (options: {
   classId?: string;
   term: string;
   year: number;
-  includeIncomplete?: boolean; // NEW: Generate even if incomplete
-  markMissing?: boolean;       // NEW: Mark missing data in reports
+  includeIncomplete?: boolean;
+  markMissing?: boolean;
 }) => {
   const queryClient = useQueryClient();
 
@@ -467,7 +438,7 @@ export const useReportCards = (options: {
   };
 };
 
-// ==================== CLASS RESULTS HOOK (for Teachers) ====================
+// ==================== CLASS RESULTS HOOK ====================
 
 export const useClassResults = (
   classId: string,
@@ -522,4 +493,28 @@ export const useSubjectAnalysis = (options?: {
     
     refetch: subjectAnalysisQuery.refetch,
   };
-}; 
+};
+
+// ==================== TEACHER ASSIGNMENTS HOOK ====================
+// NEW: Direct hook for teacher assignments using resultsService
+
+export const useTeacherAssignmentsForClass = (classId?: string) => {
+  const query = useQuery({
+    queryKey: ['teacherAssignments', 'class', classId],
+    queryFn: async () => {
+      if (!classId) return [];
+      return resultsService.getTeacherAssignmentsForClass(classId);
+    },
+    enabled: !!classId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  return {
+    assignments: query.data || [],
+    isLoading: query.isLoading,
+    isFetching: query.isFetching,
+    isError: query.isError,
+    error: query.error,
+    refetch: query.refetch,
+  };
+};

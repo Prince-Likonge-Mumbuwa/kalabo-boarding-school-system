@@ -1,11 +1,10 @@
-// @/pages/admin/ReportCards.tsx - FULLY REWRITTEN WITH PROPER INTEGRATION
+// @/pages/admin/ReportCards.tsx - FULLY REWRITTEN WITH FIXED INTEGRATION
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
-import { useReportCards, useReportReadiness } from '@/hooks/useResults';
+import { useReportCards, useReportReadiness, useTeacherAssignmentsForClass } from '@/hooks/useResults';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
-import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useAuth } from '@/hooks/useAuth';
 import {
   Download,
@@ -31,7 +30,8 @@ import {
   Info,
   RefreshCw,
   User,
-  GraduationCap
+  GraduationCap,
+  Bug
 } from 'lucide-react';
 
 // ==================== TYPES & INTERFACES ====================
@@ -132,6 +132,141 @@ const CardSkeleton = () => (
   </div>
 );
 
+// ==================== DEBUG PANEL ====================
+interface DebugPanelProps {
+  classReadiness: any;
+  teacherAssignments: any[];
+  expectedSubjects: any[];
+  onClose: () => void;
+}
+
+const DebugPanel = ({ classReadiness, teacherAssignments, expectedSubjects, onClose }: DebugPanelProps) => {
+  if (!classReadiness) return null;
+  
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="fixed inset-0 bg-black/50 transition-opacity" onClick={onClose} />
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div className="relative bg-white rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+          <div className="p-6 border-b border-gray-200 bg-gray-900 text-white">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bug size={20} />
+                <h2 className="text-xl font-bold">Debug: Subject Matching Diagnostics</h2>
+              </div>
+              <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-lg">
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6">
+            {/* Teacher Assignments */}
+            <div className="mb-6">
+              <h3 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <GraduationCap size={18} />
+                Teacher Assignments ({teacherAssignments.length})
+              </h3>
+              <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-blue-800">
+                      <th className="pb-2">Original Subject</th>
+                      <th className="pb-2">Normalized ID</th>
+                      <th className="pb-2">Teacher</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {teacherAssignments.map((a, idx) => (
+                      <tr key={idx} className="border-t border-blue-200">
+                        <td className="py-2 text-blue-900">{a.subject}</td>
+                        <td className="py-2 font-mono text-blue-700">{a.subjectId || '—'}</td>
+                        <td className="py-2 text-blue-900">{a.teacherName}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Expected Subjects */}
+            <div className="mb-6">
+              <h3 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <BookOpen size={18} />
+                Expected Subjects for Validation ({expectedSubjects?.length || 0})
+              </h3>
+              <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-green-800">
+                      <th className="pb-2">Subject Name</th>
+                      <th className="pb-2">Normalized ID</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {expectedSubjects?.map((s, idx) => (
+                      <tr key={idx} className="border-t border-green-200">
+                        <td className="py-2 text-green-900">{s.name || s}</td>
+                        <td className="py-2 font-mono text-green-700">{s.id || s}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Class Readiness Summary */}
+            <div className="mb-6">
+              <h3 className="text-lg font-bold text-gray-900 mb-3">Readiness Summary</h3>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-sm text-gray-600">Total Students</p>
+                  <p className="text-2xl font-bold">{classReadiness.totalStudents}</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-sm text-gray-600">Ready</p>
+                  <p className="text-2xl font-bold text-green-600">{classReadiness.readyStudents}</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-sm text-gray-600">Completion</p>
+                  <p className="text-2xl font-bold text-blue-600">{classReadiness.completionPercentage}%</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Sample Student Missing Data */}
+            {classReadiness.studentDetails?.slice(0, 3).map((student: any) => (
+              <div key={student.studentId} className="mb-4 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                <div className="flex justify-between mb-2">
+                  <span className="font-bold">{student.studentName}</span>
+                  <span className="text-sm text-yellow-700">
+                    {student.completeSubjects}/{student.totalSubjects} subjects
+                  </span>
+                </div>
+                {student.missingData.map((m: any, idx: number) => (
+                  <div key={idx} className="text-sm ml-4 flex items-start gap-2">
+                    <span className="text-red-600">•</span>
+                    <span className="font-medium">{m.subject}</span>
+                    <span className="text-gray-600">(ID: {m.subjectId})</span>
+                    <span className="text-red-600">Missing: {m.missingExamTypes.join(', ')}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className="p-6 border-t border-gray-200 bg-gray-50">
+            <button
+              onClick={onClose}
+              className="px-6 py-2.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+            >
+              Close Debug
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ==================== MISSING DATA MODAL ====================
 interface MissingDataModalProps {
   isOpen: boolean;
@@ -143,12 +278,12 @@ interface MissingDataModalProps {
 const MissingDataModal = ({ isOpen, onClose, classReadiness, teacherAssignments }: MissingDataModalProps) => {
   if (!isOpen || !classReadiness) return null;
   
-  const incompleteStudents = classReadiness.studentDetails.filter((s: any) => !s.isReady);
+  const incompleteStudents = classReadiness.studentDetails?.filter((s: any) => !s.isReady) || [];
   
-  // Create a map of subject to teacher for quick lookup
+  // Create a map of normalized subject ID to teacher name
   const subjectTeacherMap = new Map<string, string>();
   teacherAssignments.forEach(assignment => {
-    subjectTeacherMap.set(assignment.subject, assignment.teacherName || 'Assigned Teacher');
+    subjectTeacherMap.set(assignment.subjectId || assignment.subject, assignment.teacherName || 'Assigned Teacher');
   });
 
   return (
@@ -183,7 +318,7 @@ const MissingDataModal = ({ isOpen, onClose, classReadiness, teacherAssignments 
                     </div>
                     <div className="text-right">
                       <div className="text-2xl font-bold text-yellow-700">
-                        {Math.round((student.completeSubjects / student.totalSubjects) * 100)}%
+                        {Math.round((student.completeSubjects / (student.totalSubjects || 1)) * 100)}%
                       </div>
                       <div className="text-xs text-gray-600">
                         {student.completeSubjects}/{student.totalSubjects} subjects
@@ -198,7 +333,10 @@ const MissingDataModal = ({ isOpen, onClose, classReadiness, teacherAssignments 
                           <div>
                             <p className="font-medium text-gray-900">{missing.subject}</p>
                             <p className="text-sm text-gray-600">
-                              Teacher: {subjectTeacherMap.get(missing.subject) || missing.teacherName || 'Not assigned'}
+                              Teacher: {subjectTeacherMap.get(missing.subjectId) || missing.teacherName || 'Not assigned'}
+                            </p>
+                            <p className="text-xs text-gray-500 font-mono mt-1">
+                              Subject ID: {missing.subjectId}
                             </p>
                           </div>
                           <div className="text-right">
@@ -608,16 +746,17 @@ export default function ReportCards() {
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showMissingDataModal, setShowMissingDataModal] = useState(false);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [includeIncomplete, setIncludeIncomplete] = useState(true);
   const [markMissing, setMarkMissing] = useState(true);
   const debouncedSearch = useDebounce(searchTerm, 300);
 
-  // Get teacher assignments for all teachers (admin view)
+  // Get teacher assignments for selected class using the new hook
   const { 
-    assignments: allTeacherAssignments, 
+    assignments: classTeacherAssignments, 
     isLoading: loadingAssignments,
     refetch: refetchAssignments
-  } = useTeacherAssignments();
+  } = useTeacherAssignmentsForClass(selectedClass !== 'all' ? selectedClass : undefined);
 
   // Get learners for selected class
   const { 
@@ -637,19 +776,21 @@ export default function ReportCards() {
     }
   }, [classes, user, selectedClass]);
 
-  // Get teacher assignments filtered by selected class
-  const classTeacherAssignments = useMemo(() => {
-    if (!selectedClass || selectedClass === 'all' || !allTeacherAssignments) return [];
-    return allTeacherAssignments.filter(a => a.classId === selectedClass);
-  }, [selectedClass, allTeacherAssignments]);
-
-  // Get unique subjects for selected class
+  // Get unique subjects for selected class from normalized assignments
   const subjectsInClass = useMemo(() => {
     if (!classTeacherAssignments.length) return [];
-    return Array.from(new Set(classTeacherAssignments.map(a => a.subject)));
+    // Use a Map to deduplicate by subjectId
+    const subjectMap = new Map();
+    classTeacherAssignments.forEach(a => {
+      subjectMap.set(a.subjectId || a.subject, {
+        name: a.subject,
+        id: a.subjectId || a.subject
+      });
+    });
+    return Array.from(subjectMap.values());
   }, [classTeacherAssignments]);
 
-  // Use report readiness hook
+  // Use report readiness hook - FIXED: Now works with 3 parameters
   const {
     classReadiness,
     isLoading: loadingReadiness,
@@ -792,13 +933,25 @@ export default function ReportCards() {
                 </p>
               </div>
               <div className="flex items-center gap-3">
+                {/* Debug Button - Only show when class selected */}
+                {selectedClass !== 'all' && (
+                  <button
+                    onClick={() => setShowDebugPanel(true)}
+                    className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                    title="Debug subject matching"
+                  >
+                    <Bug size={18} />
+                    Debug
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     refetchReadiness();
                     refetchAssignments();
+                    refetch();
                   }}
                   className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                  title="Refresh readiness status"
+                  title="Refresh all data"
                 >
                   <RefreshCw size={18} />
                   Refresh
@@ -845,11 +998,21 @@ export default function ReportCards() {
                       <p className="text-sm text-gray-600">
                         {classReadiness.readyStudents} of {classReadiness.totalStudents} students have complete data
                       </p>
-                      {/* Show subjects taught in this class */}
+                      {/* Show subjects taught in this class with normalized IDs */}
                       {subjectsInClass.length > 0 && (
-                        <p className="text-xs text-gray-500 mt-1">
-                          Subjects: {subjectsInClass.join(', ')}
-                        </p>
+                        <div className="mt-2">
+                          <p className="text-xs text-gray-500">Expected Subjects:</p>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            {subjectsInClass.map((subject, idx) => (
+                              <span key={idx} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
+                                {subject.name}
+                                <span className="ml-1 text-blue-500 font-mono text-[10px]">
+                                  ({subject.id})
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -1142,6 +1305,16 @@ export default function ReportCards() {
           onClose={() => setShowMissingDataModal(false)}
           classReadiness={classReadiness}
           teacherAssignments={classTeacherAssignments}
+        />
+      )}
+
+      {/* Debug Panel */}
+      {showDebugPanel && classReadiness && (
+        <DebugPanel
+          classReadiness={classReadiness}
+          teacherAssignments={classTeacherAssignments}
+          expectedSubjects={classReadiness.expectedSubjectsWithIds || []}
+          onClose={() => setShowDebugPanel(false)}
         />
       )}
     </>
