@@ -1,8 +1,8 @@
-// @/pages/admin/ReportCards.tsx - FULLY REWRITTEN WITH FIXED INTEGRATION
+// @/pages/admin/ReportCards.tsx - CLEANED, PURIFIED, PERFECTED
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
-import { useReportCards, useReportReadiness, useTeacherAssignmentsForClass } from '@/hooks/useResults';
+import { useReportCards, useTeacherAssignmentsForClass } from '@/hooks/useResults';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useAuth } from '@/hooks/useAuth';
@@ -11,30 +11,21 @@ import {
   Mail,
   Filter,
   Search,
-  Printer,
   Eye,
   CheckCircle,
   XCircle,
   FileText,
   X,
-  Share2,
-  TrendingUp,
-  TrendingDown,
   ChevronRight,
   Loader2,
   BookOpen,
   Calendar,
-  Users,
-  Award,
   AlertTriangle,
-  Info,
   RefreshCw,
-  User,
-  GraduationCap,
-  Bug
+  GraduationCap
 } from 'lucide-react';
 
-// ==================== TYPES & INTERFACES ====================
+// ==================== TYPES ====================
 interface SubjectResult {
   subjectId: string;
   subjectName: string;
@@ -75,29 +66,21 @@ interface StudentReportCard {
 }
 
 const GRADE_SYSTEM = {
-  1: { min: 75, max: 100, description: 'Distinction', color: 'bg-gradient-to-r from-green-500 to-emerald-600', textColor: 'text-green-600' },
-  2: { min: 70, max: 74, description: 'Distinction', color: 'bg-gradient-to-r from-green-400 to-green-500', textColor: 'text-green-600' },
-  3: { min: 65, max: 69, description: 'Merit', color: 'bg-gradient-to-r from-blue-500 to-blue-600', textColor: 'text-blue-600' },
-  4: { min: 60, max: 64, description: 'Merit', color: 'bg-gradient-to-r from-blue-400 to-blue-500', textColor: 'text-blue-600' },
-  5: { min: 55, max: 59, description: 'Credit', color: 'bg-gradient-to-r from-cyan-400 to-cyan-500', textColor: 'text-cyan-600' },
-  6: { min: 50, max: 54, description: 'Credit', color: 'bg-gradient-to-r from-cyan-300 to-cyan-400', textColor: 'text-cyan-600' },
-  7: { min: 45, max: 49, description: 'Satisfactory', color: 'bg-gradient-to-r from-yellow-400 to-yellow-500', textColor: 'text-yellow-600' },
-  8: { min: 40, max: 44, description: 'Satisfactory', color: 'bg-gradient-to-r from-orange-400 to-orange-500', textColor: 'text-orange-600' },
-  9: { min: 0, max: 39, description: 'Unsatisfactory (Fail)', color: 'bg-gradient-to-r from-red-400 to-red-500', textColor: 'text-red-600' },
-  X: { min: -1, max: -1, description: 'Absent', color: 'bg-gradient-to-r from-gray-400 to-gray-500', textColor: 'text-gray-600' },
+  1: { min: 75, max: 100, description: 'Distinction', color: 'bg-gradient-to-r from-green-500 to-emerald-600' },
+  2: { min: 70, max: 74, description: 'Distinction', color: 'bg-gradient-to-r from-green-400 to-green-500' },
+  3: { min: 65, max: 69, description: 'Merit', color: 'bg-gradient-to-r from-blue-500 to-blue-600' },
+  4: { min: 60, max: 64, description: 'Merit', color: 'bg-gradient-to-r from-blue-400 to-blue-500' },
+  5: { min: 55, max: 59, description: 'Credit', color: 'bg-gradient-to-r from-cyan-400 to-cyan-500' },
+  6: { min: 50, max: 54, description: 'Credit', color: 'bg-gradient-to-r from-cyan-300 to-cyan-400' },
+  7: { min: 45, max: 49, description: 'Satisfactory', color: 'bg-gradient-to-r from-yellow-400 to-yellow-500' },
+  8: { min: 40, max: 44, description: 'Satisfactory', color: 'bg-gradient-to-r from-orange-400 to-orange-500' },
+  9: { min: 0, max: 39, description: 'Unsatisfactory', color: 'bg-gradient-to-r from-red-400 to-red-500' },
+  X: { min: -1, max: -1, description: 'Absent', color: 'bg-gradient-to-r from-gray-400 to-gray-500' },
 };
 
-const getGradeDisplay = (grade: number): string => {
-  return grade === -1 ? 'X' : grade.toString();
-};
-
-const getGradeInfo = (grade: number) => {
-  const gradeKey = grade === -1 ? 'X' : grade;
-  return GRADE_SYSTEM[gradeKey] || GRADE_SYSTEM[9];
-};
-
+const getGradeDisplay = (grade: number): string => grade === -1 ? 'X' : grade.toString();
+const getGradeInfo = (grade: number) => GRADE_SYSTEM[grade === -1 ? 'X' : grade] || GRADE_SYSTEM[9];
 const getGradeComment = (grade: number): string => {
-  const gradeKey = grade === -1 ? 'X' : grade;
   const comments: { [key: string]: string } = {
     1: 'Outstanding performance. Exceptional understanding and application of concepts.',
     2: 'Excellent work. Strong grasp of subject matter with consistent high performance.',
@@ -110,7 +93,7 @@ const getGradeComment = (grade: number): string => {
     9: 'Unsatisfactory performance. Needs immediate intervention and intensive support.',
     X: 'Student was absent for this assessment.',
   };
-  return comments[gradeKey] || 'Performance assessment pending.';
+  return comments[grade === -1 ? 'X' : grade] || 'Performance assessment pending.';
 };
 
 const CardSkeleton = () => (
@@ -132,476 +115,179 @@ const CardSkeleton = () => (
   </div>
 );
 
-// ==================== DEBUG PANEL ====================
-interface DebugPanelProps {
-  classReadiness: any;
-  teacherAssignments: any[];
-  expectedSubjects: any[];
-  onClose: () => void;
-}
-
-const DebugPanel = ({ classReadiness, teacherAssignments, expectedSubjects, onClose }: DebugPanelProps) => {
-  if (!classReadiness) return null;
-  
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      <div className="fixed inset-0 bg-black/50 transition-opacity" onClick={onClose} />
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative bg-white rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
-          <div className="p-6 border-b border-gray-200 bg-gray-900 text-white">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Bug size={20} />
-                <h2 className="text-xl font-bold">Debug: Subject Matching Diagnostics</h2>
-              </div>
-              <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-lg">
-                <X size={20} />
-              </button>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6">
-            {/* Teacher Assignments */}
-            <div className="mb-6">
-              <h3 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
-                <GraduationCap size={18} />
-                Teacher Assignments ({teacherAssignments.length})
-              </h3>
-              <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-blue-800">
-                      <th className="pb-2">Original Subject</th>
-                      <th className="pb-2">Normalized ID</th>
-                      <th className="pb-2">Teacher</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {teacherAssignments.map((a, idx) => (
-                      <tr key={idx} className="border-t border-blue-200">
-                        <td className="py-2 text-blue-900">{a.subject}</td>
-                        <td className="py-2 font-mono text-blue-700">{a.subjectId || '—'}</td>
-                        <td className="py-2 text-blue-900">{a.teacherName}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Expected Subjects */}
-            <div className="mb-6">
-              <h3 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
-                <BookOpen size={18} />
-                Expected Subjects for Validation ({expectedSubjects?.length || 0})
-              </h3>
-              <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-green-800">
-                      <th className="pb-2">Subject Name</th>
-                      <th className="pb-2">Normalized ID</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {expectedSubjects?.map((s, idx) => (
-                      <tr key={idx} className="border-t border-green-200">
-                        <td className="py-2 text-green-900">{s.name || s}</td>
-                        <td className="py-2 font-mono text-green-700">{s.id || s}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Class Readiness Summary */}
-            <div className="mb-6">
-              <h3 className="text-lg font-bold text-gray-900 mb-3">Readiness Summary</h3>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-600">Total Students</p>
-                  <p className="text-2xl font-bold">{classReadiness.totalStudents}</p>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-600">Ready</p>
-                  <p className="text-2xl font-bold text-green-600">{classReadiness.readyStudents}</p>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-600">Completion</p>
-                  <p className="text-2xl font-bold text-blue-600">{classReadiness.completionPercentage}%</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Sample Student Missing Data */}
-            {classReadiness.studentDetails?.slice(0, 3).map((student: any) => (
-              <div key={student.studentId} className="mb-4 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                <div className="flex justify-between mb-2">
-                  <span className="font-bold">{student.studentName}</span>
-                  <span className="text-sm text-yellow-700">
-                    {student.completeSubjects}/{student.totalSubjects} subjects
-                  </span>
-                </div>
-                {student.missingData.map((m: any, idx: number) => (
-                  <div key={idx} className="text-sm ml-4 flex items-start gap-2">
-                    <span className="text-red-600">•</span>
-                    <span className="font-medium">{m.subject}</span>
-                    <span className="text-gray-600">(ID: {m.subjectId})</span>
-                    <span className="text-red-600">Missing: {m.missingExamTypes.join(', ')}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-          <div className="p-6 border-t border-gray-200 bg-gray-50">
-            <button
-              onClick={onClose}
-              className="px-6 py-2.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-            >
-              Close Debug
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ==================== MISSING DATA MODAL ====================
-interface MissingDataModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  classReadiness: any;
-  teacherAssignments: any[];
-}
-
-const MissingDataModal = ({ isOpen, onClose, classReadiness, teacherAssignments }: MissingDataModalProps) => {
-  if (!isOpen || !classReadiness) return null;
-  
-  const incompleteStudents = classReadiness.studentDetails?.filter((s: any) => !s.isReady) || [];
-  
-  // Create a map of normalized subject ID to teacher name
-  const subjectTeacherMap = new Map<string, string>();
-  teacherAssignments.forEach(assignment => {
-    subjectTeacherMap.set(assignment.subjectId || assignment.subject, assignment.teacherName || 'Assigned Teacher');
-  });
-
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      <div className="fixed inset-0 bg-black/50 transition-opacity" onClick={onClose} />
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative bg-white rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
-          <div className="p-6 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">Missing Results Data</h2>
-                <p className="text-gray-600 mt-1">
-                  {incompleteStudents.length} student{incompleteStudents.length !== 1 ? 's' : ''} have incomplete data
-                </p>
-              </div>
-              <button
-                onClick={onClose}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X size={24} />
-              </button>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="space-y-4">
-              {incompleteStudents.map((student: any) => (
-                <div key={student.studentId} className="bg-yellow-50 border-l-4 border-yellow-500 rounded-r-lg p-4">
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <h3 className="font-semibold text-gray-900">{student.studentName}</h3>
-                      <p className="text-sm text-gray-600">ID: {student.studentId}</p>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-yellow-700">
-                        {Math.round((student.completeSubjects / (student.totalSubjects || 1)) * 100)}%
-                      </div>
-                      <div className="text-xs text-gray-600">
-                        {student.completeSubjects}/{student.totalSubjects} subjects
-                      </div>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-700">Missing Data:</p>
-                    {student.missingData.map((missing: any, idx: number) => (
-                      <div key={idx} className="ml-4 p-2 bg-white rounded border border-yellow-200">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <p className="font-medium text-gray-900">{missing.subject}</p>
-                            <p className="text-sm text-gray-600">
-                              Teacher: {subjectTeacherMap.get(missing.subjectId) || missing.teacherName || 'Not assigned'}
-                            </p>
-                            <p className="text-xs text-gray-500 font-mono mt-1">
-                              Subject ID: {missing.subjectId}
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm text-red-600 font-medium">
-                              Missing: {missing.missingExamTypes.join(', ')}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="p-6 border-t border-gray-200 bg-gray-50">
-            <div className="flex justify-between items-center">
-              <p className="text-sm text-gray-600">
-                These students need teachers to complete results entry before accurate reports can be generated.
-              </p>
-              <button
-                onClick={onClose}
-                className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 // ==================== REPORT DETAIL MODAL ====================
 interface ReportDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   reportCard: StudentReportCard | null;
-  onAction: (action: 'download' | 'email' | 'print' | 'share', studentId: string) => void;
 }
 
-const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDetailModalProps) => {
+const ReportDetailModal = ({ isOpen, onClose, reportCard }: ReportDetailModalProps) => {
   if (!isOpen || !reportCard) return null;
   const gradeInfo = getGradeInfo(reportCard.grade);
   
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
-      <div className="fixed inset-0 bg-black/50 transition-opacity" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
       <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative bg-white rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+        <div className="relative bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
           <div className="p-6 border-b border-gray-200">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-start justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">Academic Report Card</h2>
-                <p className="text-gray-600">{reportCard.term}, {reportCard.year} • Detailed Performance Report</p>
+                <p className="text-gray-600 mt-1">{reportCard.term}, {reportCard.year}</p>
                 {!reportCard.isComplete && (
-                  <div className="mt-2 flex items-center gap-2 text-yellow-700">
+                  <div className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 bg-yellow-100 text-yellow-800 rounded-lg text-sm">
                     <AlertTriangle size={16} />
-                    <span className="text-sm font-medium">
-                      Incomplete Data ({reportCard.completionPercentage}% complete)
-                    </span>
+                    Incomplete Data ({reportCard.completionPercentage}% complete)
                   </div>
                 )}
               </div>
-              <button
-                onClick={onClose}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X size={24} />
+              <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                <X size={20} />
               </button>
             </div>
           </div>
+          
           <div className="flex-1 overflow-y-auto p-6">
             <div className="text-center mb-8 border-b pb-6">
               <h1 className="text-xl font-bold uppercase">Republic of Zambia</h1>
               <h2 className="text-lg font-semibold">Ministry of Education</h2>
               <h3 className="text-lg font-semibold text-blue-600">Kalabo Boarding Secondary School</h3>
-              <p className="text-gray-600 mt-2">P.O. Box 110, Kalabo, Zambia</p>
             </div>
             
-            <div className="mb-8">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                <div>
-                  <p className="text-sm text-gray-500">Name</p>
-                  <p className="font-semibold">{reportCard.studentName}</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+              <div>
+                <p className="text-xs text-gray-500">Student Name</p>
+                <p className="font-semibold text-gray-900">{reportCard.studentName}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Grade</p>
+                <div className="flex items-center gap-2">
+                  <span className={`px-3 py-1 rounded-full text-white text-sm font-bold ${gradeInfo.color}`}>
+                    {getGradeDisplay(reportCard.grade)}
+                  </span>
+                  <span className="text-sm text-gray-600">{gradeInfo.description}</span>
                 </div>
-                <div>
-                  <p className="text-sm text-gray-500">Grade</p>
-                  <p className={`font-bold ${gradeInfo.textColor}`}>
-                    {getGradeDisplay(reportCard.grade)} - {gradeInfo.description}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Class</p>
-                  <p className="font-semibold">{reportCard.className}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Position</p>
-                  <p className="font-semibold">{reportCard.position}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Gender</p>
-                  <p className="font-semibold">{reportCard.gender}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Student ID</p>
-                  <p className="font-semibold">{reportCard.studentId}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Attendance</p>
-                  <p className="font-semibold">{reportCard.attendance}%</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Term</p>
-                  <p className="font-semibold">{reportCard.term}, {reportCard.year}</p>
-                </div>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Class</p>
+                <p className="font-semibold text-gray-900">{reportCard.className}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Position</p>
+                <p className="font-semibold text-gray-900">{reportCard.position}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Student ID</p>
+                <p className="font-mono text-sm text-gray-900">{reportCard.studentId}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Attendance</p>
+                <p className="font-semibold text-gray-900">{reportCard.attendance}%</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Overall</p>
+                <p className="text-xl font-bold text-blue-600">{reportCard.percentage}%</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Status</p>
+                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-semibold ${
+                  reportCard.status === 'pass' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {reportCard.status === 'pass' ? <CheckCircle size={14} /> : <XCircle size={14} />}
+                  {reportCard.status === 'pass' ? 'Passed' : 'Needs Improvement'}
+                </span>
               </div>
             </div>
             
-            <div className="mb-8">
-              <h3 className="text-lg font-bold text-gray-900 mb-4">Academic Performance</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-gray-50">
-                      <th className="border border-gray-300 px-4 py-3 text-left font-semibold text-gray-700">Subject</th>
-                      <th className="border border-gray-300 px-4 py-3 text-left font-semibold text-gray-700">Teacher</th>
-                      <th className="border border-gray-300 px-4 py-3 text-left font-semibold text-gray-700">Week 4</th>
-                      <th className="border border-gray-300 px-4 py-3 text-left font-semibold text-gray-700">Week 8</th>
-                      <th className="border border-gray-300 px-4 py-3 text-left font-semibold text-gray-700">End of Term</th>
-                      <th className="border border-gray-300 px-4 py-3 text-left font-semibold text-gray-700">Grade</th>
-                      <th className="border border-gray-300 px-4 py-3 text-left font-semibold text-gray-700">Comment</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reportCard.subjects.map((subject, index) => {
-                      const subjectGradeInfo = getGradeInfo(subject.grade);
-                      return (
-                        <tr key={index} className={`hover:bg-gray-50 ${!subject.isComplete ? 'bg-yellow-50' : ''}`}>
-                          <td className="border border-gray-300 px-4 py-3 font-medium">
-                            {subject.subjectName}
-                            {!subject.isComplete && (
-                              <span className="ml-2 text-xs text-yellow-700">⚠️ Incomplete</span>
-                            )}
-                          </td>
-                          <td className="border border-gray-300 px-4 py-3 text-sm text-gray-600">{subject.teacherName}</td>
-                          <td className="border border-gray-300 px-4 py-3">
-                            {subject.week4 >= 0 ? `${subject.week4}%` : (
-                              <span className="text-yellow-600">—</span>
-                            )}
-                          </td>
-                          <td className="border border-gray-300 px-4 py-3">
-                            {subject.week8 >= 0 ? `${subject.week8}%` : (
-                              <span className="text-yellow-600">—</span>
-                            )}
-                          </td>
-                          <td className="border border-gray-300 px-4 py-3 font-semibold">
-                            {subject.endOfTerm >= 0 ? `${subject.endOfTerm}%` : (
-                              <span className="text-yellow-600">—</span>
-                            )}
-                          </td>
-                          <td className="border border-gray-300 px-4 py-3">
-                            <span className={`px-3 py-1 rounded-full text-white font-bold ${subjectGradeInfo.color}`}>
-                              {getGradeDisplay(subject.grade)}
-                            </span>
-                          </td>
-                          <td className="border border-gray-300 px-4 py-3 text-sm">
-                            {subject.comment || getGradeComment(subject.grade)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    <tr className="bg-gray-50 font-semibold">
-                      <td className="border border-gray-300 px-4 py-3" colSpan={2}>Overall Average</td>
-                      <td className="border border-gray-300 px-4 py-3">
-                        {Math.round(
-                          reportCard.subjects
-                            .filter(s => s.week4 >= 0)
-                            .reduce((sum, s) => sum + s.week4, 0) /
-                          (reportCard.subjects.filter(s => s.week4 >= 0).length || 1)
-                        )}%
-                      </td>
-                      <td className="border border-gray-300 px-4 py-3">
-                        {Math.round(
-                          reportCard.subjects
-                            .filter(s => s.week8 >= 0)
-                            .reduce((sum, s) => sum + s.week8, 0) /
-                          (reportCard.subjects.filter(s => s.week8 >= 0).length || 1)
-                        )}%
-                      </td>
-                      <td className="border border-gray-300 px-4 py-3">{reportCard.percentage}%</td>
-                      <td className="border border-gray-300 px-4 py-3">
-                        <span className={`px-3 py-1 rounded-full text-white font-bold ${gradeInfo.color}`}>
-                          {getGradeDisplay(reportCard.grade)}
-                        </span>
-                      </td>
-                      <td className="border border-gray-300 px-4 py-3 text-sm">
-                        {gradeInfo.description}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Academic Performance</h3>
+            <div className="overflow-x-auto mb-8">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="border border-gray-200 px-4 py-3 text-left text-xs font-semibold text-gray-700">Subject</th>
+                    <th className="border border-gray-200 px-4 py-3 text-left text-xs font-semibold text-gray-700">Teacher</th>
+                    <th className="border border-gray-200 px-4 py-3 text-left text-xs font-semibold text-gray-700">Wk4</th>
+                    <th className="border border-gray-200 px-4 py-3 text-left text-xs font-semibold text-gray-700">Wk8</th>
+                    <th className="border border-gray-200 px-4 py-3 text-left text-xs font-semibold text-gray-700">Final</th>
+                    <th className="border border-gray-200 px-4 py-3 text-left text-xs font-semibold text-gray-700">Grade</th>
+                    <th className="border border-gray-200 px-4 py-3 text-left text-xs font-semibold text-gray-700">Comment</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportCard.subjects.map((subject, index) => {
+                    const subjectGradeInfo = getGradeInfo(subject.grade);
+                    return (
+                      <tr key={index} className={!subject.isComplete ? 'bg-yellow-50/50' : ''}>
+                        <td className="border border-gray-200 px-4 py-3 text-sm font-medium">
+                          {subject.subjectName}
+                          {!subject.isComplete && (
+                            <span className="ml-2 text-xs text-yellow-700">⚠️</span>
+                          )}
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-600">{subject.teacherName}</td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm">
+                          {subject.week4 >= 0 ? `${subject.week4}%` : '—'}
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm">
+                          {subject.week8 >= 0 ? `${subject.week8}%` : '—'}
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm font-semibold">
+                          {subject.endOfTerm >= 0 ? `${subject.endOfTerm}%` : '—'}
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3">
+                          <span className={`px-2 py-1 rounded-full text-white text-xs font-bold ${subjectGradeInfo.color}`}>
+                            {getGradeDisplay(subject.grade)}
+                          </span>
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-xs text-gray-600">
+                          {subject.comment || getGradeComment(subject.grade)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
             
             <div className="mb-8">
               <h3 className="text-lg font-bold text-gray-900 mb-4">Class Teacher's Comment</h3>
               <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r">
                 <p className="text-gray-800 leading-relaxed">{reportCard.teachersComment}</p>
-                <div className="mt-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">
-                      <span className="font-medium">Status:</span>{' '}
-                      <span className={`ml-2 px-3 py-1 rounded-full text-sm font-semibold ${
-                        reportCard.status === 'pass'
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {reportCard.status === 'pass' ? (
-                          <>
-                            <CheckCircle size={14} className="inline mr-1" />
-                            Passed
-                          </>
-                        ) : (
-                          <>
-                            <XCircle size={14} className="inline mr-1" />
-                            Needs Improvement
-                          </>
-                        )}
-                      </span>
-                    </p>
-                  </div>
+                <div className="mt-4 flex justify-end">
                   <div className="text-right">
                     <p className="text-sm text-gray-600">
-                      <span className="font-medium">Teacher's Signature:</span>{' '}
-                      <span className="border-b border-gray-400 px-8">_________</span>
+                      <span className="font-medium">Teacher's Signature:</span>
+                      <span className="border-b border-gray-400 px-8 ml-2">_________</span>
                     </p>
                   </div>
                 </div>
               </div>
             </div>
             
-            <div className="mb-8 bg-blue-50 p-4 rounded-lg border border-blue-200">
-              <h4 className="font-bold text-blue-900 mb-3">Grading System Reference</h4>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+            <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
+              <h4 className="font-bold text-blue-900 mb-3">Grading System</h4>
+              <div className="grid grid-cols-3 md:grid-cols-6 gap-2 text-xs">
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-1 bg-green-600 text-white rounded font-bold">1-2</span>
-                  <span className="text-blue-800">Distinction (70-100%)</span>
+                  <span className="text-blue-800">Distinction</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-1 bg-blue-600 text-white rounded font-bold">3-4</span>
-                  <span className="text-blue-800">Merit (60-69%)</span>
+                  <span className="text-blue-800">Merit</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-1 bg-cyan-600 text-white rounded font-bold">5-6</span>
-                  <span className="text-blue-800">Credit (50-59%)</span>
+                  <span className="text-blue-800">Credit</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-1 bg-yellow-600 text-white rounded font-bold">7-8</span>
-                  <span className="text-blue-800">Satisfactory (40-49%)</span>
+                  <span className="text-blue-800">Satisfactory</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-1 bg-red-600 text-white rounded font-bold">9</span>
-                  <span className="text-blue-800">Fail (0-39%)</span>
+                  <span className="text-blue-800">Fail</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-1 bg-gray-600 text-white rounded font-bold">X</span>
@@ -610,54 +296,10 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
               </div>
             </div>
             
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-              <h4 className="font-bold text-blue-900 mb-2">To Parents/Guardians:</h4>
-              <p className="text-blue-800 text-sm mb-3">
-                This report should be discussed with your child. Please sign below to acknowledge receipt and return to school.
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-blue-700">Parent's/Guardian's Signature:</p>
-                  <div className="border-b border-blue-300 mt-1 h-8"></div>
-                </div>
-                <div>
-                  <p className="text-sm text-blue-700">Date:</p>
-                  <div className="border-b border-blue-300 mt-1 h-8"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="p-6 border-t border-gray-200 bg-gray-50">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div className="text-sm text-gray-600">
+            <div className="mt-8 bg-gray-50 p-4 rounded-xl border border-gray-200">
+              <p className="text-xs text-gray-600">
                 Report generated: {reportCard.generatedDate}
-                {!reportCard.isComplete && (
-                  <span className="ml-2 text-yellow-700">• Incomplete ({reportCard.completionPercentage}%)</span>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={() => onAction('share', reportCard.studentId)}
-                  className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <Share2 size={18} />
-                  Share
-                </button>
-                <button
-                  onClick={() => onAction('print', reportCard.studentId)}
-                  className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <Printer size={18} />
-                  Print
-                </button>
-                <button
-                  onClick={() => onAction('email', reportCard.studentId)}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  <Mail size={18} />
-                  Email to Parents
-                </button>
-              </div>
+              </p>
             </div>
           </div>
         </div>
@@ -670,65 +312,71 @@ const ReportDetailModal = ({ isOpen, onClose, reportCard, onAction }: ReportDeta
 interface StudentCardProps {
   reportCard: StudentReportCard;
   onViewDetails: (studentId: string) => void;
+  onDownload: (studentId: string) => void;
+  onEmail: (studentId: string) => void;
 }
 
-const StudentCard = ({ reportCard, onViewDetails }: StudentCardProps) => {
+const StudentCard = ({ reportCard, onViewDetails, onDownload, onEmail }: StudentCardProps) => {
   const gradeInfo = getGradeInfo(reportCard.grade);
   
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-all cursor-pointer relative"
-      onClick={() => onViewDetails(reportCard.studentId)}>
-      {!reportCard.isComplete && (
-        <div className="absolute top-3 right-3">
-          <div className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs font-semibold rounded-full flex items-center gap-1">
-            <AlertTriangle size={12} />
-            {reportCard.completionPercentage}%
-          </div>
-        </div>
-      )}
+    <div className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-lg transition-all duration-300 hover:border-gray-300 hover:-translate-y-0.5">
       <div className="flex items-start justify-between mb-4">
-        <div>
-          <h3 className="font-bold text-gray-900 text-lg mb-1">{reportCard.studentName}</h3>
-          <div className="flex items-center gap-2 text-sm text-gray-600">
-            <span>{reportCard.studentId}</span>
-            <span>•</span>
-            <span>{reportCard.className}</span>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-12 h-12 bg-gradient-to-br from-blue-50 to-indigo-100 rounded-full flex items-center justify-center flex-shrink-0">
+            <GraduationCap size={20} className="text-blue-600" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="font-bold text-gray-900 truncate">{reportCard.studentName}</h3>
+            <p className="text-xs text-gray-500 truncate">{reportCard.studentId}</p>
           </div>
         </div>
-        <div className={`w-12 h-12 rounded-lg flex items-center justify-center text-white font-bold ${gradeInfo.color}`}>
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold ${gradeInfo.color}`}>
           {getGradeDisplay(reportCard.grade)}
         </div>
       </div>
-      <div className="space-y-3 mb-4">
+      
+      <div className="flex items-center justify-between mb-4">
         <div>
-          <p className="text-xs text-gray-500">Grade & Position</p>
-          <p className="font-semibold">{gradeInfo.description} • {reportCard.position}</p>
+          <p className="text-xs text-gray-500">Class</p>
+          <p className="font-medium text-gray-900 text-sm">{reportCard.className}</p>
         </div>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs text-gray-500">Overall</p>
-            <p className="font-semibold">{reportCard.percentage}%</p>
-          </div>
-          <div>
-            <p className="text-xs text-gray-500">Status</p>
-            <div className="flex items-center gap-1">
-              {reportCard.status === 'pass' ? (
-                <CheckCircle size={14} className="text-green-500" />
-              ) : (
-                <XCircle size={14} className="text-red-500" />
-              )}
-              <span className={`text-sm ${reportCard.status === 'pass' ? 'text-green-600' : 'text-red-600'}`}>
-                {reportCard.status === 'pass' ? 'Pass' : 'Fail'}
-              </span>
-            </div>
-          </div>
+        <div className="text-right">
+          <p className="text-xs text-gray-500">Overall</p>
+          <p className="font-bold text-blue-600">{reportCard.percentage}%</p>
         </div>
       </div>
-      <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors font-medium">
-        <Eye size={18} />
-        View Report
-        <ChevronRight size={18} />
-      </button>
+      
+      {!reportCard.isComplete && (
+        <div className="mb-3 px-2 py-1.5 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2">
+          <AlertTriangle size={14} className="text-yellow-600" />
+          <span className="text-xs text-yellow-700">{reportCard.completionPercentage}% complete</span>
+        </div>
+      )}
+      
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onViewDetails(reportCard.studentId)}
+          className="flex-1 py-2.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+        >
+          <Eye size={16} />
+          View
+        </button>
+        <button
+          onClick={() => onDownload(reportCard.studentId)}
+          className="p-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+          title="Download report"
+        >
+          <Download size={16} />
+        </button>
+        <button
+          onClick={() => onEmail(reportCard.studentId)}
+          className="p-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+          title="Email to parents"
+        >
+          <Mail size={16} />
+        </button>
+      </div>
     </div>
   );
 };
@@ -738,31 +386,20 @@ export default function ReportCards() {
   const { user } = useAuth();
   const { classes, isLoading: loadingClasses } = useSchoolClasses();
   const [selectedClass, setSelectedClass] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<string>('all');
-  const [selectedForm, setSelectedForm] = useState<string>('all');
   const [selectedTerm, setSelectedTerm] = useState<string>('Term 1');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
-  const [showMissingDataModal, setShowMissingDataModal] = useState(false);
-  const [showDebugPanel, setShowDebugPanel] = useState(false);
-  const [includeIncomplete, setIncludeIncomplete] = useState(true);
-  const [markMissing, setMarkMissing] = useState(true);
   const debouncedSearch = useDebounce(searchTerm, 300);
 
-  // Get teacher assignments for selected class using the new hook
-  const { 
-    assignments: classTeacherAssignments, 
-    isLoading: loadingAssignments,
-    refetch: refetchAssignments
-  } = useTeacherAssignmentsForClass(selectedClass !== 'all' ? selectedClass : undefined);
+  // Get teacher assignments for selected class
+  const { assignments: classTeacherAssignments } = useTeacherAssignmentsForClass(
+    selectedClass !== 'all' ? selectedClass : undefined
+  );
 
   // Get learners for selected class
-  const { 
-    learners, 
-    isLoading: loadingLearners 
-  } = useSchoolLearners(selectedClass !== 'all' ? selectedClass : undefined);
+  const { learners } = useSchoolLearners(selectedClass !== 'all' ? selectedClass : undefined);
 
   // Automatically select class for teachers
   useEffect(() => {
@@ -776,10 +413,9 @@ export default function ReportCards() {
     }
   }, [classes, user, selectedClass]);
 
-  // Get unique subjects for selected class from normalized assignments
+  // Get unique subjects for selected class
   const subjectsInClass = useMemo(() => {
     if (!classTeacherAssignments.length) return [];
-    // Use a Map to deduplicate by subjectId
     const subjectMap = new Map();
     classTeacherAssignments.forEach(a => {
       subjectMap.set(a.subjectId || a.subject, {
@@ -790,46 +426,32 @@ export default function ReportCards() {
     return Array.from(subjectMap.values());
   }, [classTeacherAssignments]);
 
-  // Use report readiness hook - FIXED: Now works with 3 parameters
-  const {
-    classReadiness,
-    isLoading: loadingReadiness,
-    refetch: refetchReadiness,
-  } = useReportReadiness({
-    classId: selectedClass !== 'all' ? selectedClass : undefined,
-    term: selectedTerm,
-    year: selectedYear,
-  });
-
-  // Fetch report cards
+  // Fetch report cards - AUTOMATICALLY GENERATED, NO GENERATE BUTTON NEEDED
   const {
     reportCards = [],
     isLoading,
     refetch,
-    bulkSummary,
   } = useReportCards({
     classId: selectedClass !== 'all' ? selectedClass : undefined,
     term: selectedTerm,
     year: selectedYear,
-    includeIncomplete,
-    markMissing,
+    includeIncomplete: true, // Always include incomplete
+    markMissing: true, // Always mark missing data
   });
 
-  // Filter report cards
+  // Filter report cards - ONLY SEARCH, CLASS, TERM, YEAR
   const filteredRecords = useMemo(() => {
     if (!reportCards || reportCards.length === 0) return [];
     return reportCards.filter(record => {
       const matchesSearch = !debouncedSearch ||
         record.studentName.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        record.studentId.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        record.className.toLowerCase().includes(debouncedSearch.toLowerCase());
+        record.studentId.toLowerCase().includes(debouncedSearch.toLowerCase());
       const matchesClass = selectedClass === 'all' || record.classId === selectedClass;
-      const matchesStatus = selectedStatus === 'all' || record.status === selectedStatus;
-      const matchesForm = selectedForm === 'all' || record.form === selectedForm;
-      return matchesSearch && matchesClass && matchesStatus && matchesForm;
+      return matchesSearch && matchesClass;
     });
-  }, [reportCards, debouncedSearch, selectedClass, selectedStatus, selectedForm]);
+  }, [reportCards, debouncedSearch, selectedClass]);
 
+  // Class options for filter
   const classOptions = useMemo(() => {
     const uniqueClasses = Array.from(new Set(
       (reportCards || []).map(r => ({ id: r.classId, name: r.className }))
@@ -843,75 +465,57 @@ export default function ReportCards() {
     return allClasses;
   }, [reportCards, classes]);
 
-  const formOptions = useMemo(() =>
-    Array.from(new Set((reportCards || []).map(r => r.form))).sort(),
-    [reportCards]
-  );
-
+  // Handle actions
   const handleViewDetails = (studentId: string) => {
     setSelectedStudent(studentId);
     setShowReportModal(true);
   };
 
-  const handleModalAction = (action: 'download' | 'email' | 'print' | 'share', studentId: string) => {
+  const handleDownload = (studentId: string) => {
     const student = reportCards?.find(s => s.studentId === studentId);
-    const actionMap = {
-      download: `Downloading report for ${student?.studentName}`,
-      email: `Emailing report to ${student?.parentsEmail}`,
-      print: `Printing report for ${student?.studentName}`,
-      share: `Sharing report for ${student?.studentName}`
-    };
-    alert(actionMap[action]);
+    // In a real implementation, this would trigger PDF download
+    console.log(`Downloading report for ${student?.studentName}`);
   };
 
-  const handleBatchAction = (action: 'download' | 'email') => {
-    const actionText = action === 'download' ? 'Download' : 'Email';
-    alert(`${actionText}ing ${filteredRecords.length} reports...`);
+  const handleEmail = (studentId: string) => {
+    const student = reportCards?.find(s => s.studentId === studentId);
+    // In a real implementation, this would send email
+    console.log(`Emailing report to ${student?.parentsEmail}`);
+  };
+
+  const handleBatchDownload = () => {
+    console.log(`Downloading ${filteredRecords.length} reports...`);
+  };
+
+  const handleBatchEmail = () => {
+    console.log(`Emailing ${filteredRecords.length} reports...`);
   };
 
   const selectedReportCard = reportCards?.find(s => s.studentId === selectedStudent);
-
-  const stats = useMemo(() => ({
-    totalStudents: filteredRecords.length,
-    averagePercentage: filteredRecords.length > 0
-      ? Math.round(filteredRecords.reduce((sum, r) => sum + r.percentage, 0) / filteredRecords.length)
-      : 0,
-    passRate: filteredRecords.length > 0
-      ? Math.round((filteredRecords.filter(r => r.status === 'pass').length / filteredRecords.length) * 100)
-      : 0,
-    topGrades: filteredRecords.filter(r => r.grade <= 2).length,
-    completeReports: filteredRecords.filter(r => r.isComplete).length,
-    incompleteReports: filteredRecords.filter(r => !r.isComplete).length,
-  }), [filteredRecords]);
 
   const terms = ['Term 1', 'Term 2', 'Term 3'];
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
-  const isLoadingAll = isLoading || loadingClasses || loadingReadiness || loadingAssignments;
+  const isLoadingAll = isLoading || loadingClasses;
 
   if (isLoadingAll) {
     return (
       <DashboardLayout activeTab="reports">
-        <div className="p-6 space-y-8">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-pulse">
+        <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-pulse mb-8">
             <div>
               <div className="h-8 bg-gray-200 rounded w-48 mb-2"></div>
               <div className="h-4 bg-gray-100 rounded w-64"></div>
             </div>
-            <div className="h-10 bg-gray-200 rounded w-40"></div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
-                <div className="h-4 bg-gray-200 rounded w-24 mb-4"></div>
-                <div className="h-8 bg-gray-300 rounded w-20 mb-2"></div>
-                <div className="h-3 bg-gray-100 rounded w-32"></div>
-              </div>
-            ))}
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 bg-gray-200 rounded-lg"></div>
+              <div className="h-10 w-10 bg-gray-200 rounded-lg"></div>
+              <div className="h-10 w-10 bg-gray-200 rounded-lg"></div>
+            </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {[1, 2, 3, 4].map((i) => (
+            {[1, 2, 3, 4, 5, 6].map((i) => (
               <CardSkeleton key={i} />
             ))}
           </div>
@@ -923,219 +527,81 @@ export default function ReportCards() {
   return (
     <>
       <DashboardLayout activeTab="reports">
-        <div className="min-h-screen bg-gray-50 p-6">
-          <div className="mb-8">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-              <div>
-                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Report Cards</h1>
-                <p className="text-gray-600 mt-2">
-                  Manage and view student academic reports • {selectedTerm}, {selectedYear}
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                {/* Debug Button - Only show when class selected */}
-                {selectedClass !== 'all' && (
-                  <button
-                    onClick={() => setShowDebugPanel(true)}
-                    className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-                    title="Debug subject matching"
-                  >
-                    <Bug size={18} />
-                    Debug
-                  </button>
-                )}
-                <button
-                  onClick={() => {
-                    refetchReadiness();
-                    refetchAssignments();
-                    refetch();
-                  }}
-                  className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                  title="Refresh all data"
-                >
-                  <RefreshCw size={18} />
-                  Refresh
-                </button>
-                <button
-                  onClick={() => handleBatchAction('download')}
-                  className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                  disabled={filteredRecords.length === 0}
-                >
-                  <Download size={18} />
-                  Download All
-                </button>
-                <button
-                  onClick={() => handleBatchAction('email')}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                  disabled={filteredRecords.length === 0}
-                >
-                  <Mail size={18} />
-                  Email All
-                </button>
-              </div>
+        <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+          
+          {/* ===== HEADER - Clean, minimal ===== */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+                Report Cards
+              </h1>
+              <p className="text-sm text-gray-600 mt-1">
+                {selectedTerm}, {selectedYear} • {filteredRecords.length} reports available
+              </p>
+            </div>
+            
+            {/* ===== ACTION BUTTONS - Icon only, perfectly crafted ===== */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleBatchDownload}
+                disabled={filteredRecords.length === 0}
+                className="p-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Download all reports"
+              >
+                <Download size={18} />
+                <span className="sr-only">Download all</span>
+              </button>
+              <button
+                onClick={handleBatchEmail}
+                disabled={filteredRecords.length === 0}
+                className="p-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Email all reports"
+              >
+                <Mail size={18} />
+                <span className="sr-only">Email all</span>
+              </button>
+              <button
+                onClick={() => refetch()}
+                className="p-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-all"
+                title="Refresh data"
+              >
+                <RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} />
+                <span className="sr-only">Refresh</span>
+              </button>
             </div>
           </div>
 
-          {/* Class Readiness Alert with proper integration */}
-          {classReadiness && selectedClass !== 'all' && (
-            <div className={`mb-8 p-6 rounded-xl border-2 ${
-              classReadiness.completionPercentage === 100
-                ? 'bg-green-50 border-green-200'
-                : 'bg-yellow-50 border-yellow-300'
-            }`}>
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-3">
-                    {classReadiness.completionPercentage === 100 ? (
-                      <CheckCircle className="text-green-600" size={24} />
-                    ) : (
-                      <AlertTriangle className="text-yellow-600" size={24} />
-                    )}
-                    <div>
-                      <h3 className="text-lg font-bold text-gray-900">
-                        {classReadiness.className} Readiness Status
-                      </h3>
-                      <p className="text-sm text-gray-600">
-                        {classReadiness.readyStudents} of {classReadiness.totalStudents} students have complete data
-                      </p>
-                      {/* Show subjects taught in this class with normalized IDs */}
-                      {subjectsInClass.length > 0 && (
-                        <div className="mt-2">
-                          <p className="text-xs text-gray-500">Expected Subjects:</p>
-                          <div className="flex flex-wrap gap-2 mt-1">
-                            {subjectsInClass.map((subject, idx) => (
-                              <span key={idx} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
-                                {subject.name}
-                                <span className="ml-1 text-blue-500 font-mono text-[10px]">
-                                  ({subject.id})
-                                </span>
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {/* Teachers assigned to this class */}
-                  {classTeacherAssignments.length > 0 && (
-                    <div className="mb-4 p-3 bg-white rounded-lg border border-gray-200">
-                      <div className="flex items-center gap-2 mb-2">
-                        <GraduationCap size={16} className="text-blue-600" />
-                        <span className="text-sm font-medium text-gray-700">Teachers:</span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {Array.from(new Set(classTeacherAssignments.map(a => a.teacherName))).map((teacher, idx) => (
-                          <span key={idx} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
-                            {teacher}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  <div className="grid grid-cols-3 gap-4 mb-3">
-                    <div className="bg-white rounded-lg p-3 border border-gray-200">
-                      <div className="text-2xl font-bold text-green-600">{classReadiness.readyStudents}</div>
-                      <div className="text-sm text-gray-600">Complete</div>
-                    </div>
-                    <div className="bg-white rounded-lg p-3 border border-gray-200">
-                      <div className="text-2xl font-bold text-yellow-600">{classReadiness.incompleteStudents}</div>
-                      <div className="text-sm text-gray-600">Incomplete</div>
-                    </div>
-                    <div className="bg-white rounded-lg p-3 border border-gray-200">
-                      <div className="text-2xl font-bold text-blue-600">{classReadiness.completionPercentage}%</div>
-                      <div className="text-sm text-gray-600">Ready</div>
-                    </div>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-3">
-                    <div
-                      className={`h-3 rounded-full transition-all ${
-                        classReadiness.completionPercentage === 100 ? 'bg-green-500' : 'bg-yellow-500'
-                      }`}
-                      style={{ width: `${classReadiness.completionPercentage}%` }}
-                    />
-                  </div>
-                </div>
-                {classReadiness.incompleteStudents > 0 && (
-                  <button
-                    onClick={() => setShowMissingDataModal(true)}
-                    className="ml-4 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors text-sm font-medium"
-                  >
-                    View Missing Data →
-                  </button>
-                )}
-              </div>
-              {classReadiness.completionPercentage < 100 && (
-                <div className="mt-4 p-3 bg-yellow-100 rounded-lg">
-                  <p className="text-sm text-yellow-800">
-                    <Info size={14} className="inline mr-1" />
-                    {classReadiness.incompleteStudents} student{classReadiness.incompleteStudents !== 1 ? 's' : ''} missing results.
-                    Reports can still be generated but will be marked as incomplete.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <p className="text-gray-600 text-sm">Total Students</p>
-              <p className="text-3xl font-bold text-gray-900 mt-2">{stats.totalStudents}</p>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <p className="text-gray-600 text-sm">Avg Percentage</p>
-              <p className="text-3xl font-bold text-blue-600 mt-2">{stats.averagePercentage}%</p>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <p className="text-gray-600 text-sm">Pass Rate</p>
-              <p className="text-3xl font-bold text-green-600 mt-2">{stats.passRate}%</p>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <p className="text-gray-600 text-sm">Distinctions</p>
-              <p className="text-3xl font-bold text-purple-600 mt-2">{stats.topGrades}</p>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <p className="text-gray-600 text-sm">Complete</p>
-              <p className="text-3xl font-bold text-green-600 mt-2">{stats.completeReports}</p>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <p className="text-gray-600 text-sm">Incomplete</p>
-              <p className="text-3xl font-bold text-yellow-600 mt-2">{stats.incompleteReports}</p>
-            </div>
-          </div>
-
-          <div className="mb-8 bg-white rounded-xl border border-gray-200 p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Filter size={20} className="text-gray-500" />
-              <h3 className="font-semibold text-gray-900">Filter Report Cards</h3>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <Search size={16} className="inline mr-1" />
-                  Search Students
+          {/* ===== FILTERS - ONLY Search, Class, Term, Year ===== */}
+          <div className="mb-8 bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              
+              {/* Search */}
+              <div className="md:col-span-1">
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Search students
                 </label>
                 <div className="relative">
+                  <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                   <input
                     type="text"
                     placeholder="Name or ID..."
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
-                    className="w-full px-4 py-2.5 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full pl-9 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                   />
-                  <Search size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                 </div>
               </div>
+              
+              {/* Class Filter */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <BookOpen size={16} className="inline mr-1" />
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  <BookOpen size={14} className="inline mr-1" />
                   Class
                 </label>
                 <select
                   value={selectedClass}
                   onChange={e => setSelectedClass(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
                 >
                   <option value="all">All Classes</option>
                   {classOptions.map(cls => (
@@ -1143,150 +609,131 @@ export default function ReportCards() {
                   ))}
                 </select>
               </div>
+              
+              {/* Term Filter */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <Award size={16} className="inline mr-1" />
-                  Status
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Term
                 </label>
                 <select
-                  value={selectedStatus}
-                  onChange={e => setSelectedStatus(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  value={selectedTerm}
+                  onChange={e => setSelectedTerm(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
                 >
-                  <option value="all">All Status</option>
-                  <option value="pass">Passed</option>
-                  <option value="fail">Needs Help</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <Users size={16} className="inline mr-1" />
-                  Form
-                </label>
-                <select
-                  value={selectedForm}
-                  onChange={e => setSelectedForm(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="all">All Forms</option>
-                  {formOptions.map(form => (
-                    <option key={form} value={form}>Form {form}</option>
+                  {terms.map(term => (
+                    <option key={term} value={term}>{term}</option>
                   ))}
                 </select>
               </div>
-              <div className="lg:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <Calendar size={16} className="inline mr-1" />
-                  Term & Year
+              
+              {/* Year Filter */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  <Calendar size={14} className="inline mr-1" />
+                  Year
                 </label>
-                <div className="flex gap-2">
-                  <select
-                    value={selectedTerm}
-                    onChange={e => setSelectedTerm(e.target.value)}
-                    className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    {terms.map(term => (
-                      <option key={term} value={term}>{term}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={selectedYear}
-                    onChange={e => setSelectedYear(Number(e.target.value))}
-                    className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    {years.map(year => (
-                      <option key={year} value={year}>{year}</option>
-                    ))}
-                  </select>
-                </div>
+                <select
+                  value={selectedYear}
+                  onChange={e => setSelectedYear(Number(e.target.value))}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
+                >
+                  {years.map(year => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
               </div>
             </div>
             
-            <div className="mt-4 flex items-center gap-6 p-3 bg-gray-50 rounded-lg">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={includeIncomplete}
-                  onChange={e => setIncludeIncomplete(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-700">Include incomplete reports</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={markMissing}
-                  onChange={e => setMarkMissing(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-700">Mark missing data in reports</span>
-              </label>
-            </div>
-            
-            <div className="mt-4 flex justify-between items-center">
-              <p className="text-sm text-gray-600">
-                Showing {filteredRecords.length} of {reportCards.length} report cards
-                {stats.incompleteReports > 0 && (
-                  <span className="ml-2 text-yellow-700">
-                    ({stats.incompleteReports} incomplete)
+            {/* Active filter indicator */}
+            {(searchTerm || selectedClass !== 'all') && (
+              <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-2 text-xs">
+                <span className="text-gray-500">Active filters:</span>
+                {searchTerm && (
+                  <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded-md">
+                    Search: "{searchTerm}"
                   </span>
                 )}
-              </p>
-              <button
-                onClick={() => refetch()}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-              >
-                Refresh Data
-              </button>
-            </div>
+                {selectedClass !== 'all' && (
+                  <span className="px-2 py-1 bg-purple-50 text-purple-700 rounded-md">
+                    Class: {classOptions.find(c => c.id === selectedClass)?.name || selectedClass}
+                  </span>
+                )}
+                {(searchTerm || selectedClass !== 'all') && (
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      setSelectedClass('all');
+                    }}
+                    className="text-blue-600 hover:text-blue-800 font-medium ml-1"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
+          {/* ===== REPORT CARDS GRID - Automatically appears, no generate button ===== */}
           {filteredRecords.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {filteredRecords.map((reportCard) => (
                 <StudentCard
                   key={reportCard.studentId}
                   reportCard={reportCard}
                   onViewDetails={handleViewDetails}
+                  onDownload={handleDownload}
+                  onEmail={handleEmail}
                 />
               ))}
             </div>
           ) : (
-            <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-              <FileText size={48} className="mx-auto text-gray-300 mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No report cards found</h3>
-              <p className="text-gray-600 mb-4">
+            /* ===== EMPTY STATE - Clean, informative ===== */
+            <div className="text-center py-16 bg-white rounded-2xl border border-gray-200 shadow-sm">
+              <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 rounded-full mb-4">
+                <FileText className="text-gray-400" size={32} />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                No report cards available
+              </h3>
+              <p className="text-gray-600 max-w-md mx-auto text-sm">
                 {reportCards.length === 0
-                  ? `No report cards have been generated for ${selectedTerm} ${selectedYear}. Generate results first.`
-                  : 'Try adjusting your filters to find what you\'re looking for.'
-                }
+                  ? `No results have been entered for ${selectedTerm} ${selectedYear}.`
+                  : 'No reports match your current search or filter criteria.'}
               </p>
-              <div className="flex gap-3 justify-center">
+              {reportCards.length === 0 && selectedClass !== 'all' && (
+                <div className="mt-4 text-sm text-gray-500">
+                  <p>Teachers need to enter results before reports can be generated.</p>
+                </div>
+              )}
+              {reportCards.length > 0 && (
                 <button
                   onClick={() => {
                     setSearchTerm('');
                     setSelectedClass('all');
-                    setSelectedStatus('all');
-                    setSelectedForm('all');
                   }}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  className="mt-4 px-4 py-2 text-sm text-blue-600 hover:text-blue-800 font-medium"
                 >
-                  Clear all filters
+                  Clear filters
                 </button>
-                {reportCards.length === 0 && (
-                  <button
-                    onClick={() => refetch()}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    Generate Reports
-                  </button>
-                )}
-              </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== FOOTER - Minimal ===== */}
+          {filteredRecords.length > 0 && (
+            <div className="mt-6 text-xs text-gray-500 text-center sm:text-left">
+              Showing {filteredRecords.length} of {reportCards.length} reports
+              {filteredRecords.filter(r => !r.isComplete).length > 0 && (
+                <span className="ml-2 text-yellow-600">
+                  • {filteredRecords.filter(r => !r.isComplete).length} incomplete
+                </span>
+              )}
             </div>
           )}
         </div>
       </DashboardLayout>
       
+      {/* ===== MODALS ===== */}
       {selectedReportCard && (
         <ReportDetailModal
           isOpen={showReportModal}
@@ -1295,26 +742,6 @@ export default function ReportCards() {
             setSelectedStudent(null);
           }}
           reportCard={selectedReportCard}
-          onAction={handleModalAction}
-        />
-      )}
-      
-      {classReadiness && (
-        <MissingDataModal
-          isOpen={showMissingDataModal}
-          onClose={() => setShowMissingDataModal(false)}
-          classReadiness={classReadiness}
-          teacherAssignments={classTeacherAssignments}
-        />
-      )}
-
-      {/* Debug Panel */}
-      {showDebugPanel && classReadiness && (
-        <DebugPanel
-          classReadiness={classReadiness}
-          teacherAssignments={classTeacherAssignments}
-          expectedSubjects={classReadiness.expectedSubjectsWithIds || []}
-          onClose={() => setShowDebugPanel(false)}
         />
       )}
     </>

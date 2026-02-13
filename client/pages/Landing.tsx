@@ -16,7 +16,7 @@ export default function Landing() {
             </div>
             
             <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-gray-900 leading-tight">
-              Welcome to <span className="bg-gradient-to-r from-blue-600 to-blue-700 bg-clip-text text-transparent">KalaboBoarding</span>
+              Welcome to <span className="bg-gradient-to-r from-blue-500 to-blue-600 bg-clip-text text-transparent">KalaboBoarding</span>
             </h1>
             
             <p className="text-lg sm:text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed">

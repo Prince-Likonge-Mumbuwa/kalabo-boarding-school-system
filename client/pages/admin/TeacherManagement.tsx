@@ -2,6 +2,7 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useAuth } from '@/hooks/useAuth';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useState, useMemo } from 'react';
 import {
   Search,
@@ -15,13 +16,18 @@ import {
   Loader2,
   UserCheck,
   UserX,
-  AlertCircle
+  AlertCircle,
+  ChevronDown,
+  Filter,
+  Briefcase
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
 
 export default function TeacherManagement() {
   const { user } = useAuth();
   const isUserAdmin = user?.userType === 'admin';
+  const isMobile = useMediaQuery('(max-width: 640px)');
+  const isTablet = useMediaQuery('(max-width: 1024px)');
   
   const { 
     allTeachers: teachers, 
@@ -44,19 +50,19 @@ export default function TeacherManagement() {
   
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [selectedTeacher, setSelectedTeacher] = useState<any>(null);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
-  const [selectedSubject, setSelectedSubject] = useState<string>(''); // NEW
+  const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [isFormTeacher, setIsFormTeacher] = useState(false);
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
-  // Calculate stats
+  // Calculate stats - REDUCED TO 3 CARDS
   const stats = useMemo(() => ({
     totalTeachers: teachers.length,
     activeTeachers: teachers.filter(t => t.status === 'active' || !t.status).length,
-    formTeachers: teachers.filter(t => t.isFormTeacher).length,
     assignedTeachers: teachers.filter(t => t.assignedClassId || (t.assignedClasses && t.assignedClasses.length > 0)).length,
   }), [teachers]);
 
@@ -82,7 +88,6 @@ export default function TeacherManagement() {
       return;
     }
 
-    // NEW: Validate subject selection
     if (!selectedSubject) {
       alert('Please select a subject that this teacher will teach to this class');
       return;
@@ -103,7 +108,7 @@ export default function TeacherManagement() {
       await assignTeacherToClass({
         teacherId: selectedTeacher.id,
         classId: selectedClassId,
-        subject: selectedSubject, // NEW: Pass the selected subject
+        subject: selectedSubject,
         isFormTeacher
       });
       
@@ -111,7 +116,7 @@ export default function TeacherManagement() {
       setShowAssignmentModal(false);
       setSelectedTeacher(null);
       setSelectedClassId('');
-      setSelectedSubject(''); // NEW: Reset subject
+      setSelectedSubject('');
       setIsFormTeacher(false);
       
     } catch (error: any) {
@@ -169,20 +174,29 @@ export default function TeacherManagement() {
     return assignedClass?.name || 'Unknown Class';
   };
 
+  // Clear all filters
+  const clearFilters = () => {
+    setSearchTerm('');
+    setStatusFilter('all');
+    setShowMobileFilters(false);
+  };
+
   // Error state
   if (teachersError || classesError) {
     return (
       <DashboardLayout activeTab="teachers">
-        <div className="p-4 sm:p-6 lg:p-8">
-          <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
-            <AlertCircle className="mx-auto mb-4 text-red-500" size={48} />
-            <h3 className="text-lg font-semibold text-red-900 mb-2">Failed to load data</h3>
-            <p className="text-red-700 mb-4">
+        <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+          <div className="max-w-2xl mx-auto bg-white rounded-2xl border border-red-200 p-8 text-center shadow-lg">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-red-100 rounded-full mb-4">
+              <AlertCircle className="text-red-600" size={32} />
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">Failed to load data</h3>
+            <p className="text-gray-600 mb-6">
               {teachersErrorMessage?.message || 'An error occurred while fetching teachers'}
             </p>
             <button
               onClick={() => refetchTeachers()}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
+              className="px-6 py-2.5 bg-red-600 text-white rounded-xl hover:bg-red-700 font-medium transition-colors"
             >
               Try Again
             </button>
@@ -196,10 +210,12 @@ export default function TeacherManagement() {
   if (isLoadingTeachers || isLoadingClasses) {
     return (
       <DashboardLayout activeTab="teachers">
-        <div className="p-8 flex items-center justify-center">
-          <div className="text-center">
-            <Loader2 className="animate-spin text-blue-600 mx-auto mb-4" size={48} />
-            <p className="text-gray-600">Loading teachers...</p>
+        <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+          <div className="flex flex-col items-center justify-center min-h-[60vh]">
+            <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+              <Loader2 className="animate-spin text-blue-600 mx-auto mb-4" size={48} />
+              <p className="text-gray-600 text-lg">Loading teachers...</p>
+            </div>
           </div>
         </div>
       </DashboardLayout>
@@ -209,117 +225,221 @@ export default function TeacherManagement() {
   return (
     <>
       <DashboardLayout activeTab="teachers">
-        <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
-          {/* Header */}
-          <div className="mb-8">
+        <div className="min-h-screen bg-gray-50/80 p-3 sm:p-6 lg:p-8 transition-all duration-200">
+          
+          {/* ===== HEADER ===== */}
+          <div className="mb-6 sm:mb-8">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
-                <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl lg:text-4xl">
+                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 tracking-tight">
                   Teacher Management
                 </h1>
-                <p className="text-gray-600 mt-2 text-sm sm:text-base">
-                  {teachers.length} teachers registered
-                  {isFetchingTeachers && <span className="ml-2 text-blue-600">(updating...)</span>}
+                <p className="text-sm sm:text-base text-gray-600 mt-1 sm:mt-2 flex items-center gap-2 flex-wrap">
+                  <span>{teachers.length} teacher{teachers.length !== 1 ? 's' : ''}</span>
+                  <span className="text-gray-300">•</span>
+                  <span>{stats.activeTeachers} active</span>
+                  {isFetchingTeachers && (
+                    <span className="inline-flex items-center gap-1.5 text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full text-xs">
+                      <Loader2 size={12} className="animate-spin" />
+                      updating
+                    </span>
+                  )}
                 </p>
               </div>
+              
+              {/* Admin Action - Adaptive */}
               {isUserAdmin && (
                 <button
                   onClick={() => {
                     setSelectedTeacher(null);
-                    setSelectedSubject(''); // NEW: Reset subject
+                    setSelectedSubject('');
                     setShowAssignmentModal(true);
                   }}
                   disabled={isAssigningTeacher}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  className={`
+                    inline-flex items-center justify-center
+                    bg-blue-600 text-white rounded-xl hover:bg-blue-700
+                    font-medium transition-all active:scale-[0.98]
+                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
+                    disabled:opacity-50 disabled:cursor-not-allowed
+                    ${isMobile 
+                      ? 'p-2.5 w-full sm:w-auto' 
+                      : 'px-4 py-2.5 gap-2'
+                    }
+                  `}
+                  title={isMobile ? 'Assign teacher to class' : undefined}
                 >
                   {isAssigningTeacher ? (
-                    <Loader2 size={20} className="animate-spin" />
+                    <Loader2 size={isMobile ? 18 : 20} className="animate-spin" />
                   ) : (
-                    <UserCheck size={20} />
+                    <UserCheck size={isMobile ? 18 : 20} />
                   )}
-                  Assign to Class
+                  {!isMobile && 'Assign to Class'}
+                  {isMobile && <span className="sr-only">Assign to Class</span>}
                 </button>
               )}
             </div>
           </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-              <p className="text-sm text-gray-600">Total Teachers</p>
-              <p className="text-2xl font-bold text-gray-900 mt-1">{stats.totalTeachers}</p>
+          {/* ===== STATS CARDS - 1x3 Matrix, Smaller ===== */}
+          <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6">
+            {/* Total Teachers */}
+            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="p-1.5 sm:p-2 bg-blue-50 rounded-lg">
+                  <Users size={isMobile ? 14 : 16} className="text-blue-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs sm:text-sm text-gray-600 truncate">Total</p>
+                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">
+                    {stats.totalTeachers}
+                  </p>
+                </div>
+              </div>
             </div>
-            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-              <p className="text-sm text-gray-600">Active</p>
-              <p className="text-2xl font-bold text-green-600 mt-1">{stats.activeTeachers}</p>
+
+            {/* Active Teachers */}
+            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="p-1.5 sm:p-2 bg-green-50 rounded-lg">
+                  <UserCheck size={isMobile ? 14 : 16} className="text-green-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs sm:text-sm text-gray-600 truncate">Active</p>
+                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-green-600">
+                    {stats.activeTeachers}
+                  </p>
+                </div>
+              </div>
             </div>
-            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-              <p className="text-sm text-gray-600">Form Teachers</p>
-              <p className="text-2xl font-bold text-blue-600 mt-1">{stats.formTeachers}</p>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-              <p className="text-sm text-gray-600">Assigned to Classes</p>
-              <p className="text-2xl font-bold text-purple-600 mt-1">{stats.assignedTeachers}</p>
+
+            {/* Assigned to Classes */}
+            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="p-1.5 sm:p-2 bg-purple-50 rounded-lg">
+                  <Briefcase size={isMobile ? 14 : 16} className="text-purple-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs sm:text-sm text-gray-600 truncate">Assigned</p>
+                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-purple-600">
+                    {stats.assignedTeachers}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Search and Filter */}
-          <div className="mb-6 bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                <input
-                  type="text"
-                  placeholder="Search teachers by name, email, or phone..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div className="flex gap-3">
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="all">All Status</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="on_leave">On Leave</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Active filters */}
-            {(searchTerm || statusFilter !== 'all') && (
-              <div className="mt-3 flex items-center gap-2 text-sm">
-                <span className="text-gray-600">Active filters:</span>
-                {searchTerm && (
-                  <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-md">
-                    Search: "{searchTerm}"
+          {/* ===== FILTERS SECTION ===== */}
+          <div className="mb-6 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            
+            {/* Mobile Filter Toggle */}
+            {isMobile && (
+              <button
+                onClick={() => setShowMobileFilters(!showMobileFilters)}
+                className="w-full flex items-center justify-between p-4 bg-white"
+              >
+                <div className="flex items-center gap-2">
+                  <Filter size={18} className="text-gray-400" />
+                  <span className="font-medium text-gray-700">
+                    {searchTerm || statusFilter !== 'all' ? 'Filters active' : 'Search & filters'}
                   </span>
-                )}
-                {statusFilter !== 'all' && (
-                  <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded-md">
-                    Status: {statusFilter}
-                  </span>
-                )}
-                <button
-                  onClick={() => {
-                    setSearchTerm('');
-                    setStatusFilter('all');
-                  }}
-                  className="ml-2 text-blue-600 hover:text-blue-700 font-medium"
-                >
-                  Clear all
-                </button>
-              </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {(searchTerm || statusFilter !== 'all') && (
+                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                  )}
+                  <ChevronDown 
+                    size={18} 
+                    className={`text-gray-500 transition-transform duration-200 ${showMobileFilters ? 'rotate-180' : ''}`} 
+                  />
+                </div>
+              </button>
             )}
+
+            {/* Filter Content */}
+            <div className={`
+              ${isMobile ? 'px-4 pb-4' : 'p-4'}
+              ${isMobile && !showMobileFilters ? 'hidden' : 'block'}
+            `}>
+              <div className="flex flex-col sm:flex-row gap-4">
+                {/* Search Input */}
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
+                  <input
+                    type="text"
+                    placeholder={isMobile ? "Search teachers..." : "Search by name, email, or phone..."}
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg 
+                             focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                             text-sm sm:text-base transition-shadow"
+                  />
+                </div>
+                
+                {/* Status Filter */}
+                <div className="relative sm:w-44">
+                  <div className="absolute left-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
+                    <Filter size={18} className="text-gray-400" />
+                  </div>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="w-full pl-10 pr-8 py-2.5 border border-gray-300 rounded-lg 
+                             focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                             appearance-none bg-white cursor-pointer text-sm sm:text-base
+                             hover:border-gray-400 transition-colors"
+                  >
+                    <option value="all">All Status</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                    <option value="on_leave">On Leave</option>
+                  </select>
+                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
+                    <ChevronDown size={16} className="text-gray-400" />
+                  </div>
+                </div>
+              </div>
+              
+              {/* Active Filters */}
+              {(searchTerm || statusFilter !== 'all') && (
+                <div className="mt-3 flex items-center gap-2 text-sm flex-wrap">
+                  <span className="text-gray-600">Active filters:</span>
+                  {searchTerm && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs sm:text-sm">
+                      <span>"{searchTerm}"</span>
+                      <button
+                        onClick={() => setSearchTerm('')}
+                        className="hover:bg-blue-100 rounded p-0.5"
+                      >
+                        <X size={14} />
+                      </button>
+                    </span>
+                  )}
+                  {statusFilter !== 'all' && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-50 text-purple-700 rounded-lg text-xs sm:text-sm">
+                      <span className="capitalize">{statusFilter.replace('_', ' ')}</span>
+                      <button
+                        onClick={() => setStatusFilter('all')}
+                        className="hover:bg-purple-100 rounded p-0.5"
+                      >
+                        <X size={14} />
+                      </button>
+                    </span>
+                  )}
+                  <button
+                    onClick={clearFilters}
+                    className="text-blue-600 hover:text-blue-700 font-medium text-xs sm:text-sm hover:underline ml-1"
+                  >
+                    Clear all
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Teachers Grid */}
+          {/* ===== TEACHERS GRID ===== */}
           {filteredTeachers.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
               {filteredTeachers.map((teacher) => {
                 const assignedClassName = getAssignedClassName(teacher.id);
                 const teacherStatus = teacher.status || 'active';
@@ -327,17 +447,23 @@ export default function TeacherManagement() {
                 return (
                   <div
                     key={teacher.id}
-                    className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-lg transition-all duration-300"
+                    className="group bg-white rounded-xl border border-gray-200 p-5 
+                             shadow-sm hover:shadow-lg transition-all duration-300 
+                             hover:border-gray-300 hover:-translate-y-0.5"
                   >
+                    {/* Teacher Header */}
                     <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                          <User size={24} className="text-blue-600" />
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-12 h-12 bg-gradient-to-br from-blue-50 to-blue-100 
+                                      rounded-full flex items-center justify-center flex-shrink-0">
+                          <User size={22} className="text-blue-600" />
                         </div>
-                        <div>
-                          <h3 className="font-bold text-gray-900">{teacher.name}</h3>
-                          <div className="flex items-center gap-2 mt-1 flex-wrap">
-                            <span className={`text-xs px-2 py-1 rounded-full ${
+                        <div className="min-w-0">
+                          <h3 className="font-bold text-gray-900 truncate">
+                            {teacher.name}
+                          </h3>
+                          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
                               teacherStatus === 'active' 
                                 ? 'bg-green-100 text-green-800' 
                                 : teacherStatus === 'on_leave'
@@ -347,7 +473,7 @@ export default function TeacherManagement() {
                               {teacherStatus.replace('_', ' ')}
                             </span>
                             {teacher.isFormTeacher && (
-                              <span className="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
+                              <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full">
                                 Form Teacher
                               </span>
                             )}
@@ -356,64 +482,72 @@ export default function TeacherManagement() {
                       </div>
                     </div>
 
+                    {/* Teacher Details - Compact */}
                     <div className="space-y-2 mb-4">
-                      <div className="flex items-center gap-2">
-                        <Mail size={14} className="text-gray-400" />
-                        <span className="text-sm text-gray-700 truncate">{teacher.email}</span>
+                      <div className="flex items-center gap-2 text-sm">
+                        <Mail size={14} className="text-gray-400 flex-shrink-0" />
+                        <span className="text-gray-700 truncate">{teacher.email}</span>
                       </div>
                       {teacher.phone && (
-                        <div className="flex items-center gap-2">
-                          <Phone size={14} className="text-gray-400" />
-                          <span className="text-sm text-gray-700">{teacher.phone}</span>
+                        <div className="flex items-center gap-2 text-sm">
+                          <Phone size={14} className="text-gray-400 flex-shrink-0" />
+                          <span className="text-gray-700 truncate">{teacher.phone}</span>
                         </div>
                       )}
-                      <div className="flex items-center gap-2">
-                        <BookOpen size={14} className="text-gray-400" />
-                        <span className="text-sm text-gray-700 truncate">
-                          {teacher.subjects?.join(', ') || 'No subjects'}
+                      <div className="flex items-center gap-2 text-sm">
+                        <BookOpen size={14} className="text-gray-400 flex-shrink-0" />
+                        <span className="text-gray-700 truncate">
+                          {teacher.subjects?.length 
+                            ? teacher.subjects.slice(0, 2).join(', ') + (teacher.subjects.length > 2 ? ` +${teacher.subjects.length - 2}` : '')
+                            : 'No subjects'}
                         </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <GraduationCap size={14} className="text-gray-400" />
-                        <span className="text-sm text-gray-700">{teacher.department || 'General'}</span>
                       </div>
                     </div>
 
+                    {/* Assignment Status */}
                     <div className="border-t border-gray-100 pt-4">
                       {assignedClassName ? (
                         <div>
-                          <p className="text-sm text-gray-600 mb-2">Assigned to:</p>
+                          <p className="text-xs text-gray-500 mb-1.5">Currently teaching</p>
                           <div className="flex items-center justify-between">
-                            <span className="font-medium text-gray-900">{assignedClassName}</span>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <GraduationCap size={14} className="text-gray-400 flex-shrink-0" />
+                              <span className="font-medium text-gray-900 text-sm truncate">
+                                {assignedClassName}
+                              </span>
+                            </div>
                             {isUserAdmin && (
                               <button
                                 onClick={() => handleRemoveFromClass(teacher.id)}
                                 disabled={isRemovingTeacher}
-                                className="text-red-600 hover:text-red-800 text-sm flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg 
+                                         transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="Remove from class"
                               >
                                 {isRemovingTeacher ? (
                                   <Loader2 size={14} className="animate-spin" />
                                 ) : (
                                   <UserX size={14} />
                                 )}
-                                Remove
                               </button>
                             )}
                           </div>
                         </div>
                       ) : (
-                        <div className="text-center">
-                          <p className="text-sm text-gray-600 mb-3">Not assigned to any class</p>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-gray-500">Not assigned</span>
                           {isUserAdmin && (
                             <button
                               onClick={() => {
                                 setSelectedTeacher(teacher);
-                                setSelectedSubject(''); // NEW: Reset subject
+                                setSelectedSubject('');
                                 setShowAssignmentModal(true);
                               }}
-                              className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                              className="text-xs text-blue-600 hover:text-blue-800 font-medium 
+                                       px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 rounded-lg
+                                       transition-colors"
                             >
-                              Assign to Class
+                              Assign
                             </button>
                           )}
                         </div>
@@ -424,54 +558,94 @@ export default function TeacherManagement() {
               })}
             </div>
           ) : (
-            /* Empty State */
-            <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-              <Users className="mx-auto text-gray-300 mb-4" size={48} />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No teachers found</h3>
-              <p className="text-gray-600">
-                {searchTerm || statusFilter !== 'all' 
-                  ? 'Try adjusting your search or filter'
-                  : 'No teachers registered yet. Teachers can create accounts via the sign-up page.'}
+            /* ===== EMPTY STATE ===== */
+            <div className="text-center py-16 sm:py-20 bg-white rounded-2xl border border-gray-200 shadow-sm">
+              <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 rounded-full mb-4">
+                <Users className="text-gray-400" size={36} />
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                No teachers found
+              </h3>
+              <p className="text-gray-600 mb-6 max-w-md mx-auto">
+                {searchTerm || statusFilter !== 'all'
+                  ? 'Try adjusting your filters to find what you\'re looking for.'
+                  : 'Teachers can create accounts via the sign-up page. Assign them to classes once registered.'}
               </p>
+              {(searchTerm || statusFilter !== 'all') && (
+                <button
+                  onClick={clearFilters}
+                  className="inline-flex items-center gap-2 px-6 py-3 border border-gray-300 
+                           text-gray-700 rounded-xl hover:bg-gray-50 font-medium 
+                           transition-all focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ===== BOTTOM METADATA ===== */}
+          {filteredTeachers.length > 0 && (
+            <div className="mt-6 text-xs sm:text-sm text-gray-500 text-center sm:text-left">
+              Showing {filteredTeachers.length} of {teachers.length} teachers
+              {searchTerm && ` matching "${searchTerm}"`}
+              {statusFilter !== 'all' && ` • ${statusFilter.replace('_', ' ')} status`}
             </div>
           )}
         </div>
       </DashboardLayout>
 
-      {/* Assignment Modal */}
+      {/* ===== ASSIGNMENT MODAL - Refined ===== */}
       {showAssignmentModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setShowAssignmentModal(false)} />
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={() => setShowAssignmentModal(false)} />
           
-          <div className="flex min-h-full items-center justify-center p-4">
-            <div className="relative bg-white rounded-2xl w-full max-w-md shadow-2xl">
-              <div className="p-6 border-b border-gray-200">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-bold text-gray-900">
-                    {selectedTeacher ? `Assign ${selectedTeacher.name}` : 'Assign Teacher to Class'}
-                  </h2>
+          <div className="flex min-h-full items-center justify-center p-3 sm:p-4">
+            <div className="relative bg-white rounded-2xl w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-200">
+              
+              {/* Modal Header */}
+              <div className="p-5 sm:p-6 border-b border-gray-200">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-xl font-bold text-gray-900 truncate">
+                      {selectedTeacher ? `Assign ${selectedTeacher.name.split(' ')[0]}` : 'Assign Teacher'}
+                    </h2>
+                    <p className="text-sm text-gray-600 mt-1">
+                      {selectedTeacher ? 'Choose class and subject' : 'Select a teacher to assign'}
+                    </p>
+                  </div>
                   <button
-                    onClick={() => setShowAssignmentModal(false)}
-                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                    onClick={() => {
+                      setShowAssignmentModal(false);
+                      setSelectedTeacher(null);
+                      setSelectedClassId('');
+                      setSelectedSubject('');
+                      setIsFormTeacher(false);
+                    }}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0"
                   >
-                    <X size={20} />
+                    <X size={18} className="text-gray-600" />
                   </button>
                 </div>
               </div>
 
-              <div className="p-6 space-y-6">
-                {/* Teacher Selection (if not already selected) */}
-                {!selectedTeacher && (
+              {/* Modal Body */}
+              <div className="p-5 sm:p-6 space-y-5">
+                
+                {/* Teacher Selection */}
+                {!selectedTeacher ? (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Select Teacher *
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Select Teacher <span className="text-red-500">*</span>
                     </label>
                     <select
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg 
+                               focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                               text-sm bg-white hover:border-gray-400 transition-colors"
                       onChange={(e) => {
                         const teacher = teachers.find(t => t.id === e.target.value);
                         setSelectedTeacher(teacher || null);
-                        setSelectedSubject(''); // Reset subject when teacher changes
+                        setSelectedSubject('');
                       }}
                     >
                       <option value="">Choose a teacher...</option>
@@ -479,52 +653,58 @@ export default function TeacherManagement() {
                         .filter(t => t.status === 'active' || !t.status)
                         .map(teacher => (
                           <option key={teacher.id} value={teacher.id}>
-                            {teacher.name} ({teacher.email})
+                            {teacher.name} • {teacher.email}
                           </option>
                         ))}
                     </select>
                   </div>
-                )}
-
-                {/* Show teacher's subjects */}
-                {selectedTeacher && selectedTeacher.subjects && selectedTeacher.subjects.length > 0 && (
-                  <div className="p-3 bg-blue-50 rounded-lg">
-                    <p className="text-sm text-blue-900 font-medium">Teacher's Subjects:</p>
-                    <p className="text-sm text-blue-700 mt-1">
-                      {selectedTeacher.subjects.join(', ')}
-                    </p>
+                ) : (
+                  /* Selected Teacher Summary */
+                  <div className="p-3 bg-blue-50/80 rounded-lg border border-blue-100">
+                    <p className="text-xs text-blue-700 font-medium mb-1">Selected Teacher</p>
+                    <p className="text-sm font-semibold text-gray-900">{selectedTeacher.name}</p>
+                    {selectedTeacher.subjects?.length > 0 && (
+                      <p className="text-xs text-blue-700 mt-1.5">
+                        Subjects: {selectedTeacher.subjects.join(', ')}
+                      </p>
+                    )}
                   </div>
                 )}
 
                 {/* Class Selection */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Class *
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Select Class <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={selectedClassId}
                     onChange={(e) => setSelectedClassId(e.target.value)}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg 
+                             focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                             text-sm bg-white hover:border-gray-400 transition-colors"
                   >
                     <option value="">Choose a class...</option>
                     {classes.map(cls => (
                       <option key={cls.id} value={cls.id}>
-                        {cls.name} (Year: {cls.year})
+                        {cls.name} • Year {cls.year} • {cls.students} learners
                       </option>
                     ))}
                   </select>
                 </div>
 
-                {/* NEW: Subject Selection */}
+                {/* Subject Selection */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Subject to Teach *
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Select Subject to Teach <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={selectedSubject}
                     onChange={(e) => setSelectedSubject(e.target.value)}
-                    disabled={!selectedTeacher || !selectedTeacher.subjects || selectedTeacher.subjects.length === 0}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    disabled={!selectedTeacher || !selectedTeacher.subjects?.length}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg 
+                             focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                             text-sm bg-white hover:border-gray-400 transition-colors
+                             disabled:bg-gray-100 disabled:cursor-not-allowed"
                   >
                     <option value="">Choose a subject...</option>
                     {selectedTeacher?.subjects?.map(subject => (
@@ -534,14 +714,15 @@ export default function TeacherManagement() {
                     ))}
                   </select>
                   {selectedTeacher && (!selectedTeacher.subjects || selectedTeacher.subjects.length === 0) && (
-                    <p className="text-xs text-red-600 mt-1">
-                      This teacher has no subjects listed. They need to update their profile.
+                    <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1">
+                      <AlertCircle size={12} />
+                      This teacher has no subjects listed
                     </p>
                   )}
                 </div>
 
-                {/* Form Teacher Checkbox */}
-                <div className="flex items-center gap-3">
+                {/* Form Teacher Option */}
+                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
                   <input
                     type="checkbox"
                     id="formTeacher"
@@ -550,12 +731,15 @@ export default function TeacherManagement() {
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
                   <label htmlFor="formTeacher" className="text-sm text-gray-700">
-                    Assign as Form Teacher (Class Teacher)
+                    Assign as <span className="font-medium">Form Teacher</span>
+                    <span className="text-xs text-gray-500 block mt-0.5">
+                      Responsible for overall class management
+                    </span>
                   </label>
                 </div>
 
                 {/* Actions */}
-                <div className="pt-4">
+                <div className="pt-3">
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
@@ -566,22 +750,30 @@ export default function TeacherManagement() {
                         setSelectedSubject('');
                         setIsFormTeacher(false);
                       }}
-                      className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
+                      className="px-4 py-2.5 border border-gray-300 text-gray-700 
+                               rounded-lg hover:bg-gray-50 font-medium 
+                               transition-colors text-sm"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleAssignTeacher}
                       disabled={!selectedTeacher || !selectedClassId || !selectedSubject || isAssigningTeacher}
-                      className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
+                      className="px-4 py-2.5 bg-blue-600 text-white rounded-lg 
+                               hover:bg-blue-700 font-medium disabled:opacity-50 
+                               disabled:cursor-not-allowed flex items-center justify-center
+                               transition-colors text-sm gap-2"
                     >
                       {isAssigningTeacher ? (
                         <>
-                          <Loader2 className="animate-spin mr-2" size={18} />
+                          <Loader2 className="animate-spin" size={16} />
                           Assigning...
                         </>
                       ) : (
-                        'Assign Teacher'
+                        <>
+                          <UserCheck size={16} />
+                          Assign Teacher
+                        </>
                       )}
                     </button>
                   </div>

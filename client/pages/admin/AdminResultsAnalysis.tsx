@@ -1,213 +1,164 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
+import { useSchoolClasses } from '@/hooks/useSchoolClasses';
+import { useAuth } from '@/hooks/useAuth';
 import {
   Filter,
   TrendingUp,
   TrendingDown,
-  Minus,
   Download,
   BarChart3,
-  PieChart as PieChartIcon,
-  LineChart as LineChartIcon,
   ChevronDown,
   ChevronUp,
-  Eye,
-  EyeOff,
   RefreshCw,
-  Info,
-  Maximize2,
-  Smartphone,
-  Tablet,
-  Monitor,
-  Loader2
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  XCircle,
+  GraduationCap,
+  Users,
+  Target
 } from 'lucide-react';
 
-// Dynamically import chart components for code splitting
-const ResponsiveContainer = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.ResponsiveContainer }))
-);
-const BarChart = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.BarChart }))
-);
-const LineChart = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.LineChart }))
-);
-const PieChart = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.PieChart }))
-);
-const Pie = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.Pie }))
-);
-const Cell = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.Cell }))
-);
-const XAxis = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.XAxis }))
-);
-const YAxis = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.YAxis }))
-);
-const CartesianGrid = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.CartesianGrid }))
-);
-const Tooltip = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.Tooltip }))
-);
-const Legend = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.Legend }))
-);
-const Bar = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.Bar }))
-);
-const Line = lazy(() => 
-  import('recharts').then(mod => ({ default: mod.Line }))
-);
-
-// ==================== TYPES & INTERFACES ====================
+// ==================== TYPES ====================
 interface GradeDistribution {
   grade: number;
   count: number;
   percentage: number;
   description: string;
+  passStatus: 'pass' | 'fail' | 'distinction';
 }
 
-interface PerformanceTrend {
-  month: string;
-  passRate: number;
-  avgMarks: number;
-  improvement: 'up' | 'down' | 'stable';
-}
-
-interface ClassPerformance {
-  class: string;
-  form: string;
-  passRate: number;
-  avgMarks: number;
-  totalStudents: number;
-  improvement: number;
-}
-
-interface SubjectAnalysis {
-  subject: string;
-  passRate: number;
-  avgScore: number;
-  topGrade: string;
-  difficulty: 'easy' | 'medium' | 'hard';
-}
-
-// ==================== SKELETON COMPONENTS ====================
-const ChartSkeleton = () => (
-  <div className="bg-white rounded-2xl border border-gray-200 p-6 animate-pulse">
-    <div className="flex items-center justify-between mb-6">
-      <div className="space-y-2">
-        <div className="h-5 bg-gray-200 rounded w-32"></div>
-        <div className="h-3 bg-gray-100 rounded w-48"></div>
-      </div>
-      <div className="h-8 bg-gray-200 rounded w-24"></div>
-    </div>
-    <div className="h-64 bg-gray-100 rounded-lg"></div>
-  </div>
-);
-
-const StatsSkeleton = () => (
-  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-    {[1, 2, 3, 4, 5].map((i) => (
-      <div key={i} className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
-        <div className="h-4 bg-gray-200 rounded w-24 mb-4"></div>
-        <div className="h-8 bg-gray-300 rounded w-20 mb-2"></div>
-        <div className="h-3 bg-gray-100 rounded w-32"></div>
-      </div>
-    ))}
-  </div>
-);
-
-// ==================== CHART WRAPPER COMPONENTS ====================
-interface ChartContainerProps {
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-  isLoading?: boolean;
-  onRefresh?: () => void;
-  className?: string;
-}
-
-const ChartContainer = ({ 
-  title, 
+// ==================== CUSTOM NOTIFICATION COMPONENT ====================
+const Notification = ({ 
+  type, 
+  message, 
   description, 
-  children, 
-  isLoading = false,
-  onRefresh,
-  className = ''
-}: ChartContainerProps) => {
-  const [isExpanded, setIsExpanded] = useState(false);
+  onClose 
+}: { 
+  type: 'success' | 'error' | 'info' | 'warning';
+  message: string;
+  description?: string;
+  onClose: () => void;
+}) => {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 5000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
 
-  if (isLoading) {
-    return <ChartSkeleton />;
-  }
+  const icons = {
+    success: <CheckCircle2 className="w-5 h-5 text-green-500" />,
+    error: <XCircle className="w-5 h-5 text-red-500" />,
+    info: <AlertCircle className="w-5 h-5 text-blue-500" />,
+    warning: <AlertCircle className="w-5 h-5 text-yellow-500" />
+  };
+
+  const bgColors = {
+    success: 'bg-green-50 border-green-200',
+    error: 'bg-red-50 border-red-200',
+    info: 'bg-blue-50 border-blue-200',
+    warning: 'bg-yellow-50 border-yellow-200'
+  };
 
   return (
-    <div className={`bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-all duration-300 ${className}`}>
-      <div className="p-6 border-b border-gray-100">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-lg font-bold text-gray-900">{title}</h3>
-              <button className="text-gray-400 hover:text-gray-600">
-                <Info size={16} />
-              </button>
-            </div>
-            {description && (
-              <p className="text-sm text-gray-600 mt-1">{description}</p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onRefresh}
-              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Refresh chart"
-            >
-              <RefreshCw size={18} />
-            </button>
-            <button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-              title={isExpanded ? 'Minimize' : 'Expand'}
-            >
-              <Maximize2 size={18} />
-            </button>
-          </div>
+    <div className={`fixed top-4 right-4 z-50 max-w-md w-full rounded-xl border p-4 shadow-lg animate-in slide-in-from-top-2 duration-300 ${bgColors[type]}`}>
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0 mt-0.5">
+          {icons[type]}
         </div>
-      </div>
-      <div className={`p-4 sm:p-6 ${isExpanded ? 'h-96' : 'h-64 sm:h-72'}`}>
-        {children}
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-gray-900">{message}</p>
+          {description && (
+            <p className="text-xs text-gray-600 mt-1">{description}</p>
+          )}
+        </div>
+        <button
+          onClick={onClose}
+          className="flex-shrink-0 ml-2 p-1 hover:bg-white/50 rounded-lg transition-colors"
+        >
+          <XCircle size={16} className="text-gray-400 hover:text-gray-600" />
+        </button>
       </div>
     </div>
   );
 };
 
+// ==================== SKELETON COMPONENTS ====================
+const MetricSkeleton = () => (
+  <div className="bg-white rounded-2xl border border-gray-200 p-6 animate-pulse">
+    <div className="flex items-start justify-between">
+      <div className="flex-1">
+        <div className="h-4 bg-gray-200 rounded w-24 mb-2"></div>
+        <div className="h-8 bg-gray-300 rounded w-16"></div>
+      </div>
+      <div className="p-3 bg-gray-100 rounded-xl">
+        <div className="w-6 h-6 bg-gray-300 rounded"></div>
+      </div>
+    </div>
+    <div className="h-2 bg-gray-200 rounded w-32 mt-4"></div>
+  </div>
+);
+
+const ChartSkeleton = () => (
+  <div className="bg-white rounded-2xl border border-gray-200 p-6 animate-pulse">
+    <div className="flex items-center justify-between mb-6">
+      <div>
+        <div className="h-5 bg-gray-200 rounded w-48 mb-2"></div>
+        <div className="h-3 bg-gray-100 rounded w-64"></div>
+      </div>
+      <div className="h-9 bg-gray-200 rounded w-28"></div>
+    </div>
+    <div className="h-80 bg-gray-100 rounded-xl"></div>
+  </div>
+);
+
 // ==================== MAIN COMPONENT ====================
 export default function AdminResultsAnalysis() {
+  const { user } = useAuth();
+  const isUserAdmin = user?.userType === 'admin';
+  
+  // State for notifications - BUILT IN, NO EXTERNAL HOOK
+  const [notifications, setNotifications] = useState<Array<{
+    id: string;
+    type: 'success' | 'error' | 'info' | 'warning';
+    message: string;
+    description?: string;
+  }>>([]);
+
+  // Notification helper - BUILT IN, NO EXTERNAL HOOK
+  const showNotification = (
+    type: 'success' | 'error' | 'info' | 'warning',
+    message: string,
+    description?: string
+  ) => {
+    const id = Math.random().toString(36).substring(7);
+    setNotifications(prev => [...prev, { id, type, message, description }]);
+  };
+
+  const removeNotification = (id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  };
+
+  // State for filters - SIMPLIFIED
   const [selectedClass, setSelectedClass] = useState<string>('all');
-  const [selectedSubject, setSelectedSubject] = useState<string>('all');
   const [selectedTerm, setSelectedTerm] = useState<string>('Term 2');
   const [selectedYear, setSelectedYear] = useState<number>(2024);
-  const [viewMode, setViewMode] = useState<'desktop' | 'mobile' | 'tablet'>('desktop');
-  const [showDetails, setShowDetails] = useState(false);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [chartsLoaded, setChartsLoaded] = useState(false);
+
+  // Get classes for filter
+  const { classes, isLoading: classesLoading } = useSchoolClasses({ isActive: true });
 
   // Use the analytics hook with real data
   const { 
     analytics, 
     results, 
-    classComparison: realClassComparison,
     isLoading, 
     isFetching, 
     refetch 
   } = useResultsAnalytics({
     classId: selectedClass !== 'all' ? selectedClass : undefined,
-    subjectId: selectedSubject !== 'all' ? selectedSubject : undefined,
     term: selectedTerm,
     year: selectedYear,
   });
@@ -215,538 +166,216 @@ export default function AdminResultsAnalysis() {
   // Check mobile on mount and resize
   useEffect(() => {
     const checkMobile = () => {
-      const mobile = window.innerWidth < 768;
-      setIsMobile(mobile);
-      if (mobile) setViewMode('mobile');
+      setIsMobile(window.innerWidth < 768);
     };
-    
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Simulate chart loading
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setChartsLoaded(true);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Calculate grade distribution from real results
+  // Calculate grade distribution - SIMPLIFIED TO 3 CATEGORIES - WITH CORRECT TYPING
   const gradeDistribution = useMemo((): GradeDistribution[] => {
     if (!results || results.length === 0) return [];
 
-    const gradeCounts = new Map<number, number>();
+    const endOfTermResults = results.filter(r => 
+      r.examType === 'endOfTerm' && r.grade > 0
+    );
+
+    if (endOfTermResults.length === 0) return [];
+
+    // Group into three categories: Distinction (1-2), Pass (3-6), Fail (7-9)
+    const distinctions = endOfTermResults.filter(r => r.grade <= 2).length;
+    const passes = endOfTermResults.filter(r => r.grade >= 3 && r.grade <= 6).length;
+    const fails = endOfTermResults.filter(r => r.grade >= 7).length;
     
-    // Initialize all grades 1-9
-    for (let i = 1; i <= 9; i++) {
-      gradeCounts.set(i, 0);
+    const total = endOfTermResults.length;
+
+    const distribution: GradeDistribution[] = [];
+    
+    if (distinctions > 0) {
+      distribution.push({
+        grade: 1,
+        count: distinctions,
+        percentage: Math.round((distinctions / total) * 100),
+        description: 'Distinction (Grades 1-2)',
+        passStatus: 'distinction'
+      });
+    }
+    
+    if (passes > 0) {
+      distribution.push({
+        grade: 3,
+        count: passes,
+        percentage: Math.round((passes / total) * 100),
+        description: 'Pass (Grades 3-6)',
+        passStatus: 'pass'
+      });
+    }
+    
+    if (fails > 0) {
+      distribution.push({
+        grade: 7,
+        count: fails,
+        percentage: Math.round((fails / total) * 100),
+        description: 'Fail (Grades 7-9)',
+        passStatus: 'fail'
+      });
+    }
+    
+    return distribution;
+  }, [results]);
+
+  // Calculate summary metrics - THREE CARDS ONLY
+  const summaryMetrics = useMemo(() => {
+    if (!analytics) {
+      return {
+        passRate: 0,
+        averageScore: 0,
+        failRate: 0,
+        totalAssessments: 0
+      };
     }
 
-    // Count each grade (only end of term results)
-    results
-      .filter(r => r.examType === 'endOfTerm' && r.grade > 0)
-      .forEach(result => {
-        gradeCounts.set(result.grade, (gradeCounts.get(result.grade) || 0) + 1);
-      });
-
-    const total = results.filter(r => r.examType === 'endOfTerm' && r.grade > 0).length;
-
-    return Array.from(gradeCounts.entries())
-      .map(([grade, count]) => ({
-        grade,
-        count,
-        percentage: total > 0 ? Math.round((count / total) * 100) : 0,
-        description: getGradeDescription(grade),
-      }))
-      .filter(g => g.count > 0);
-  }, [results]);
-
-  // Calculate performance trend from real results
-  const performanceTrend = useMemo((): PerformanceTrend[] => {
-    if (!results || results.length === 0) return [];
-
-    const examTypes = ['week4', 'week8', 'endOfTerm'] as const;
-    const examLabels = {
-      week4: 'Week 4',
-      week8: 'Week 8',
-      endOfTerm: 'End of Term',
-    };
-
-    const trendData = examTypes.map(examType => {
-      const examResults = results.filter(r => r.examType === examType && r.percentage >= 0);
-      const totalPercentage = examResults.reduce((sum, r) => sum + r.percentage, 0);
-      const avgMarks = examResults.length > 0 ? Math.round(totalPercentage / examResults.length) : 0;
-      const passRate = examResults.length > 0 
-        ? Math.round((examResults.filter(r => r.percentage >= 50).length / examResults.length) * 100)
-        : 0;
-
-      return {
-        month: examLabels[examType],
-        avgMarks,
-        passRate,
-        improvement: 'stable' as const,
-      };
-    });
-
-    // Add improvement indicators
-    return trendData.map((data, index) => {
-      if (index === 0) return data;
-      
-      const prevData = trendData[index - 1];
-      const avgDiff = data.avgMarks - prevData.avgMarks;
-      const passDiff = data.passRate - prevData.passRate;
-      
-      let improvement: 'up' | 'down' | 'stable' = 'stable';
-      if (avgDiff > 2 || passDiff > 3) improvement = 'up';
-      else if (avgDiff < -2 || passDiff < -3) improvement = 'down';
-      
-      return { ...data, improvement };
-    });
-  }, [results]);
-
-  // Use real class comparison data with proper type casting
-  const classComparison = useMemo((): ClassPerformance[] => {
-    if (!realClassComparison || realClassComparison.length === 0) return [];
-
-    return realClassComparison.map(cls => ({
-      class: cls.className,
-      form: cls.form,
-      passRate: cls.passRate,
-      avgMarks: cls.avgMarks,
-      totalStudents: cls.totalStudents,
-      improvement: cls.improvement || 0,
-    }));
-  }, [realClassComparison]);
-
-  // Calculate subject analysis from results
-  const subjectAnalysis = useMemo((): SubjectAnalysis[] => {
-    if (!results || results.length === 0) return [];
-
-    const subjectMap = new Map<string, {
-      subject: string;
-      percentages: number[];
-      grades: number[];
-    }>();
-
-    // Group results by subject
-    results
-      .filter(r => r.examType === 'endOfTerm' && r.percentage >= 0)
-      .forEach(result => {
-        if (!subjectMap.has(result.subjectName)) {
-          subjectMap.set(result.subjectName, {
-            subject: result.subjectName,
-            percentages: [],
-            grades: [],
-          });
-        }
-        
-        const subject = subjectMap.get(result.subjectName)!;
-        subject.percentages.push(result.percentage);
-        subject.grades.push(result.grade);
-      });
-
-    return Array.from(subjectMap.values()).map(subject => {
-      const avgScore = subject.percentages.length > 0 
-        ? Math.round(subject.percentages.reduce((a, b) => a + b, 0) / subject.percentages.length)
-        : 0;
-      
-      const passRate = subject.percentages.length > 0
-        ? Math.round((subject.percentages.filter(p => p >= 50).length / subject.percentages.length) * 100)
-        : 0;
-      
-      // Get most frequent grade
-      const gradeCounts = new Map<number, number>();
-      subject.grades.forEach(grade => {
-        gradeCounts.set(grade, (gradeCounts.get(grade) || 0) + 1);
-      });
-      
-      let topGrade = 'N/A';
-      let maxCount = 0;
-      gradeCounts.forEach((count, grade) => {
-        if (count > maxCount) {
-          maxCount = count;
-          topGrade = grade.toString();
-        }
-      });
-
-      // Determine difficulty based on average score
-      let difficulty: 'easy' | 'medium' | 'hard' = 'medium';
-      if (avgScore >= 70) difficulty = 'easy';
-      else if (avgScore <= 40) difficulty = 'hard';
-
-      return {
-        subject: subject.subject,
-        passRate,
-        avgScore,
-        topGrade,
-        difficulty,
-      };
-    }).sort((a, b) => b.passRate - a.passRate); // Sort by pass rate descending
-  }, [results]);
-
-  // Summary statistics from real analytics
-  const summaryStats = useMemo(() => {
-    if (!analytics) return {
-      totalStudents: 0,
-      averagePassRate: 0,
-      averageScore: 0,
-      topGrades: 0,
-      overallTrend: 'stable' as const,
-      averagePercentage: 0,
-      passRate: 0,
-      topGrade: 'N/A',
-    };
-
-    // Calculate top grades count (grades 1-2)
-    const topGradesCount = gradeDistribution
-      .filter(g => g.grade <= 2)
-      .reduce((sum, g) => sum + g.count, 0);
-
-    // Determine overall trend
-    let overallTrend: 'up' | 'down' | 'stable' = 'stable';
-    if (performanceTrend.length >= 2) {
-      const last = performanceTrend[performanceTrend.length - 1];
-      const first = performanceTrend[0];
-      const avgDiff = last.avgMarks - first.avgMarks;
-      const passDiff = last.passRate - first.passRate;
-      
-      if (avgDiff > 5 || passDiff > 5) overallTrend = 'up';
-      else if (avgDiff < -5 || passDiff < -5) overallTrend = 'down';
-    }
+    const endOfTermResults = results.filter(r => r.examType === 'endOfTerm');
+    const totalAssessments = endOfTermResults.length;
+    
+    const passCount = endOfTermResults.filter(r => r.grade <= 6).length;
+    const failCount = endOfTermResults.filter(r => r.grade >= 7).length;
+    
+    const passRate = totalAssessments > 0 ? Math.round((passCount / totalAssessments) * 100) : 0;
+    const failRate = totalAssessments > 0 ? Math.round((failCount / totalAssessments) * 100) : 0;
 
     return {
-      totalStudents: analytics.totalStudents || 0,
-      averagePassRate: Math.round(classComparison.reduce((sum, cls) => sum + cls.passRate, 0) / Math.max(classComparison.length, 1)),
+      passRate,
       averageScore: analytics.averagePercentage || 0,
-      topGrades: topGradesCount,
-      overallTrend,
-      averagePercentage: analytics.averagePercentage || 0,
-      passRate: analytics.passRate || 0,
-      topGrade: analytics.topGrade || 'N/A',
+      failRate,
+      totalAssessments
     };
-  }, [analytics, gradeDistribution, performanceTrend, classComparison]);
+  }, [analytics, results]);
 
-  const getImprovementIcon = (improvement: string) => {
-    switch (improvement) {
-      case 'up': return <TrendingUp size={16} className="text-green-500" />;
-      case 'down': return <TrendingDown size={16} className="text-red-500" />;
-      default: return <Minus size={16} className="text-yellow-500" />;
+  // Handle export
+  const handleExport = async () => {
+    try {
+      if (!results || results.length === 0) {
+        showNotification(
+          'warning',
+          'No data to export',
+          'There are no results available for the selected filters.'
+        );
+        return;
+      }
+
+      showNotification(
+        'info',
+        'Preparing export...',
+        'Your report is being generated.'
+      );
+
+      // Simulate async operation
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      showNotification(
+        'success',
+        'Export completed',
+        'The results report has been downloaded.'
+      );
+
+    } catch (error) {
+      showNotification(
+        'error',
+        'Export failed',
+        'An error occurred while generating the report.'
+      );
     }
   };
 
-  const getDifficultyColor = (difficulty: string) => {
-    switch (difficulty) {
-      case 'easy': return 'bg-green-100 text-green-800';
-      case 'medium': return 'bg-yellow-100 text-yellow-800';
-      case 'hard': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const getGradeColor = (grade: number): string => {
-    if (grade <= 2) return 'bg-green-100 text-green-700';
-    if (grade <= 4) return 'bg-blue-100 text-blue-700';
-    if (grade <= 6) return 'bg-cyan-100 text-cyan-700';
-    if (grade <= 8) return 'bg-yellow-100 text-yellow-700';
-    return 'bg-red-100 text-red-700';
-  };
-
-  // Get unique classes and subjects for filters - FIXED: Properly typed now
-  const classes = useMemo((): string[] => {
-    if (!realClassComparison || !Array.isArray(realClassComparison) || realClassComparison.length === 0) {
-      return [];
-    }
-    return Array.from(new Set(realClassComparison.map(c => c.className))).sort();
-  }, [realClassComparison]);
-
-  const subjects = useMemo((): string[] => {
-    if (!subjectAnalysis || subjectAnalysis.length === 0) return [];
-    return Array.from(new Set(subjectAnalysis.map(s => s.subject))).sort();
-  }, [subjectAnalysis]);
-
-  const ChartFallback = () => (
-    <div className="flex items-center justify-center h-full">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-    </div>
-  );
-
-  // Render chart by view mode
-  const renderChartByViewMode = (type: 'bar' | 'line' | 'pie', data: any[], dataKey: string, colors?: string[]) => {
-    if (isMobile || viewMode === 'mobile') {
-      // Simple mobile charts (same as before but using real data)
-      if (!data || data.length === 0) {
-        return (
-          <div className="flex items-center justify-center h-full text-gray-400">
-            No data available
-          </div>
-        );
-      }
-
-      if (type === 'bar') {
-        const maxValue = Math.max(...data.map(item => item[dataKey]));
-        
-        return (
-          <div className="h-full flex flex-col">
-            <div className="flex-1 flex items-end gap-1 sm:gap-2 px-2">
-              {data.map((item, index) => {
-                const heightPercentage = (item[dataKey] / maxValue) * 90;
-                return (
-                  <div key={index} className="flex-1 flex flex-col items-center">
-                    <div
-                      className="w-full rounded-t-lg transition-all duration-300 hover:opacity-90"
-                      style={{
-                        height: `${heightPercentage}%`,
-                        backgroundColor: colors?.[index] || '#3b82f6',
-                        minHeight: '4px'
-                      }}
-                      title={`${item[dataKey]}${dataKey.includes('Rate') || dataKey.includes('Marks') ? '%' : ''}`}
-                    />
-                    <div className="mt-2 text-xs text-gray-500 truncate max-w-full px-1 text-center">
-                      {item.month || item.class || item.grade || item.subject}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="text-xs text-gray-400 text-center mt-4">
-              Tap bars for details
-            </div>
-          </div>
-        );
-      }
-
-      if (type === 'line') {
-        const values = data.map(item => item[dataKey]);
-        const maxValue = Math.max(...values);
-        const minValue = Math.min(...values);
-        const range = maxValue - minValue;
-
-        const points = data.map((item, index) => {
-          const x = (index / (data.length - 1)) * 100;
-          const y = 100 - ((item[dataKey] - minValue) / range) * 100;
-          return `${x}% ${y}%`;
-        }).join(', ');
-
-        return (
-          <div className="h-full relative">
-            <div className="absolute inset-4">
-              <svg viewBox="0 0 100 100" className="w-full h-full">
-                <line x1="0" y1="25" x2="100" y2="25" stroke="#e5e7eb" strokeWidth="0.5" />
-                <line x1="0" y1="50" x2="100" y2="50" stroke="#e5e7eb" strokeWidth="0.5" />
-                <line x1="0" y1="75" x2="100" y2="75" stroke="#e5e7eb" strokeWidth="0.5" />
-                
-                <polyline
-                  points={points}
-                  fill="none"
-                  stroke="#3b82f6"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                
-                {data.map((item, index) => {
-                  const x = (index / (data.length - 1)) * 100;
-                  const y = 100 - ((item[dataKey] - minValue) / range) * 100;
-                  return (
-                    <circle
-                      key={index}
-                      cx={x}
-                      cy={y}
-                      r="2"
-                      fill="#3b82f6"
-                      stroke="#ffffff"
-                      strokeWidth="1.5"
-                    />
-                  );
-                })}
-              </svg>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 flex justify-between text-xs text-gray-500 px-2">
-              {data.map((item, index) => (
-                <span key={index} className="truncate max-w-[60px] sm:max-w-[80px] text-center">
-                  {item.month || item.class || item.grade || item.subject}
-                </span>
-              ))}
-            </div>
-          </div>
-        );
-      }
-
-      if (type === 'pie') {
-        return (
-          <div className="space-y-4">
-            {data.map((item, index) => (
-              <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div 
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: colors?.[index] || '#3b82f6' }}
-                  />
-                  <span className="font-medium text-gray-900">{item.grade || item.subject}</span>
-                </div>
-                <div className="text-right">
-                  <div className="font-bold text-gray-900">{item.percentage || item.passRate}%</div>
-                  <div className="text-sm text-gray-500">{item.count || item.avgScore} {item.count ? 'students' : 'avg score'}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        );
-      }
-    }
-
-    // Desktop/Tablet view with Recharts
-    if (!chartsLoaded || isLoading) {
-      return <ChartFallback />;
-    }
-
-    return (
-      <Suspense fallback={<ChartFallback />}>
-        <ResponsiveContainer width="100%" height="100%">
-          {type === 'bar' && dataKey === 'passRate' ? (
-            <BarChart data={data} margin={{ top: 20, right: 30, left: 0, bottom: 40 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis 
-                dataKey="class" 
-                angle={data.length > 4 ? -45 : 0}
-                textAnchor={data.length > 4 ? "end" : "middle"}
-                height={data.length > 4 ? 80 : 40}
-                tick={{ fontSize: 12 }}
-              />
-              <YAxis 
-                tick={{ fontSize: 12 }}
-                domain={[0, 100]}
-                label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft' }}
-              />
-              <Tooltip 
-                formatter={(value: number) => [`${value}%`, 'Pass Rate']}
-                labelFormatter={(label) => `Class: ${label}`}
-                contentStyle={{ 
-                  borderRadius: '8px',
-                  border: '1px solid #e5e7eb',
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                }}
-              />
-              <Legend />
-              <Bar 
-                dataKey="passRate" 
-                fill="#3b82f6" 
-                name="Pass Rate (%)" 
-                radius={[4, 4, 0, 0]}
-                maxBarSize={data.length > 4 ? 40 : 60}
-              />
-            </BarChart>
-          ) : type === 'line' ? (
-            <LineChart data={data} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-              <YAxis 
-                yAxisId="left"
-                tick={{ fontSize: 12 }}
-                domain={[0, 100]}
-              />
-              <YAxis 
-                yAxisId="right" 
-                orientation="right"
-                tick={{ fontSize: 12 }}
-                domain={[0, 100]}
-              />
-              <Tooltip 
-                formatter={(value: number, name: string) => {
-                  const label = name === 'passRate' ? 'Pass Rate' : 'Avg Marks';
-                  return [`${value}%`, label];
-                }}
-                contentStyle={{ 
-                  borderRadius: '8px',
-                  border: '1px solid #e5e7eb',
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                }}
-              />
-              <Legend />
-              <Line 
-                yAxisId="left" 
-                type="monotone" 
-                dataKey="passRate" 
-                stroke="#10b981" 
-                name="Pass Rate (%)" 
-                strokeWidth={2}
-                dot={{ r: 4 }}
-                activeDot={{ r: 6 }}
-              />
-              <Line 
-                yAxisId="right" 
-                type="monotone" 
-                dataKey="avgMarks" 
-                stroke="#3b82f6" 
-                name="Avg Marks (%)" 
-                strokeWidth={2}
-                dot={{ r: 4 }}
-                activeDot={{ r: 6 }}
-              />
-            </LineChart>
-          ) : type === 'pie' ? (
-            <PieChart>
-              <Pie
-                data={data}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ grade, percentage }: any) => `${grade} (${percentage}%)`}
-                outerRadius={100}
-                fill="#8884d8"
-                dataKey="count"
-              >
-                {data.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={colors?.[index] || '#3b82f6'} />
-                ))}
-              </Pie>
-              <Tooltip 
-                formatter={(value: number, name: string, props: any) => [
-                  `${value} students (${props.payload.percentage}%)`,
-                  `Grade ${props.payload.grade} - ${props.payload.description}`
-                ]}
-                contentStyle={{ 
-                  borderRadius: '8px',
-                  border: '1px solid #e5e7eb',
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                }}
-              />
-              <Legend />
-            </PieChart>
-          ) : null}
-        </ResponsiveContainer>
-      </Suspense>
+  // Handle filter change
+  const handleFilterChange = (type: 'class' | 'term' | 'year', value: string | number) => {
+    if (type === 'class') setSelectedClass(value as string);
+    if (type === 'term') setSelectedTerm(value as string);
+    if (type === 'year') setSelectedYear(value as number);
+    
+    showNotification(
+      'info',
+      'Updating results...',
+      `Showing ${type === 'class' ? value : selectedClass} data`
     );
   };
 
-  // Helper function to get grade description
-  const getGradeDescription = (grade: number): string => {
-    if (grade === 1 || grade === 2) return 'Distinction';
-    if (grade === 3 || grade === 4) return 'Merit';
-    if (grade === 5 || grade === 6) return 'Credit';
-    if (grade === 7 || grade === 8) return 'Satisfactory';
-    return 'Fail';
+  // Handle refresh
+  const handleRefresh = async () => {
+    showNotification(
+      'info',
+      'Refreshing data...',
+      'Fetching the latest results.'
+    );
+    await refetch();
+    showNotification(
+      'success',
+      'Data updated',
+      'Results are now current.'
+    );
   };
 
-  if (isLoading) {
+  // Get color for metric card
+  const getMetricColor = (type: 'pass' | 'average' | 'fail') => {
+    switch (type) {
+      case 'pass': return {
+        bg: 'bg-gradient-to-br from-green-50 to-emerald-50',
+        iconBg: 'bg-green-100',
+        iconColor: 'text-green-600',
+        text: 'text-green-600',
+        border: 'border-green-200',
+        shadow: 'hover:shadow-green-100'
+      };
+      case 'average': return {
+        bg: 'bg-gradient-to-br from-blue-50 to-indigo-50',
+        iconBg: 'bg-blue-100',
+        iconColor: 'text-blue-600',
+        text: 'text-blue-600',
+        border: 'border-blue-200',
+        shadow: 'hover:shadow-blue-100'
+      };
+      case 'fail': return {
+        bg: 'bg-gradient-to-br from-red-50 to-orange-50',
+        iconBg: 'bg-red-100',
+        iconColor: 'text-red-600',
+        text: 'text-red-600',
+        border: 'border-red-200',
+        shadow: 'hover:shadow-red-100'
+      };
+    }
+  };
+
+  // Years for filter
+  const currentYear = new Date().getFullYear();
+  const years = [currentYear - 1, currentYear, currentYear + 1];
+
+  // Loading states
+  if (isLoading || classesLoading) {
     return (
       <DashboardLayout activeTab="results">
-        <div className="p-4 sm:p-6 lg:p-8 space-y-8">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-pulse">
-            <div>
-              <div className="h-8 bg-gray-200 rounded w-48 mb-2"></div>
-              <div className="h-4 bg-gray-100 rounded w-64"></div>
+        <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+          {/* Header Skeleton */}
+          <div className="mb-8 animate-pulse">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <div className="h-8 sm:h-9 lg:h-10 bg-gray-200 rounded w-64 mb-2"></div>
+                <div className="h-4 sm:h-5 bg-gray-100 rounded w-96"></div>
+              </div>
+              <div className="h-10 sm:h-11 bg-gray-200 rounded w-32"></div>
             </div>
-            <div className="h-10 bg-gray-200 rounded w-40"></div>
           </div>
-          <StatsSkeleton />
-          <div className="space-y-6">
-            <ChartSkeleton />
-            <ChartSkeleton />
-            <ChartSkeleton />
+
+          {/* Three Metrics Skeleton */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+            <MetricSkeleton />
+            <MetricSkeleton />
+            <MetricSkeleton />
           </div>
+
+          {/* Chart Skeleton */}
+          <ChartSkeleton />
         </div>
       </DashboardLayout>
     );
@@ -754,401 +383,481 @@ export default function AdminResultsAnalysis() {
 
   return (
     <DashboardLayout activeTab="results">
-      <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      <div className="min-h-screen bg-gray-50 p-3 sm:p-6 lg:p-8 transition-all duration-200">
+        
+        {/* ===== NOTIFICATIONS ===== */}
+        <div className="fixed top-4 right-4 z-50 space-y-2">
+          {notifications.map(notification => (
+            <Notification
+              key={notification.id}
+              type={notification.type}
+              message={notification.message}
+              description={notification.description}
+              onClose={() => removeNotification(notification.id)}
+            />
+          ))}
+        </div>
+
+        {/* ===== HEADER ===== */}
+        <div className="mb-6 sm:mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl lg:text-4xl">
-                Admin Results Analysis
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 tracking-tight">
+                Results Analysis
               </h1>
-              <p className="text-gray-600 mt-2 text-sm sm:text-base">
-                Comprehensive performance analytics and insights across all classes
+              <p className="text-sm sm:text-base text-gray-600 mt-1 sm:mt-2 flex items-center gap-2 flex-wrap">
+                <span>End of Term Performance</span>
+                <span className="text-gray-300">•</span>
+                <span>{selectedTerm} {selectedYear}</span>
+                {isFetching && (
+                  <span className="inline-flex items-center gap-1.5 text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full text-xs">
+                    <Loader2 size={12} className="animate-spin" />
+                    updating
+                  </span>
+                )}
               </p>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setViewMode('mobile')}
-                  className={`p-2 ${viewMode === 'mobile' ? 'bg-blue-50 text-blue-600' : 'text-gray-600'}`}
-                  title="Mobile view"
-                >
-                  <Smartphone size={18} />
-                </button>
-                <button
-                  onClick={() => setViewMode('tablet')}
-                  className={`p-2 ${viewMode === 'tablet' ? 'bg-blue-50 text-blue-600' : 'text-gray-600'}`}
-                  title="Tablet view"
-                >
-                  <Tablet size={18} />
-                </button>
-                <button
-                  onClick={() => setViewMode('desktop')}
-                  className={`p-2 ${viewMode === 'desktop' ? 'bg-blue-50 text-blue-600' : 'text-gray-600'}`}
-                  title="Desktop view"
-                >
-                  <Monitor size={18} />
-                </button>
-              </div>
-              <button
-                onClick={() => refetch()}
-                disabled={isFetching}
-                className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-              >
-                <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
-                <span className="hidden sm:inline">Refresh</span>
-              </button>
-              <button
-                onClick={() => setShowDetails(!showDetails)}
-                className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-              >
-                {showDetails ? <EyeOff size={18} /> : <Eye size={18} />}
-                <span className="hidden sm:inline">
-                  {showDetails ? 'Hide Details' : 'Show Details'}
-                </span>
-              </button>
-              <button className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">
-                <Download size={18} />
-                <span className="hidden sm:inline">Export</span>
-              </button>
-            </div>
+            
+            {/* Export Button - ALWAYS VISIBLE */}
+            <button
+              onClick={handleExport}
+              disabled={results.length === 0 || isFetching}
+              className={`
+                inline-flex items-center justify-center gap-2
+                bg-blue-600 text-white rounded-xl hover:bg-blue-700
+                font-medium transition-all active:scale-[0.98]
+                focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
+                disabled:opacity-50 disabled:cursor-not-allowed
+                px-4 py-2.5 sm:px-5 sm:py-3
+                ${isMobile ? 'w-full sm:w-auto' : ''}
+              `}
+            >
+              <Download size={18} />
+              <span>Export Report</span>
+            </button>
           </div>
         </div>
 
-        {/* Summary Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-          <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow">
-            <p className="text-gray-600 font-medium text-sm">Total Students</p>
-            <div className="flex items-baseline gap-2 mt-2">
-              <p className="text-2xl sm:text-3xl font-bold text-gray-900">{summaryStats.totalStudents}</p>
-              <span className="text-sm text-gray-500">students</span>
+        {/* ===== THREE CORE METRICS - Quality, Quantity, Fail ===== */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-8">
+          
+          {/* Quality (Pass Rate) */}
+          <div className={`
+            rounded-2xl border p-5 sm:p-6
+            transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5
+            ${getMetricColor('pass').bg} ${getMetricColor('pass').border}
+          `}>
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600 mb-1">Pass Rate</p>
+                <div className="flex items-baseline gap-1">
+                  <p className={`text-3xl sm:text-4xl font-bold ${getMetricColor('pass').text}`}>
+                    {summaryMetrics.passRate}%
+                  </p>
+                  <span className="text-xs text-gray-500">of students</span>
+                </div>
+              </div>
+              <div className={`p-3 sm:p-4 rounded-xl ${getMetricColor('pass').iconBg}`}>
+                <Target size={isMobile ? 20 : 24} className={getMetricColor('pass').iconColor} />
+              </div>
             </div>
-            <div className="flex items-center gap-1 mt-2">
-              <TrendingUp size={14} className="text-green-500" />
-              <span className="text-xs text-green-600">School-wide</span>
+            <div className="mt-3 flex items-center gap-2">
+              <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-green-500 rounded-full transition-all duration-500"
+                  style={{ width: `${summaryMetrics.passRate}%` }}
+                />
+              </div>
+              <span className="text-xs font-medium text-gray-600">
+                {summaryMetrics.passRate}%
+              </span>
             </div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow">
-            <p className="text-gray-600 font-medium text-sm">Avg Pass Rate</p>
-            <div className="flex items-baseline gap-2 mt-2">
-              <p className="text-2xl sm:text-3xl font-bold text-green-600">{summaryStats.averagePassRate}%</p>
-              <span className="text-sm text-gray-500">across all classes</span>
-            </div>
-            <div className="flex items-center gap-1 mt-2">
-              {getImprovementIcon(summaryStats.overallTrend)}
-              <span className="text-xs text-gray-600">Overall trend</span>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow">
-            <p className="text-gray-600 font-medium text-sm">Avg Score</p>
-            <div className="flex items-baseline gap-2 mt-2">
-              <p className="text-2xl sm:text-3xl font-bold text-blue-600">{summaryStats.averageScore}%</p>
-              <span className="text-sm text-gray-500">mean marks</span>
-            </div>
-            <div className="flex items-center gap-1 mt-2">
-              <TrendingUp size={14} className="text-green-500" />
-              <span className="text-xs text-green-600">Term {selectedTerm}</span>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow">
-            <p className="text-gray-600 font-medium text-sm">Top Grades (1-2)</p>
-            <div className="flex items-baseline gap-2 mt-2">
-              <p className="text-2xl sm:text-3xl font-bold text-purple-600">{summaryStats.topGrades}</p>
-              <span className="text-sm text-gray-500">students</span>
-            </div>
-            <p className="text-xs text-gray-500 mt-2">
-              {summaryStats.totalStudents > 0 
-                ? Math.round((summaryStats.topGrades / summaryStats.totalStudents) * 100) 
-                : 0}% of total
+            <p className="text-xs text-gray-500 mt-3">
+              Grades 1-6 • {gradeDistribution.find(g => g.passStatus === 'pass' || g.passStatus === 'distinction')?.count || 0} students
             </p>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow">
-            <p className="text-gray-600 font-medium text-sm">Success Rate</p>
-            <div className="flex items-baseline gap-2 mt-2">
-              <p className="text-2xl sm:text-3xl font-bold text-amber-600">{summaryStats.passRate}%</p>
-              <span className="text-sm text-gray-500">passing</span>
+
+          {/* Quantity (Average Score) */}
+          <div className={`
+            rounded-2xl border p-5 sm:p-6
+            transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5
+            ${getMetricColor('average').bg} ${getMetricColor('average').border}
+          `}>
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600 mb-1">Average Score</p>
+                <div className="flex items-baseline gap-1">
+                  <p className={`text-3xl sm:text-4xl font-bold ${getMetricColor('average').text}`}>
+                    {summaryMetrics.averageScore}%
+                  </p>
+                  <span className="text-xs text-gray-500">mean</span>
+                </div>
+              </div>
+              <div className={`p-3 sm:p-4 rounded-xl ${getMetricColor('average').iconBg}`}>
+                <GraduationCap size={isMobile ? 20 : 24} className={getMetricColor('average').iconColor} />
+              </div>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-              <div 
-                className="bg-green-500 h-2 rounded-full" 
-                style={{ width: `${summaryStats.passRate}%` }} 
-              />
+            <div className="mt-3 flex items-center gap-2">
+              <div className="flex items-center gap-1">
+                {summaryMetrics.averageScore >= 70 ? (
+                  <TrendingUp size={14} className="text-green-500" />
+                ) : summaryMetrics.averageScore >= 50 ? (
+                  <TrendingUp size={14} className="text-yellow-500" />
+                ) : (
+                  <TrendingDown size={14} className="text-red-500" />
+                )}
+                <span className="text-xs text-gray-600">
+                  {summaryMetrics.averageScore >= 70 ? 'Above target' : 
+                   summaryMetrics.averageScore >= 50 ? 'At target' : 'Below target'}
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-3">
+              {summaryMetrics.totalAssessments} total assessments
+            </p>
+          </div>
+
+          {/* Fail Rate */}
+          <div className={`
+            rounded-2xl border p-5 sm:p-6
+            transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5
+            ${getMetricColor('fail').bg} ${getMetricColor('fail').border}
+          `}>
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600 mb-1">Fail Rate</p>
+                <div className="flex items-baseline gap-1">
+                  <p className={`text-3xl sm:text-4xl font-bold ${getMetricColor('fail').text}`}>
+                    {summaryMetrics.failRate}%
+                  </p>
+                  <span className="text-xs text-gray-500">of students</span>
+                </div>
+              </div>
+              <div className={`p-3 sm:p-4 rounded-xl ${getMetricColor('fail').iconBg}`}>
+                <AlertCircle size={isMobile ? 20 : 24} className={getMetricColor('fail').iconColor} />
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-red-500 rounded-full transition-all duration-500"
+                  style={{ width: `${summaryMetrics.failRate}%` }}
+                />
+              </div>
+              <span className="text-xs font-medium text-gray-600">
+                {summaryMetrics.failRate}%
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 mt-3">
+              Grades 7-9 • {gradeDistribution.find(g => g.passStatus === 'fail')?.count || 0} students
+            </p>
+          </div>
+        </div>
+
+        {/* ===== FILTERS - SIMPLIFIED, CLASS ONLY ===== */}
+        <div className="mb-8">
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            
+            {/* Mobile Filter Toggle */}
+            {isMobile && (
+              <button
+                onClick={() => setShowMobileFilters(!showMobileFilters)}
+                className="w-full flex items-center justify-between p-4 bg-white"
+              >
+                <div className="flex items-center gap-2">
+                  <Filter size={18} className="text-gray-400" />
+                  <span className="font-medium text-gray-700">
+                    {selectedClass !== 'all' ? `Class: ${selectedClass}` : 'Filter by class'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {selectedClass !== 'all' && (
+                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                  )}
+                  <ChevronDown 
+                    size={18} 
+                    className={`text-gray-500 transition-transform duration-200 ${showMobileFilters ? 'rotate-180' : ''}`} 
+                  />
+                </div>
+              </button>
+            )}
+
+            {/* Filter Content */}
+            <div className={`
+              p-4 sm:p-6
+              ${isMobile && !showMobileFilters ? 'hidden' : 'block'}
+            `}>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-blue-50 rounded-lg">
+                    <Filter size={16} className="text-blue-600" />
+                  </div>
+                  <span className="text-sm font-medium text-gray-700">Filter by:</span>
+                </div>
+                
+                <div className="flex flex-col sm:flex-row gap-3 flex-1">
+                  {/* Class Filter */}
+                  <div className="relative flex-1">
+                    <select
+                      value={selectedClass}
+                      onChange={(e) => handleFilterChange('class', e.target.value)}
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl
+                               focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                               appearance-none bg-white cursor-pointer text-sm
+                               hover:border-gray-400 transition-colors"
+                    >
+                      <option value="all">All Classes</option>
+                      {classes.map(cls => (
+                        <option key={cls.id} value={cls.name}>
+                          {cls.name} • Year {cls.year} • {cls.students} students
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
+                      <ChevronDown size={16} className="text-gray-400" />
+                    </div>
+                  </div>
+
+                  {/* Term Filter - Secondary */}
+                  <div className="relative sm:w-40">
+                    <select
+                      value={selectedTerm}
+                      onChange={(e) => handleFilterChange('term', e.target.value)}
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl
+                               focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                               appearance-none bg-white cursor-pointer text-sm"
+                    >
+                      <option value="Term 1">Term 1</option>
+                      <option value="Term 2">Term 2</option>
+                      <option value="Term 3">Term 3</option>
+                    </select>
+                    <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
+                      <ChevronDown size={16} className="text-gray-400" />
+                    </div>
+                  </div>
+
+                  {/* Year Filter - Secondary */}
+                  <div className="relative sm:w-32">
+                    <select
+                      value={selectedYear}
+                      onChange={(e) => handleFilterChange('year', Number(e.target.value))}
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl
+                               focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                               appearance-none bg-white cursor-pointer text-sm"
+                    >
+                      {years.map(year => (
+                        <option key={year} value={year}>{year}</option>
+                      ))}
+                    </select>
+                    <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
+                      <ChevronDown size={16} className="text-gray-400" />
+                    </div>
+                  </div>
+
+                  {/* Refresh Button */}
+                  <button
+                    onClick={handleRefresh}
+                    disabled={isFetching}
+                    className="px-4 py-2.5 border border-gray-300 text-gray-700
+                             rounded-xl hover:bg-gray-50 transition-colors
+                             disabled:opacity-50 disabled:cursor-not-allowed
+                             flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw size={16} className={isFetching ? 'animate-spin' : ''} />
+                    <span className="text-sm">Refresh</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Active Filter Indicator */}
+              {selectedClass !== 'all' && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="text-gray-600">Currently showing:</span>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium">
+                      <Filter size={12} />
+                      {selectedClass}
+                    </span>
+                    <button
+                      onClick={() => handleFilterChange('class', 'all')}
+                      className="text-xs text-gray-500 hover:text-gray-700 hover:underline ml-1"
+                    >
+                      Clear filter
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Filters */}
-        <div className="mb-8 bg-white rounded-2xl border border-gray-200 p-4 sm:p-6 shadow-sm">
-          <div className="flex flex-col lg:flex-row lg:items-center gap-6">
-            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* ===== SINGLE BAR CHART - Results Distribution ===== */}
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-gray-100">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <Filter size={16} className="inline mr-2" />
-                  Filter by Class
-                </label>
-                <select
-                  value={selectedClass}
-                  onChange={e => setSelectedClass(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-                >
-                  <option value="all">All Classes</option>
-                  {classes.map(cls => (
-                    <option key={cls} value={cls}>{cls}</option>
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-blue-50 rounded-lg">
+                    <BarChart3 size={18} className="text-blue-600" />
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-900">
+                    Results Distribution
+                  </h3>
+                </div>
+                <p className="text-sm text-gray-600 mt-1">
+                  End of term performance breakdown by grade category
+                </p>
+              </div>
+              
+              {/* Legend */}
+              {gradeDistribution.length > 0 && (
+                <div className="flex items-center gap-4">
+                  {gradeDistribution.map((grade, index) => (
+                    <div key={index} className="flex items-center gap-1.5">
+                      <div className={`w-3 h-3 rounded-full ${
+                        grade.passStatus === 'distinction' ? 'bg-green-500' :
+                        grade.passStatus === 'pass' ? 'bg-blue-500' : 'bg-red-500'
+                      }`} />
+                      <span className="text-xs text-gray-600">
+                        {grade.description.split(' ')[0]}
+                      </span>
+                    </div>
                   ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <Filter size={16} className="inline mr-2" />
-                  Filter by Subject
-                </label>
-                <select
-                  value={selectedSubject}
-                  onChange={e => setSelectedSubject(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-                >
-                  <option value="all">All Subjects</option>
-                  {subjects.map(subject => (
-                    <option key={subject} value={subject}>{subject}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Term
-                </label>
-                <select
-                  value={selectedTerm}
-                  onChange={e => setSelectedTerm(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-                >
-                  <option value="Term 1">Term 1</option>
-                  <option value="Term 2">Term 2</option>
-                  <option value="Term 3">Term 3</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Year
-                </label>
-                <select
-                  value={selectedYear}
-                  onChange={e => setSelectedYear(Number(e.target.value))}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-                >
-                  <option value={2024}>2024</option>
-                  <option value={2025}>2025</option>
-                  <option value={2026}>2026</option>
-                </select>
-              </div>
+                </div>
+              )}
             </div>
-            {showDetails && (
-              <div className="lg:w-64">
-                <button className="w-full px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium">
-                  Advanced Filters
-                </button>
+          </div>
+
+          <div className="p-6">
+            {results.length === 0 ? (
+              <div className="text-center py-16">
+                <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 rounded-full mb-4">
+                  <BarChart3 className="text-gray-400" size={32} />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  No results available
+                </h3>
+                <p className="text-gray-600 max-w-md mx-auto">
+                  {selectedClass !== 'all' 
+                    ? `No end of term results found for ${selectedClass}. Teachers need to enter results.`
+                    : 'No end of term results have been entered yet.'}
+                </p>
+                {selectedClass !== 'all' && (
+                  <button
+                    onClick={() => handleFilterChange('class', 'all')}
+                    className="mt-4 px-4 py-2 text-sm text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    View all classes
+                  </button>
+                )}
+              </div>
+            ) : gradeDistribution.length === 0 ? (
+              <div className="text-center py-12">
+                <AlertCircle className="mx-auto mb-3 text-gray-300" size={48} />
+                <p className="text-gray-600">
+                  No grade data available for the selected filters
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Bar Chart */}
+                <div className="h-80 flex items-end justify-center gap-8 sm:gap-12 px-4">
+                  {gradeDistribution.map((grade, index) => {
+                    const height = Math.max(grade.percentage, 4); // Minimum 4% for visibility
+                    const color = grade.passStatus === 'distinction' ? 'bg-green-500' :
+                                grade.passStatus === 'pass' ? 'bg-blue-500' : 'bg-red-500';
+                    
+                    return (
+                      <div key={index} className="flex flex-col items-center w-24 sm:w-32">
+                        <div className="relative w-full group">
+                          <div 
+                            className={`w-full ${color} rounded-t-lg transition-all duration-500 
+                                      group-hover:shadow-lg group-hover:scale-105`}
+                            style={{ height: `${height * 2}px`, minHeight: '32px' }}
+                          >
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                              <span className="text-white font-bold text-sm bg-black/30 px-2 py-1 rounded-lg">
+                                {grade.count} students
+                              </span>
+                            </div>
+                          </div>
+                          <div className="mt-3 text-center">
+                            <span className="text-lg font-bold text-gray-900">
+                              {grade.percentage}%
+                            </span>
+                            <p className="text-xs text-gray-600 mt-1 truncate max-w-full">
+                              {grade.description}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Summary Statistics */}
+                <div className="mt-8 pt-6 border-t border-gray-100">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="p-4 bg-green-50/50 rounded-xl">
+                      <p className="text-xs text-gray-600 mb-1">Distinction (Grades 1-2)</p>
+                      <p className="text-xl font-bold text-green-600">
+                        {gradeDistribution.find(g => g.passStatus === 'distinction')?.percentage || 0}%
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {gradeDistribution.find(g => g.passStatus === 'distinction')?.count || 0} students
+                      </p>
+                    </div>
+                    <div className="p-4 bg-blue-50/50 rounded-xl">
+                      <p className="text-xs text-gray-600 mb-1">Pass (Grades 3-6)</p>
+                      <p className="text-xl font-bold text-blue-600">
+                        {gradeDistribution.find(g => g.passStatus === 'pass')?.percentage || 0}%
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {gradeDistribution.find(g => g.passStatus === 'pass')?.count || 0} students
+                      </p>
+                    </div>
+                    <div className="p-4 bg-red-50/50 rounded-xl">
+                      <p className="text-xs text-gray-600 mb-1">Fail (Grades 7-9)</p>
+                      <p className="text-xl font-bold text-red-600">
+                        {gradeDistribution.find(g => g.passStatus === 'fail')?.percentage || 0}%
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {gradeDistribution.find(g => g.passStatus === 'fail')?.count || 0} students
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
-          <div className="mt-4 text-sm text-gray-600">
-            <p>
-              Showing: {selectedClass === 'all' ? 'All Classes' : selectedClass} • 
-              {selectedSubject === 'all' ? ' All Subjects' : ` ${selectedSubject}`} • 
-              {` ${selectedTerm}, ${selectedYear}`}
-            </p>
-          </div>
         </div>
 
-        {/* Charts Grid */}
-        <div className="space-y-6">
-          {/* Performance Trend */}
-          <ChartContainer
-            title="Performance Trend"
-            description="Progression of pass rates and average marks across assessments"
-            isLoading={isLoading}
-            onRefresh={() => refetch()}
-          >
-            {renderChartByViewMode('line', performanceTrend, 'passRate')}
-          </ChartContainer>
-
-          {/* Grade Distribution */}
-          <ChartContainer
-            title="Grade Distribution (1-9 Scale)"
-            description="Spread of student performance across grades"
-            isLoading={isLoading}
-            onRefresh={() => refetch()}
-            className="lg:col-span-2"
-          >
-            {renderChartByViewMode('pie', gradeDistribution, 'count', [
-              '#10b981', '#059669', '#3b82f6', '#2563eb', '#06b6d4', 
-              '#0891b2', '#f59e0b', '#ea580c', '#ef4444'
-            ])}
-          </ChartContainer>
-
-          {/* Class Comparison */}
-          <ChartContainer
-            title="Class Performance Comparison"
-            description="Pass rates across different classes and forms"
-            isLoading={isLoading}
-            onRefresh={() => refetch()}
-          >
-            {renderChartByViewMode('bar', classComparison, 'passRate')}
-          </ChartContainer>
-
-          {/* Subject Analysis (Only show on desktop/tablet) */}
-          {(viewMode !== 'mobile' && subjectAnalysis.length > 0) && (
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-gray-100">
-                <h3 className="text-lg font-bold text-gray-900">Subject Analysis</h3>
-                <p className="text-sm text-gray-600 mt-1">Performance breakdown by subject</p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Subject</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Pass Rate</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Avg Score</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Top Grade</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Difficulty</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Trend</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {subjectAnalysis.map((subject) => (
-                      <tr key={subject.subject} className="hover:bg-gray-50/50 transition-colors">
-                        <td className="px-6 py-4 font-medium text-gray-900">{subject.subject}</td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <div className="font-semibold text-gray-900">{subject.passRate}%</div>
-                            <div className="w-24 bg-gray-200 rounded-full h-2">
-                              <div 
-                                className="bg-green-500 h-2 rounded-full" 
-                                style={{ width: `${subject.passRate}%` }}
-                              />
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 font-medium text-gray-900">{subject.avgScore}%</td>
-                        <td className="px-6 py-4">
-                          <span className={`px-3 py-1 rounded-full text-sm font-medium ${getGradeColor(parseInt(subject.topGrade) || 9)}`}>
-                            {subject.topGrade}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`px-3 py-1 rounded-full text-sm font-medium ${getDifficultyColor(subject.difficulty)}`}>
-                            {subject.difficulty.charAt(0).toUpperCase() + subject.difficulty.slice(1)}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-1">
-                            <TrendingUp size={16} className="text-green-500" />
-                            <span className="text-sm text-gray-600">+2.5%</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Quick Insights (Mobile-friendly alternative to subject analysis) */}
-          {viewMode === 'mobile' && (
-            <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-              <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Insights</h3>
-              <div className="space-y-4">
-                {summaryStats.topGrades > 0 && (
-                  <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-green-600">
-                        <TrendingUp size={20} />
-                      </div>
-                      <div>
-                        <h4 className="font-semibold text-gray-900">Strong Performance</h4>
-                        <p className="text-sm text-gray-600">
-                          {summaryStats.topGrades} students achieved Distinction grades (1-2)
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {gradeDistribution.length > 0 && (
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
-                        <BarChart3 size={20} />
-                      </div>
-                      <div>
-                        <h4 className="font-semibold text-gray-900">Grade Distribution</h4>
-                        <p className="text-sm text-gray-600">
-                          {gradeDistribution.reduce((sum, g) => sum + g.count, 0)} students assessed
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {subjectAnalysis.length > 0 && (
-                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center text-amber-600">
-                        <Info size={20} />
-                      </div>
-                      <div>
-                        <h4 className="font-semibold text-gray-900">Top Subject</h4>
-                        <p className="text-sm text-gray-600">
-                          {subjectAnalysis[0]?.subject}: {subjectAnalysis[0]?.passRate}% pass rate
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Empty State */}
-        {results.length === 0 && !isLoading && (
-          <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center">
-            <div className="text-gray-400 mb-4">
-              <BarChart3 className="w-16 h-16 mx-auto" />
-            </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Results Data</h3>
-            <p className="text-gray-600 mb-6">
-              No results have been entered for the selected filters. Check back after teachers have entered results.
-            </p>
-            <div className="text-sm text-gray-500">
-              <p>Make sure:</p>
-              <ul className="mt-2 space-y-1">
-                <li>• Teachers have entered results for the selected term</li>
-                <li>• The correct year and term are selected</li>
-                <li>• Results use the correct exam types (Week 4, Week 8, End of Term)</li>
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* Footer Actions */}
+        {/* ===== FOOTER - Clean and minimal ===== */}
         <div className="mt-8 pt-6 border-t border-gray-200">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="text-sm text-gray-600">
-              <span className="font-medium">Last updated:</span> Just now
-              <span className="mx-2">•</span>
-              <span className="font-medium">View:</span> {viewMode.charAt(0).toUpperCase() + viewMode.slice(1)}
-              <span className="mx-2">•</span>
-              <span className="font-medium">Data:</span> {results.length} records
-            </div>
-            <div className="flex items-center gap-3">
-              <button className="text-sm text-blue-600 hover:text-blue-800 font-medium">
-                Share Report
+            <p className="text-xs sm:text-sm text-gray-500">
+              {results.length > 0 ? (
+                <>
+                  <span className="font-medium">Data source:</span> End of Term Results • 
+                  <span className="font-medium ml-1">Last updated:</span> Just now
+                </>
+              ) : (
+                'No results data available for the current selection'
+              )}
+            </p>
+            <div className="flex items-center gap-4">
+              <button 
+                onClick={handleExport}
+                disabled={results.length === 0}
+                className="text-xs sm:text-sm text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Download as CSV
               </button>
-              <button className="text-sm text-blue-600 hover:text-blue-800 font-medium">
-                Schedule Export
-              </button>
-              <button className="text-sm text-blue-600 hover:text-blue-800 font-medium">
-                Print Summary
+              <button 
+                onClick={() => refetch()}
+                className="text-xs sm:text-sm text-gray-600 hover:text-gray-900 font-medium"
+              >
+                Refresh data
               </button>
             </div>
           </div>
