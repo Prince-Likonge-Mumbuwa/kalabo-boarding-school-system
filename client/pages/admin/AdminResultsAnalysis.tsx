@@ -142,8 +142,8 @@ export default function AdminResultsAnalysis() {
 
   // State for filters - SIMPLIFIED
   const [selectedClass, setSelectedClass] = useState<string>('all');
-  const [selectedTerm, setSelectedTerm] = useState<string>('Term 2');
-  const [selectedYear, setSelectedYear] = useState<number>(2024);
+  const [selectedTerm, setSelectedTerm] = useState<string>('Term 1');
+  const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
