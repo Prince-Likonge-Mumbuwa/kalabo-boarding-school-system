@@ -15,7 +15,7 @@ export default function Landing() {
               </div>
             </div>
             
-            <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold text-gray-900 leading-tight">
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-gray-900 leading-tight">
               Welcome to <span className="bg-gradient-to-r from-blue-600 to-blue-800 bg-clip-text text-transparent">KalaboBoarding</span>
             </h2>
             
