@@ -1,6 +1,6 @@
 // @/services/resultsService.ts
 // COMPLETE REWRITE - ISACTIVE FILTER ELIMINATED
-// Version 4.0.0 - All learners are fetched regardless of status fields
+// Version 5.0.0 - Added student progress tracking for report cards
 
 import {
   collection,
@@ -147,6 +147,35 @@ export interface BulkReportOperation {
   };
 }
 
+// NEW TYPE: Student Progress with detailed subject status
+export interface StudentProgress {
+  studentId: string;
+  studentName: string;
+  className: string;
+  classId: string;
+  form: string;
+  // Overall progress
+  overallPercentage: number;
+  overallGrade: number;
+  status: 'pass' | 'fail' | 'pending';
+  isComplete: boolean;
+  completionPercentage: number;
+  // Subject progress
+  subjects: Array<{
+    subjectId: string;
+    subjectName: string;
+    teacherName: string;
+    week4: { status: 'complete' | 'missing' | 'absent'; marks?: number };
+    week8: { status: 'complete' | 'missing' | 'absent'; marks?: number };
+    endOfTerm: { status: 'complete' | 'missing' | 'absent'; marks?: number };
+    subjectProgress: number; // 0-100%
+    grade?: number;
+  }>;
+  // Missing data info
+  missingSubjects: number;
+  totalSubjects: number;
+}
+
 // ==================== CONSTANTS & CONFIGURATION ====================
 
 const COLLECTIONS = {
@@ -155,6 +184,7 @@ const COLLECTIONS = {
   CLASSES: 'classes',
   TEACHER_ASSIGNMENTS: 'teacher_assignments',
   USERS: 'users',
+  REPORT_CARDS: 'report_cards', // Added for future use
 } as const;
 
 const SUBJECT_NORMALIZATION_MAP: Record<string, string> = {
@@ -316,6 +346,7 @@ class ResultsService {
   private learnersCollection = collection(db, COLLECTIONS.LEARNERS);
   private classesCollection = collection(db, COLLECTIONS.CLASSES);
   private teacherAssignmentsCollection = collection(db, COLLECTIONS.TEACHER_ASSIGNMENTS);
+  private reportCardsCollection = collection(db, COLLECTIONS.REPORT_CARDS);
 
   async initialize(): Promise<{ success: boolean; error?: string }> {
     try {
@@ -475,6 +506,167 @@ class ResultsService {
       return subjects;
     } catch (error) {
       console.error('❌ Error getting expected subjects for class:', error);
+      return [];
+    }
+  }
+
+  // ==================== NEW METHOD: GET STUDENT PROGRESS ====================
+  /**
+   * Get ALL students with their progress data - Like teacher management, always shows all students
+   * This is the key method for the Report Cards page
+   */
+  async getStudentProgress(
+    classId: string,
+    term: string,
+    year: number
+  ): Promise<StudentProgress[]> {
+    try {
+      console.log(`🔍 Getting ALL students with progress for class: ${classId}, ${term} ${year}`);
+      
+      // 1. Get ALL learners in class (NO FILTERS - like teacher management)
+      const learners = await this.getLearnersInClass(classId);
+      
+      if (learners.length === 0) {
+        console.warn(`⚠️ No learners found in class ${classId}`);
+        return [];
+      }
+      
+      // 2. Get expected subjects from teacher assignments
+      const expectedSubjects = await this.getExpectedSubjectsForClass(classId);
+      
+      // 3. Get all results for this class/term/year
+      const resultsQuery = query(
+        this.resultsCollection,
+        where('classId', '==', classId),
+        where('term', '==', term),
+        where('year', '==', year)
+      );
+      
+      const resultsSnapshot = await getDocs(resultsQuery);
+      const allResults: StudentResult[] = [];
+      resultsSnapshot.forEach(doc => {
+        allResults.push(doc.data() as StudentResult);
+      });
+      
+      console.log(`📊 Found ${allResults.length} total result entries`);
+      
+      // 4. Build progress for each student
+      const studentProgress: StudentProgress[] = [];
+      
+      for (const learner of learners) {
+        const studentResults = allResults.filter(r => r.studentId === learner.id);
+        
+        // Build subject progress for this student
+        const subjects: StudentProgress['subjects'] = [];
+        let totalSubjectsCompleted = 0;
+        let totalPercentage = 0;
+        let subjectsWithScores = 0;
+        
+        for (const subject of expectedSubjects) {
+          const subjectResults = studentResults.filter(r => r.subjectId === subject.id);
+          
+          // Get teacher info from assignments
+          const assignments = await this.getTeacherAssignmentsForClass(classId);
+          const teacherAssignment = assignments.find(a => a.subjectId === subject.id);
+          
+          // Check each exam type
+          const week4Result = subjectResults.find(r => r.examType === 'week4');
+          const week8Result = subjectResults.find(r => r.examType === 'week8');
+          const endOfTermResult = subjectResults.find(r => r.examType === 'endOfTerm');
+          
+          // Calculate subject completion (how many exams have data)
+          let completedExams = 0;
+          if (week4Result) completedExams++;
+          if (week8Result) completedExams++;
+          if (endOfTermResult) completedExams++;
+          
+          const subjectProgress = Math.round((completedExams / 3) * 100);
+          if (subjectProgress === 100) totalSubjectsCompleted++;
+          
+          // Track overall percentage using end of term if available
+          if (endOfTermResult && endOfTermResult.percentage >= 0) {
+            totalPercentage += endOfTermResult.percentage;
+            subjectsWithScores++;
+          }
+          
+          subjects.push({
+            subjectId: subject.id,
+            subjectName: subject.name,
+            teacherName: teacherAssignment?.teacherName || 'Not assigned',
+            week4: {
+              status: week4Result 
+                ? (week4Result.status === 'absent' ? 'absent' : 'complete') 
+                : 'missing',
+              marks: week4Result?.percentage
+            },
+            week8: {
+              status: week8Result 
+                ? (week8Result.status === 'absent' ? 'absent' : 'complete') 
+                : 'missing',
+              marks: week8Result?.percentage
+            },
+            endOfTerm: {
+              status: endOfTermResult 
+                ? (endOfTermResult.status === 'absent' ? 'absent' : 'complete') 
+                : 'missing',
+              marks: endOfTermResult?.percentage
+            },
+            subjectProgress,
+            grade: endOfTermResult?.grade
+          });
+        }
+        
+        // Calculate overall stats
+        const overallPercentage = subjectsWithScores > 0 
+          ? Math.round(totalPercentage / subjectsWithScores) 
+          : 0;
+        
+        const overallGrade = overallPercentage > 0 ? calculateGrade(overallPercentage) : -1;
+        
+        const completionPercentage = expectedSubjects.length > 0
+          ? Math.round((totalSubjectsCompleted / expectedSubjects.length) * 100)
+          : 0;
+        
+        const isComplete = totalSubjectsCompleted === expectedSubjects.length && expectedSubjects.length > 0;
+        
+        // Get class name from learner data or from class
+        const className = learner.data.className || 
+                         learner.data.class?.name || 
+                         (await this.getClassData(classId))?.name || 
+                         'Unknown';
+        
+        const form = learner.data.form || 
+                    learner.data.level?.toString() || 
+                    (await this.getClassData(classId))?.level?.toString() || 
+                    '1';
+        
+        studentProgress.push({
+          studentId: learner.id,
+          studentName: learner.name,
+          className,
+          classId,
+          form,
+          overallPercentage,
+          overallGrade,
+          status: overallPercentage >= 50 ? 'pass' : (overallPercentage > 0 ? 'fail' : 'pending'),
+          isComplete,
+          completionPercentage,
+          subjects,
+          missingSubjects: expectedSubjects.length - totalSubjectsCompleted,
+          totalSubjects: expectedSubjects.length
+        });
+      }
+      
+      // Sort by student name
+      const sorted = studentProgress.sort((a, b) => a.studentName.localeCompare(b.studentName));
+      
+      console.log(`✅ Found progress data for ${sorted.length} students`);
+      console.log(`   Complete: ${sorted.filter(s => s.isComplete).length}`);
+      console.log(`   In Progress: ${sorted.filter(s => !s.isComplete).length}`);
+      
+      return sorted;
+    } catch (error) {
+      console.error('❌ Error getting student progress:', error);
       return [];
     }
   }
@@ -1661,6 +1853,16 @@ class ResultsService {
   }
 
   // ==================== PRIVATE HELPER METHODS ====================
+
+  private async getClassData(classId: string): Promise<any> {
+    try {
+      const classDoc = await getDoc(doc(this.classesCollection, classId));
+      return classDoc.exists() ? classDoc.data() : null;
+    } catch (error) {
+      console.error('Error getting class data:', error);
+      return null;
+    }
+  }
 
   private generateResultId(
     studentId: string,
