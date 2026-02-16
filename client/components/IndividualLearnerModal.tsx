@@ -5,7 +5,8 @@ import {
   Phone,
   Hash,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Users
 } from 'lucide-react';
 
 interface IndividualLearnerModalProps {
@@ -14,10 +15,11 @@ interface IndividualLearnerModalProps {
   onSubmit: (data: {
     name: string;
     age: number;
+    gender: 'male' | 'female';
     parentPhone: string;
   }) => Promise<void>;
   className: string;
-  isLoading?: boolean; // Add this prop
+  isLoading?: boolean;
 }
 
 export const IndividualLearnerModal = ({
@@ -25,11 +27,12 @@ export const IndividualLearnerModal = ({
   onClose,
   onSubmit,
   className,
-  isLoading = false // Default to false
+  isLoading = false
 }: IndividualLearnerModalProps) => {
   const [formData, setFormData] = useState({
     name: '',
     age: '',
+    gender: '' as 'male' | 'female' | '',
     parentPhone: ''
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -37,12 +40,14 @@ export const IndividualLearnerModal = ({
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
 
+    // Name validation
     if (!formData.name.trim()) {
       newErrors.name = 'Name is required';
     } else if (formData.name.trim().length < 2) {
       newErrors.name = 'Name must be at least 2 characters';
     }
 
+    // Age validation
     const age = parseInt(formData.age);
     if (!formData.age) {
       newErrors.age = 'Age is required';
@@ -50,6 +55,12 @@ export const IndividualLearnerModal = ({
       newErrors.age = 'Age must be between 5 and 25';
     }
 
+    // Gender validation - NEW
+    if (!formData.gender) {
+      newErrors.gender = 'Please select gender';
+    }
+
+    // Phone validation
     if (!formData.parentPhone) {
       newErrors.parentPhone = 'Parent phone number is required';
     } else if (!/^\d{10,15}$/.test(formData.parentPhone.replace(/\D/g, ''))) {
@@ -71,11 +82,12 @@ export const IndividualLearnerModal = ({
       await onSubmit({
         name: formData.name.trim(),
         age: parseInt(formData.age),
+        gender: formData.gender as 'male' | 'female',
         parentPhone: formData.parentPhone
       });
       
       // Reset form on success
-      setFormData({ name: '', age: '', parentPhone: '' });
+      setFormData({ name: '', age: '', gender: '', parentPhone: '' });
       setErrors({});
       onClose();
     } catch (error) {
@@ -124,6 +136,7 @@ export const IndividualLearnerModal = ({
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="p-6 space-y-6">
+            {/* Full Name */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <div className="flex items-center gap-2">
@@ -133,7 +146,7 @@ export const IndividualLearnerModal = ({
               </label>
               <input
                 type="text"
-                placeholder="John Banda"
+                placeholder="e.g., John Banda"
                 value={formData.name}
                 onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                 className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
@@ -146,6 +159,7 @@ export const IndividualLearnerModal = ({
               )}
             </div>
 
+            {/* Age */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <div className="flex items-center gap-2">
@@ -157,7 +171,7 @@ export const IndividualLearnerModal = ({
                 type="number"
                 min="5"
                 max="25"
-                placeholder="14"
+                placeholder="e.g., 14"
                 value={formData.age}
                 onChange={(e) => setFormData(prev => ({ ...prev, age: e.target.value }))}
                 className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
@@ -170,6 +184,54 @@ export const IndividualLearnerModal = ({
               )}
             </div>
 
+            {/* Gender - NEW FIELD */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <Users size={16} className="text-gray-400" />
+                  Gender
+                </div>
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setFormData(prev => ({ ...prev, gender: 'male' }))}
+                  className={`
+                    px-4 py-2.5 border rounded-lg font-medium transition-all
+                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
+                    ${formData.gender === 'male'
+                      ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }
+                    ${errors.gender ? 'border-red-300' : ''}
+                  `}
+                  disabled={isLoading}
+                >
+                  Male
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData(prev => ({ ...prev, gender: 'female' }))}
+                  className={`
+                    px-4 py-2.5 border rounded-lg font-medium transition-all
+                    focus:outline-none focus:ring-2 focus:ring-pink-500 focus:ring-offset-2
+                    ${formData.gender === 'female'
+                      ? 'bg-pink-600 text-white border-pink-600 hover:bg-pink-700'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }
+                    ${errors.gender ? 'border-red-300' : ''}
+                  `}
+                  disabled={isLoading}
+                >
+                  Female
+                </button>
+              </div>
+              {errors.gender && (
+                <p className="mt-1 text-sm text-red-600">{errors.gender}</p>
+              )}
+            </div>
+
+            {/* Parent Phone */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <div className="flex items-center gap-2">
@@ -183,7 +245,7 @@ export const IndividualLearnerModal = ({
                 </span>
                 <input
                   type="tel"
-                  placeholder="123 456 789"
+                  placeholder="97 123 4567"
                   value={formData.parentPhone}
                   onChange={(e) => handlePhoneChange(e.target.value)}
                   className={`w-full pl-12 pr-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
@@ -196,16 +258,17 @@ export const IndividualLearnerModal = ({
                 <p className="mt-1 text-sm text-red-600">{errors.parentPhone}</p>
               )}
               <p className="mt-1 text-xs text-gray-500">
-                Enter 10 digits without spaces or country code
+                Enter 9 digits after +260 (e.g., 971234567)
               </p>
             </div>
 
+            {/* Form Actions */}
             <div className="pt-4">
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
+                  className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50 transition-colors"
                   disabled={isLoading}
                 >
                   Cancel
@@ -213,7 +276,7 @@ export const IndividualLearnerModal = ({
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 flex items-center justify-center"
+                  className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 flex items-center justify-center transition-colors"
                 >
                   {isLoading ? (
                     <>

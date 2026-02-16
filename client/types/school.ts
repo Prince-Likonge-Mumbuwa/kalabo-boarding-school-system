@@ -1,14 +1,17 @@
+// ==================== LEARNER TYPE WITH GENDER ====================
 export interface Learner {
   id: string;
   name: string;
   age: number;
+  gender?: 'male' | 'female';
   parentPhone: string;
   studentId: string;
-  classId: string; // CHANGED: from className to classId (to match service layer)
+  classId: string;
   enrollmentDate: Date;
   status: 'active' | 'transferred' | 'graduated' | 'archived';
+  
   // Optional fields for backward compatibility
-  className?: string; // KEEP: for backward compatibility
+  className?: string;
   graduationYear?: number;
   transferredAt?: Date;
   transferredBy?: string;
@@ -18,6 +21,16 @@ export interface Learner {
   updatedAt?: Date;
 }
 
+// ==================== LEARNER CSV IMPORT WITH GENDER ====================
+export interface CSVLearnerData {
+  name: string;
+  age: number;
+  gender: 'male' | 'female';
+  parentPhone: string;
+  classId?: string;
+}
+
+// ==================== TEACHER TYPE ====================
 export interface Teacher {
   id: string;
   name: string;
@@ -26,18 +39,21 @@ export interface Teacher {
   department: string;
   subjects: string[];
   assignedClasses: string[];
-  // Added from your service layer
+  
+  // Added from service layer
   isFormTeacher?: boolean;
   assignedClassId?: string;
   assignedClassName?: string;
   employmentDate?: Date;
   status?: 'active' | 'inactive' | 'on_leave';
+  
   // Existing
   createdBy?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
+// ==================== CLASS TYPE ====================
 export interface Class {
   id: string;
   name: string;
@@ -46,10 +62,21 @@ export interface Class {
   level: number;
   section: string;
   students: number;
-  teachers: string[]; // FIXED: Added this required field
+  teachers: string[];
+  
   // For backward compatibility
   formTeacherId?: string;
   formTeacherName?: string;
+  
+  // Gender statistics
+  genderStats?: {
+    boys: number;
+    girls: number;
+    unspecified: number;
+    boysPercentage: number;
+    girlsPercentage: number;
+  };
+  
   // Existing
   isActive: boolean;
   createdDate?: Date;
@@ -57,11 +84,11 @@ export interface Class {
   archived?: boolean;
   archivedAt?: Date;
   createdBy?: string;
-  createdAt?: Date; // FIXED: Changed from Date to optional Date (allows both Date and undefined)
+  createdAt?: Date;
   updatedAt?: Date;
 }
 
-// ==================== NEW: TEACHER ASSIGNMENT INTERFACE ====================
+// ==================== TEACHER ASSIGNMENT INTERFACE ====================
 export interface TeacherAssignment {
   id: string;
   teacherId: string;
@@ -70,31 +97,32 @@ export interface TeacherAssignment {
   classId: string;
   className: string;
   subject: string;
+  normalizedSubjectId?: string;
   isFormTeacher: boolean;
   assignedAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
-// For CSV imports (must match service layer field names)
+// ==================== CSV IMPORT INTERFACES ====================
 export interface CSVImportData {
   name: string;
   age: number;
+  gender?: 'male' | 'female';
   parentPhone: string;
-  classId?: string; // Added for consistency
-  className?: string; // Keep for backward compatibility
+  classId?: string;
+  className?: string;
 }
 
 export interface ClassCSVImportData {
   name: string;
   year: number;
-  // Optional - can be derived from name
   type?: 'grade' | 'form';
   level?: number;
   section?: string;
 }
 
-// Dashboard stats interfaces
+// ==================== DASHBOARD STATS ====================
 export interface DashboardStats {
   totalClasses: number;
   totalStudents: number;
@@ -102,12 +130,23 @@ export interface DashboardStats {
   totalTeachers: number;
   activeTeachers: number;
   teachersByDepartment: Record<string, number>;
+  
+  // Gender statistics
+  genderStats?: {
+    totalBoys: number;
+    totalGirls: number;
+    unspecified: number;
+    boysPercentage: number;
+    girlsPercentage: number;
+  };
+  
+  // Academic stats
   averagePassRate?: number;
   examsGraded?: number;
   totalExams?: number;
 }
 
-// User remains the same
+// ==================== USER TYPE ====================
 export interface User {
   id: string;
   email: string;
@@ -119,4 +158,86 @@ export interface User {
   profileImage?: string;
   schoolId?: string;
   isActive: boolean;
+}
+
+// ==================== RESULTS ANALYSIS TYPES ====================
+export interface GradeDistribution {
+  grade: number;
+  boys: number;
+  girls: number;
+  total: number;
+  percentage: number;
+  passStatus: 'distinction' | 'merit' | 'credit' | 'satisfactory' | 'fail';
+}
+
+export interface ClassPerformance {
+  classId: string;
+  className: string;
+  candidates: {
+    boys: number;
+    girls: number;
+    total: number;
+  };
+  sat: {
+    boys: number;
+    girls: number;
+    total: number;
+  };
+  gradeDistribution: GradeDistribution[];
+  performance: {
+    quality: {
+      boys: number;
+      girls: number;
+      total: number;
+      percentage: number;
+    };
+    quantity: {
+      boys: number;
+      girls: number;
+      total: number;
+      percentage: number;
+    };
+    fail: {
+      boys: number;
+      girls: number;
+      total: number;
+      percentage: number;
+    };
+  };
+  subjectPerformance?: Array<{
+    subject: string;
+    teacher: string;
+    quality: number;
+    quantity: number;
+    fail: number;
+  }>;
+}
+
+export interface SubjectPerformance {
+  subject: string;
+  teacher: string;
+  classCount: number;
+  studentCount: number;
+  averageGrade: number;
+  qualityRate: number;
+  quantityRate: number;
+  failRate: number;
+}
+
+// ==================== GENDER MIGRATION TYPES ====================
+export interface GenderUpdate {
+  learnerId: string;
+  learnerName: string;
+  className: string;
+  currentGender?: 'male' | 'female';
+  newGender: 'male' | 'female';
+}
+
+export interface GenderStats {
+  boys: number;
+  girls: number;
+  unspecified: number;
+  total: number;
+  boysPercentage: number;
+  girlsPercentage: number;
 }

@@ -1,4 +1,4 @@
-// @/services/schoolService.ts - ENHANCED WITH SUBJECT NORMALIZATION
+// @/services/schoolService.ts - ENHANCED WITH GENDER SUPPORT
 import {
   collection,
   query,
@@ -28,11 +28,16 @@ import {
   DashboardStats, 
   ClassCSVImportData, 
   CSVImportData,
-  TeacherAssignment
+  CSVLearnerData,
+  TeacherAssignment,
+  GenderStats,
+  GenderUpdate,
+  GradeDistribution,
+  ClassPerformance,
+  SubjectPerformance
 } from '@/types/school';
 
 // ==================== IMPORT NORMALIZATION UTILITY ====================
-// IMPORTANT: Use the same normalization function as resultsService
 import { normalizeSubjectName } from './resultsService';
 
 // ==================== HELPER FUNCTIONS ====================
@@ -57,7 +62,7 @@ const toDate = (timestamp: any): Date | undefined => {
  * Examples: "Grade 8A" → {type: 'grade', level: 8, section: 'A'}
  *           "Form 3B" → {type: 'form', level: 3, section: 'B'}
  */
-export const parseClassName = (name: string): { type: 'grade' | 'form'; level: number; section: string } => {
+const parseClassName = (name: string): { type: 'grade' | 'form'; level: number; section: string } => {
   const match = name.match(/(Grade|Form)\s*(\d+)([A-Za-z]*)/i);
   
   if (match) {
@@ -81,15 +86,34 @@ export const parseClassName = (name: string): { type: 'grade' | 'form'; level: n
 /**
  * Generate unique student ID
  */
-export const generateStudentId = (): string => {
+const generateStudentId = (): string => {
   const timestamp = Date.now().toString().slice(-6);
-  const random = Math.random().toString(36).substr(2, 3).toUpperCase();
+  const random = Math.random().toString(36).substring(2, 5).toUpperCase();
   return `STU${timestamp}${random}`;
+};
+
+/**
+ * Calculate gender statistics from learners array
+ */
+const calculateGenderStats = (learners: Learner[]): GenderStats => {
+  const boys = learners.filter(l => l.gender === 'male').length;
+  const girls = learners.filter(l => l.gender === 'female').length;
+  const unspecified = learners.filter(l => !l.gender).length;
+  const total = learners.length;
+  
+  return {
+    boys,
+    girls,
+    unspecified,
+    total,
+    boysPercentage: total > 0 ? Math.round((boys / total) * 100) : 0,
+    girlsPercentage: total > 0 ? Math.round((girls / total) * 100) : 0,
+  };
 };
 
 // ==================== CLASS SERVICE ====================
 
-export const classService = {
+const classService = {
   /**
    * Get all classes with optional filters
    */
@@ -102,7 +126,7 @@ export const classService = {
   }): Promise<Class[]> => {
     try {
       const classesRef = collection(db, 'classes');
-      let constraints: any[] = [];
+      const constraints: any[] = [];
 
       if (filters?.year !== undefined) {
         constraints.push(where('year', '==', filters.year));
@@ -110,8 +134,8 @@ export const classService = {
       if (filters?.type) {
         constraints.push(where('type', '==', filters.type));
       }
-      if (filters?.isActive === false) {
-        constraints.push(where('isActive', '==', false));
+      if (filters?.isActive !== undefined) {
+        constraints.push(where('isActive', '==', filters.isActive));
       }
       
       // Filter by teacherId if provided
@@ -127,8 +151,13 @@ export const classService = {
       }
 
       const snapshot = await getDocs(q);
-      const classes = snapshot.docs.map(doc => {
+      const classes = await Promise.all(snapshot.docs.map(async doc => {
         const data = doc.data() as DocumentData;
+        
+        // Get gender stats for this class
+        const learners = await learnerService.getLearnersByClass(doc.id);
+        const genderStats = calculateGenderStats(learners);
+        
         return {
           id: doc.id,
           name: data.name || '',
@@ -141,11 +170,12 @@ export const classService = {
           isActive: data.isActive !== false,
           formTeacherId: data.formTeacherId,
           formTeacherName: data.formTeacherName,
+          genderStats,
           createdDate: toDate(data.createdDate) || new Date(),
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
         } as Class;
-      });
+      }));
 
       // Apply search filter if provided
       if (filters?.searchTerm) {
@@ -176,6 +206,11 @@ export const classService = {
       }
       
       const data = classDoc.data() as DocumentData;
+      
+      // Get gender stats for this class
+      const learners = await learnerService.getLearnersByClass(classId);
+      const genderStats = calculateGenderStats(learners);
+      
       return {
         id: classDoc.id,
         name: data.name || '',
@@ -188,6 +223,7 @@ export const classService = {
         isActive: data.isActive !== false,
         formTeacherId: data.formTeacherId,
         formTeacherName: data.formTeacherName,
+        genderStats,
         createdDate: toDate(data.createdDate) || new Date(),
         createdAt: toDate(data.createdAt),
         updatedAt: toDate(data.updatedAt),
@@ -251,14 +287,15 @@ export const classService = {
   /**
    * Bulk import classes from CSV data
    */
-  bulkImportClasses: async (classesData: ClassCSVImportData[]): Promise<{ success: number; failed: number }> => {
+  bulkImportClasses: async (classesData: ClassCSVImportData[]): Promise<{ success: number; failed: number; errors: string[] }> => {
     const classesRef = collection(db, 'classes');
     const toImport: any[] = [];
     let success = 0;
     let failed = 0;
+    const errors: string[] = [];
     
     try {
-      for (const classData of classesData) {
+      for (const [index, classData] of classesData.entries()) {
         try {
           const parsed = parseClassName(classData.name);
           const year = classData.year || new Date().getFullYear();
@@ -274,7 +311,7 @@ export const classService = {
 
           const existing = await getDocs(q);
           if (!existing.empty) {
-            console.warn(`Duplicate: ${classData.name} already exists for year ${year}`);
+            errors.push(`Row ${index + 2}: Class ${classData.name} already exists for year ${year}`);
             failed++;
             continue;
           }
@@ -294,7 +331,7 @@ export const classService = {
           });
           success++;
         } catch (error) {
-          console.error('Error validating class for import:', classData, error);
+          errors.push(`Row ${index + 2}: ${error.message}`);
           failed++;
         }
       }
@@ -309,7 +346,7 @@ export const classService = {
         await batch.commit();
       }
       
-      return { success, failed };
+      return { success, failed, errors };
     } catch (error) {
       console.error('Error in bulk import:', error);
       throw error;
@@ -351,11 +388,15 @@ export const classService = {
   },
 
   /**
-   * Get dashboard statistics
+   * Get dashboard statistics with gender stats
    */
   getDashboardStats: async (): Promise<DashboardStats> => {
     try {
       const classes = await classService.getClasses({ isActive: true });
+      
+      // Get all learners for gender stats
+      const allLearners = await learnerService.getAllLearners();
+      const genderStats = calculateGenderStats(allLearners);
       
       // Query users collection for teachers
       const usersRef = collection(db, 'users');
@@ -398,6 +439,13 @@ export const classService = {
         totalTeachers,
         activeTeachers,
         teachersByDepartment,
+        genderStats: {
+          totalBoys: genderStats.boys,
+          totalGirls: genderStats.girls,
+          unspecified: genderStats.unspecified,
+          boysPercentage: genderStats.boysPercentage,
+          girlsPercentage: genderStats.girlsPercentage,
+        },
       };
     } catch (error) {
       console.error('Error getting dashboard stats:', error);
@@ -406,7 +454,7 @@ export const classService = {
   },
 
   /**
-   * NEW: Get teacher assignments by class with normalized subjects
+   * Get teacher assignments by class with normalized subjects
    */
   getTeacherAssignmentsByClass: async (classId: string): Promise<TeacherAssignment[]> => {
     try {
@@ -430,30 +478,39 @@ export const classService = {
           classId: data.classId,
           className: data.className || '',
           subject: subject,
-          normalizedSubjectId: normalizedSubject, // ADDED: Normalized subject ID
+          normalizedSubjectId: normalizedSubject,
           isFormTeacher: data.isFormTeacher || false,
           assignedAt: toDate(data.assignedAt),
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
-        } as TeacherAssignment & { normalizedSubjectId: string };
+        } as TeacherAssignment;
       });
       
       console.log(`📚 Found ${assignments.length} teacher assignments for class ${classId}`);
-      assignments.forEach(a => {
-        console.log(`   - ${a.subject} → Normalized: ${a.normalizedSubjectId} (Teacher: ${a.teacherName})`);
-      });
-      
       return assignments;
     } catch (error) {
       console.error('Error fetching teacher assignments by class:', error);
       return [];
     }
   },
+
+  /**
+   * Get gender statistics for a class
+   */
+  getClassGenderStats: async (classId: string): Promise<GenderStats> => {
+    try {
+      const learners = await learnerService.getLearnersByClass(classId);
+      return calculateGenderStats(learners);
+    } catch (error) {
+      console.error('Error getting class gender stats:', error);
+      return { boys: 0, girls: 0, unspecified: 0, total: 0, boysPercentage: 0, girlsPercentage: 0 };
+    }
+  },
 };
 
-// ==================== LEARNER SERVICE ====================
+// ==================== LEARNER SERVICE WITH GENDER SUPPORT ====================
 
-export const learnerService = {
+const learnerService = {
   /**
    * Get all learners for a specific class
    */
@@ -463,7 +520,8 @@ export const learnerService = {
       const q = query(
         learnersRef,
         where('classId', '==', classId),
-        where('status', '==', 'active')
+        where('status', '==', 'active'),
+        orderBy('name', 'asc')
       );
       
       const snapshot = await getDocs(q);
@@ -473,6 +531,7 @@ export const learnerService = {
           id: doc.id,
           name: data.name || '',
           age: data.age || 0,
+          gender: data.gender,
           parentPhone: data.parentPhone || '',
           studentId: data.studentId || '',
           classId: data.classId || '',
@@ -485,6 +544,42 @@ export const learnerService = {
       });
     } catch (error) {
       console.error('Error fetching learners:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get all learners across all classes (for admin)
+   */
+  getAllLearners: async (): Promise<Learner[]> => {
+    try {
+      const learnersRef = collection(db, 'learners');
+      const q = query(
+        learnersRef,
+        where('status', '==', 'active'),
+        orderBy('name', 'asc')
+      );
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => {
+        const data = doc.data() as DocumentData;
+        return {
+          id: doc.id,
+          name: data.name || '',
+          age: data.age || 0,
+          gender: data.gender,
+          parentPhone: data.parentPhone || '',
+          studentId: data.studentId || '',
+          classId: data.classId || '',
+          className: data.className || '',
+          status: data.status || 'active',
+          enrollmentDate: toDate(data.enrollmentDate) || new Date(),
+          createdAt: toDate(data.createdAt),
+          updatedAt: toDate(data.updatedAt),
+        } as Learner;
+      });
+    } catch (error) {
+      console.error('Error fetching all learners:', error);
       throw error;
     }
   },
@@ -509,28 +604,40 @@ export const learnerService = {
   },
 
   /**
-   * Add a single learner to a class
+   * Add a single learner to a class with gender
    */
   addLearner: async (data: {
     name: string;
     age: number;
+    gender: 'male' | 'female';
     parentPhone: string;
     classId: string;
   }): Promise<string> => {
     const batch = writeBatch(db);
     
     try {
+      // Validate gender
+      if (!data.gender) {
+        throw new Error('Gender is required');
+      }
+      
       // Generate unique student ID
       const studentId = generateStudentId();
+      
+      // Get class name
+      const classDoc = await getDoc(doc(db, 'classes', data.classId));
+      const className = classDoc.exists() ? classDoc.data().name : '';
       
       // Create learner document
       const learnerRef = doc(collection(db, 'learners'));
       batch.set(learnerRef, {
         name: data.name,
         age: data.age,
+        gender: data.gender,
         parentPhone: data.parentPhone,
         studentId,
         classId: data.classId,
+        className,
         status: 'active',
         enrollmentDate: serverTimestamp(),
         createdAt: serverTimestamp(),
@@ -545,6 +652,8 @@ export const learnerService = {
       });
       
       await batch.commit();
+      
+      console.log(`✅ Added learner ${data.name} (${data.gender}) to class ${className}`);
       return learnerRef.id;
     } catch (error) {
       console.error('Error adding learner:', error);
@@ -553,25 +662,51 @@ export const learnerService = {
   },
 
   /**
-   * Bulk import learners from CSV data
+   * Bulk import learners from CSV data with gender
    */
-  bulkImportLearners: async (classId: string, learnersData: CSVImportData[]): Promise<{ success: number; failed: number }> => {
+  bulkImportLearners: async (classId: string, learnersData: CSVLearnerData[]): Promise<{ success: number; failed: number; errors: string[] }> => {
     const batch = writeBatch(db);
     let success = 0;
     let failed = 0;
+    const errors: string[] = [];
     
     try {
-      for (const learner of learnersData) {
+      // Get class name
+      const classDoc = await getDoc(doc(db, 'classes', classId));
+      const className = classDoc.exists() ? classDoc.data().name : '';
+      
+      for (const [index, learner] of learnersData.entries()) {
         try {
-          const studentId = `STU${Date.now().toString().slice(-6)}${success.toString().padStart(3, '0')}`;
+          // Validate required fields including gender
+          if (!learner.name) {
+            throw new Error('Name is required');
+          }
+          if (!learner.age) {
+            throw new Error('Age is required');
+          }
+          if (!learner.gender) {
+            throw new Error('Gender is required (must be "male" or "female")');
+          }
+          if (!learner.parentPhone) {
+            throw new Error('Parent phone is required');
+          }
+          
+          // Validate gender value
+          if (learner.gender !== 'male' && learner.gender !== 'female') {
+            throw new Error(`Invalid gender "${learner.gender}". Must be "male" or "female"`);
+          }
+          
+          const studentId = generateStudentId();
           const learnerRef = doc(collection(db, 'learners'));
           
           batch.set(learnerRef, {
             name: learner.name,
-            age: parseInt(learner.age.toString()) || 0,
+            age: Number(learner.age),
+            gender: learner.gender,
             parentPhone: learner.parentPhone,
             studentId,
             classId,
+            className,
             status: 'active',
             enrollmentDate: serverTimestamp(),
             createdAt: serverTimestamp(),
@@ -579,8 +714,9 @@ export const learnerService = {
           });
           success++;
         } catch (error) {
-          console.error('Error processing learner:', learner, error);
+          console.error(`Error processing learner at row ${index + 2}:`, learner, error);
           failed++;
+          errors.push(`Row ${index + 2}: ${error.message}`);
         }
       }
       
@@ -594,7 +730,8 @@ export const learnerService = {
       }
       
       await batch.commit();
-      return { success, failed };
+      console.log(`✅ Bulk import completed: ${success} succeeded, ${failed} failed`);
+      return { success, failed, errors };
     } catch (error) {
       console.error('Error in bulk import:', error);
       throw error;
@@ -608,11 +745,16 @@ export const learnerService = {
     const batch = writeBatch(db);
     
     try {
+      // Get target class name
+      const toClassDoc = await getDoc(doc(db, 'classes', toClassId));
+      const toClassName = toClassDoc.exists() ? toClassDoc.data().name : '';
+      
       // Update learner document
       const learnerRef = doc(db, 'learners', learnerId);
       batch.update(learnerRef, {
         classId: toClassId,
-        status: 'transferred',
+        className: toClassName,
+        status: 'active',
         transferredAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -632,6 +774,7 @@ export const learnerService = {
       });
       
       await batch.commit();
+      console.log(`✅ Transferred learner ${learnerId} to class ${toClassName}`);
     } catch (error) {
       console.error('Error transferring learner:', error);
       throw error;
@@ -661,16 +804,108 @@ export const learnerService = {
       });
       
       await batch.commit();
+      console.log(`✅ Removed learner ${learnerId} from class ${classId}`);
     } catch (error) {
       console.error('Error removing learner:', error);
       throw error;
+    }
+  },
+
+  /**
+   * Update learner gender (for fixing existing records)
+   */
+  updateLearnerGender: async (learnerId: string, gender: 'male' | 'female'): Promise<void> => {
+    try {
+      const learnerRef = doc(db, 'learners', learnerId);
+      await updateDoc(learnerRef, {
+        gender,
+        updatedAt: serverTimestamp()
+      });
+      console.log(`✅ Updated gender for learner ${learnerId} to ${gender}`);
+    } catch (error) {
+      console.error('Error updating learner gender:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Bulk update genders (for migration)
+   */
+  bulkUpdateGenders: async (updates: GenderUpdate[]): Promise<void> => {
+    const batch = writeBatch(db);
+    
+    updates.forEach(({ learnerId, newGender }) => {
+      const learnerRef = doc(db, 'learners', learnerId);
+      batch.update(learnerRef, { 
+        gender: newGender, 
+        updatedAt: serverTimestamp() 
+      });
+    });
+    
+    await batch.commit();
+    console.log(`✅ Bulk updated ${updates.length} learner genders`);
+  },
+
+  /**
+   * Get gender statistics for a class
+   */
+  getGenderStats: async (classId: string): Promise<GenderStats> => {
+    try {
+      const learners = await learnerService.getLearnersByClass(classId);
+      return calculateGenderStats(learners);
+    } catch (error) {
+      console.error('Error getting gender stats:', error);
+      return { boys: 0, girls: 0, unspecified: 0, total: 0, boysPercentage: 0, girlsPercentage: 0 };
+    }
+  },
+
+  /**
+   * Get learners missing gender information
+   */
+  getLearnersMissingGender: async (classId?: string): Promise<Learner[]> => {
+    try {
+      let q;
+      const learnersRef = collection(db, 'learners');
+      
+      if (classId) {
+        q = query(
+          learnersRef,
+          where('classId', '==', classId),
+          where('gender', '==', null),
+          where('status', '==', 'active')
+        );
+      } else {
+        q = query(
+          learnersRef,
+          where('gender', '==', null),
+          where('status', '==', 'active')
+        );
+      }
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => {
+        const data = doc.data() as DocumentData;
+        return {
+          id: doc.id,
+          name: data.name || '',
+          age: data.age || 0,
+          parentPhone: data.parentPhone || '',
+          studentId: data.studentId || '',
+          classId: data.classId || '',
+          className: data.className || '',
+          status: data.status || 'active',
+        } as Learner;
+      });
+    } catch (error) {
+      console.error('Error fetching learners missing gender:', error);
+      return [];
     }
   },
 };
 
 // ==================== TEACHER SERVICE (WITH SUBJECT NORMALIZATION) ====================
 
-export const teacherService = {
+const teacherService = {
   /**
    * Get all teachers from users collection
    */
@@ -769,12 +1004,12 @@ export const teacherService = {
           classId: data.classId,
           className: data.className || '',
           subject: subject,
-          normalizedSubjectId: normalizedSubject, // ADDED: Normalized subject ID
+          normalizedSubjectId: normalizedSubject,
           isFormTeacher: data.isFormTeacher || false,
           assignedAt: toDate(data.assignedAt),
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
-        } as TeacherAssignment & { normalizedSubjectId: string };
+        } as TeacherAssignment;
       });
     } catch (error) {
       console.error('Error fetching teacher assignments:', error);
@@ -785,7 +1020,7 @@ export const teacherService = {
   /**
    * Get all teacher assignments across all classes
    */
-  getAllTeacherAssignments: async (): Promise<(TeacherAssignment & { normalizedSubjectId: string })[]> => {
+  getAllTeacherAssignments: async (): Promise<TeacherAssignment[]> => {
     try {
       const assignmentsRef = collection(db, 'teacher_assignments');
       const snapshot = await getDocs(assignmentsRef);
@@ -808,7 +1043,7 @@ export const teacherService = {
           assignedAt: toDate(data.assignedAt),
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
-        };
+        } as TeacherAssignment;
       });
     } catch (error) {
       console.error('Error fetching all teacher assignments:', error);
@@ -817,8 +1052,7 @@ export const teacherService = {
   },
 
   /**
-   * Get teacher assignments filtered by class (MOVED TO classService)
-   * Kept for backward compatibility
+   * Get teacher assignments filtered by class
    */
   getTeacherAssignmentsByClass: async (classId: string): Promise<TeacherAssignment[]> => {
     return classService.getTeacherAssignmentsByClass(classId);
@@ -826,7 +1060,6 @@ export const teacherService = {
 
   /**
    * Assign a teacher to a class with a specific subject
-   * ENHANCED: Normalizes subject before saving
    */
   assignTeacherToClass: async (
     teacherId: string, 
@@ -1052,5 +1285,249 @@ export const teacherService = {
   },
 };
 
-// ==================== EXPORT NORMALIZATION UTILITY ====================
-export { normalizeSubjectName };
+// ==================== RESULTS ANALYSIS SERVICE (NEW) ====================
+
+const resultsAnalysisService = {
+  /**
+   * Get grade distribution for a class with gender breakdown
+   */
+  getGradeDistribution: async (classId: string, examType: string = 'endOfTerm'): Promise<GradeDistribution[]> => {
+    try {
+      const resultsRef = collection(db, 'results');
+      const q = query(
+        resultsRef,
+        where('classId', '==', classId),
+        where('examType', '==', examType),
+        where('grade', '>', 0)
+      );
+      
+      const snapshot = await getDocs(q);
+      const results = snapshot.docs.map(doc => doc.data());
+      
+      const gradeMap = new Map<number, { boys: number; girls: number }>();
+      
+      // Initialize grades 1-9
+      for (let i = 1; i <= 9; i++) {
+        gradeMap.set(i, { boys: 0, girls: 0 });
+      }
+      
+      // Count by gender
+      results.forEach(result => {
+        const current = gradeMap.get(result.grade) || { boys: 0, girls: 0 };
+        if (result.studentGender === 'male') {
+          gradeMap.set(result.grade, { ...current, boys: current.boys + 1 });
+        } else {
+          gradeMap.set(result.grade, { ...current, girls: current.girls + 1 });
+        }
+      });
+      
+      const total = results.length;
+      
+      const distribution: GradeDistribution[] = Array.from(gradeMap.entries())
+        .map(([grade, counts]) => {
+          let passStatus: 'distinction' | 'merit' | 'credit' | 'satisfactory' | 'fail';
+          
+          if (grade <= 2) passStatus = 'distinction';
+          else if (grade <= 4) passStatus = 'merit';
+          else if (grade <= 6) passStatus = 'credit';
+          else if (grade <= 8) passStatus = 'satisfactory';
+          else passStatus = 'fail';
+          
+          return {
+            grade,
+            boys: counts.boys,
+            girls: counts.girls,
+            total: counts.boys + counts.girls,
+            percentage: total > 0 ? Math.round(((counts.boys + counts.girls) / total) * 100) : 0,
+            passStatus
+          };
+        })
+        .filter(g => g.total > 0);
+      
+      return distribution;
+    } catch (error) {
+      console.error('Error getting grade distribution:', error);
+      return [];
+    }
+  },
+
+  /**
+   * Get class performance with gender breakdown
+   */
+  getClassPerformance: async (classId: string, term: string, year: number): Promise<ClassPerformance | null> => {
+    try {
+      const resultsRef = collection(db, 'results');
+      const q = query(
+        resultsRef,
+        where('classId', '==', classId),
+        where('term', '==', term),
+        where('year', '==', year),
+        where('examType', '==', 'endOfTerm')
+      );
+      
+      const snapshot = await getDocs(q);
+      const results = snapshot.docs.map(doc => doc.data());
+      
+      if (results.length === 0) return null;
+      
+      // Get learners for this class to know total candidates
+      const learners = await learnerService.getLearnersByClass(classId);
+      const candidates = {
+        boys: learners.filter(l => l.gender === 'male').length,
+        girls: learners.filter(l => l.gender === 'female').length,
+        total: learners.length
+      };
+      
+      // SAT counts
+      const sat = {
+        boys: results.filter(r => r.studentGender === 'male').length,
+        girls: results.filter(r => r.studentGender === 'female').length,
+        total: results.length
+      };
+      
+      // Get grade distribution
+      const gradeDistribution = await resultsAnalysisService.getGradeDistribution(classId, 'endOfTerm');
+      
+      // Calculate performance metrics
+      const qualityResults = results.filter(r => r.grade <= 6);
+      const quantityResults = results.filter(r => r.grade <= 8);
+      const failResults = results.filter(r => r.grade === 9);
+      
+      const performance = {
+        quality: {
+          boys: qualityResults.filter(r => r.studentGender === 'male').length,
+          girls: qualityResults.filter(r => r.studentGender === 'female').length,
+          total: qualityResults.length,
+          percentage: results.length > 0 ? Math.round((qualityResults.length / results.length) * 100) : 0
+        },
+        quantity: {
+          boys: quantityResults.filter(r => r.studentGender === 'male').length,
+          girls: quantityResults.filter(r => r.studentGender === 'female').length,
+          total: quantityResults.length,
+          percentage: results.length > 0 ? Math.round((quantityResults.length / results.length) * 100) : 0
+        },
+        fail: {
+          boys: failResults.filter(r => r.studentGender === 'male').length,
+          girls: failResults.filter(r => r.studentGender === 'female').length,
+          total: failResults.length,
+          percentage: results.length > 0 ? Math.round((failResults.length / results.length) * 100) : 0
+        }
+      };
+      
+      // Get subject performance
+      const subjectMap = new Map<string, { teacher: string; grades: number[] }>();
+      results.forEach(r => {
+        if (!subjectMap.has(r.subject)) {
+          subjectMap.set(r.subject, { teacher: r.teacherName || 'Unknown', grades: [] });
+        }
+        subjectMap.get(r.subject)!.grades.push(r.grade);
+      });
+      
+      const subjectPerformance = Array.from(subjectMap.entries()).map(([subject, data]) => {
+        const total = data.grades.length;
+        const quality = data.grades.filter(g => g <= 6).length;
+        const quantity = data.grades.filter(g => g <= 8).length;
+        const fail = data.grades.filter(g => g === 9).length;
+        
+        return {
+          subject,
+          teacher: data.teacher,
+          quality: Math.round((quality / total) * 100),
+          quantity: Math.round((quantity / total) * 100),
+          fail: Math.round((fail / total) * 100)
+        };
+      });
+      
+      const classDoc = await getDoc(doc(db, 'classes', classId));
+      const className = classDoc.exists() ? classDoc.data().name : classId;
+      
+      return {
+        classId,
+        className,
+        candidates,
+        sat,
+        gradeDistribution,
+        performance,
+        subjectPerformance
+      };
+    } catch (error) {
+      console.error('Error getting class performance:', error);
+      return null;
+    }
+  },
+
+  /**
+   * Get subject performance across school
+   */
+  getSubjectPerformance: async (term: string, year: number): Promise<SubjectPerformance[]> => {
+    try {
+      const resultsRef = collection(db, 'results');
+      const q = query(
+        resultsRef,
+        where('term', '==', term),
+        where('year', '==', year),
+        where('examType', '==', 'endOfTerm')
+      );
+      
+      const snapshot = await getDocs(q);
+      const results = snapshot.docs.map(doc => doc.data());
+      
+      const subjectMap = new Map<string, {
+        teacher: string;
+        classes: Set<string>;
+        students: Set<string>;
+        grades: number[];
+      }>();
+      
+      results.forEach(result => {
+        if (!subjectMap.has(result.subject)) {
+          subjectMap.set(result.subject, {
+            teacher: result.teacherName || 'Unknown',
+            classes: new Set(),
+            students: new Set(),
+            grades: []
+          });
+        }
+        const data = subjectMap.get(result.subject)!;
+        data.classes.add(result.classId);
+        data.students.add(result.studentId);
+        data.grades.push(result.grade);
+      });
+      
+      return Array.from(subjectMap.entries()).map(([subject, data]) => {
+        const total = data.grades.length;
+        const quality = data.grades.filter(g => g <= 6).length;
+        const quantity = data.grades.filter(g => g <= 8).length;
+        const fail = data.grades.filter(g => g === 9).length;
+        const averageGrade = data.grades.reduce((sum, g) => sum + g, 0) / total;
+        
+        return {
+          subject,
+          teacher: data.teacher,
+          classCount: data.classes.size,
+          studentCount: data.students.size,
+          averageGrade: Math.round(averageGrade * 10) / 10,
+          qualityRate: Math.round((quality / total) * 100),
+          quantityRate: Math.round((quantity / total) * 100),
+          failRate: Math.round((fail / total) * 100)
+        };
+      }).sort((a, b) => a.failRate - b.failRate);
+    } catch (error) {
+      console.error('Error getting subject performance:', error);
+      return [];
+    }
+  }
+};
+
+// ==================== EXPORT ALL SERVICES ====================
+export {
+  classService,
+  learnerService,
+  teacherService,
+  resultsAnalysisService,
+  normalizeSubjectName,
+  parseClassName,
+  generateStudentId,
+  calculateGenderStats,
+  toDate,
+};
