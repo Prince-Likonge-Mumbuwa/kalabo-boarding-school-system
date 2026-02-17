@@ -1,4 +1,4 @@
-// @/pages/admin/ReportCards.tsx - Complete Updated Version
+// @/pages/admin/ReportCards.tsx - OPTIMIZED VERSION
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -7,6 +7,7 @@ import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useAuth } from '@/hooks/useAuth';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import {
   Download,
   Mail,
@@ -26,6 +27,8 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Filter,
+  ChevronDown
 } from 'lucide-react';
 
 // ==================== TYPES ====================
@@ -144,7 +147,7 @@ const ProgressBar = ({
   );
 };
 
-// ==================== SUBJECT PROGRESS ROW ====================
+// ==================== SUBJECT PROGRESS ROW (for modal only) ====================
 const SubjectProgressRow = ({ subject }: { subject: SubjectProgress }) => {
   const getExamStatusColor = (status: string) => {
     switch(status) {
@@ -199,29 +202,25 @@ const SubjectProgressRow = ({ subject }: { subject: SubjectProgress }) => {
 
 // ==================== CARD SKELETON ====================
 const CardSkeleton = () => (
-  <div className="bg-white rounded-xl border border-gray-200 p-5 animate-pulse">
-    <div className="flex items-start justify-between mb-4">
-      <div className="flex items-center gap-3">
-        <div className="w-12 h-12 bg-gray-200 rounded-full"></div>
-        <div className="space-y-2">
-          <div className="h-4 bg-gray-200 rounded w-32"></div>
-          <div className="h-3 bg-gray-100 rounded w-24"></div>
+  <div className="bg-white rounded-xl border border-gray-200 p-4 animate-pulse">
+    <div className="flex items-start justify-between mb-3">
+      <div className="flex items-center gap-2">
+        <div className="w-10 h-10 bg-gray-200 rounded-full"></div>
+        <div className="space-y-1.5">
+          <div className="h-3 bg-gray-200 rounded w-24"></div>
+          <div className="h-2 bg-gray-100 rounded w-16"></div>
         </div>
       </div>
-      <div className="w-10 h-10 bg-gray-200 rounded-lg"></div>
+      <div className="w-8 h-8 bg-gray-200 rounded-lg"></div>
     </div>
-    <div className="space-y-4">
-      <div className="h-4 bg-gray-200 rounded w-full"></div>
-      <div className="h-2 bg-gray-200 rounded w-full"></div>
-      <div className="space-y-2">
-        <div className="h-3 bg-gray-100 rounded w-3/4"></div>
-        <div className="h-3 bg-gray-100 rounded w-2/3"></div>
-      </div>
+    <div className="space-y-3">
+      <div className="h-3 bg-gray-200 rounded w-full"></div>
+      <div className="h-1.5 bg-gray-200 rounded w-full"></div>
     </div>
   </div>
 );
 
-// ==================== STUDENT CARD COMPONENT ====================
+// ==================== STUDENT CARD COMPONENT - SIMPLIFIED ====================
 interface StudentCardProps {
   student: StudentProgress;
   onViewDetails: (studentId: string) => void;
@@ -229,104 +228,67 @@ interface StudentCardProps {
 
 const StudentCard = ({ student, onViewDetails }: StudentCardProps) => {
   const gradeInfo = getGradeInfo(student.overallGrade);
-  
-  // Get top 3 subjects for display
-  const topSubjects = useMemo(() => {
-    return [...student.subjects]
-      .sort((a, b) => b.subjectProgress - a.subjectProgress)
-      .slice(0, 3);
-  }, [student.subjects]);
+  const isMobile = useMediaQuery('(max-width: 640px)');
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-lg transition-all duration-300 hover:border-gray-300 hover:-translate-y-0.5">
+    <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg transition-all duration-300 hover:border-gray-300 hover:-translate-y-0.5 h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-12 h-12 bg-gradient-to-br from-blue-50 to-indigo-100 rounded-full flex items-center justify-center flex-shrink-0">
-            <GraduationCap size={20} className="text-blue-600" />
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <div className="w-10 h-10 bg-gradient-to-br from-blue-50 to-indigo-100 rounded-full flex items-center justify-center flex-shrink-0">
+            <GraduationCap size={isMobile ? 16 : 18} className="text-blue-600" />
           </div>
-          <div className="min-w-0">
-            <h3 className="font-bold text-gray-900 truncate">{student.studentName}</h3>
+          <div className="min-w-0 flex-1">
+            <h3 className="font-semibold text-gray-900 text-sm sm:text-base truncate">{student.studentName}</h3>
             <p className="text-xs text-gray-500 truncate">{student.studentId}</p>
           </div>
         </div>
-        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold ${gradeInfo.color}`}>
+        <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm ${gradeInfo.color} flex-shrink-0`}>
           {student.overallGrade > 0 ? getGradeDisplay(student.overallGrade) : '—'}
         </div>
       </div>
       
-      {/* Class and Status */}
-      <div className="flex items-center justify-between mb-4">
+      {/* Class and Quick Stats - 2 columns */}
+      <div className="grid grid-cols-2 gap-2 mb-3">
         <div>
-          <p className="text-xs text-gray-500">Class</p>
-          <p className="font-medium text-gray-900 text-sm">{student.className}</p>
+          <p className="text-[10px] text-gray-500">Class</p>
+          <p className="font-medium text-gray-900 text-xs truncate">{student.className}</p>
         </div>
         <div className="text-right">
-          <p className="text-xs text-gray-500">Overall</p>
-          <p className="font-bold text-blue-600">
+          <p className="text-[10px] text-gray-500">Overall</p>
+          <p className="font-bold text-blue-600 text-xs sm:text-sm">
             {student.overallPercentage > 0 ? `${student.overallPercentage}%` : '—'}
           </p>
         </div>
       </div>
       
-      {/* Overall Progress Bar */}
-      <div className="mb-4">
-        <ProgressBar progress={student.completionPercentage} size="md" />
+      {/* SINGLE Overall Progress Bar - SIMPLIFIED */}
+      <div className="mb-3">
+        <div className="flex items-center justify-between text-[10px] mb-1">
+          <span className="text-gray-600">Report Readiness</span>
+          <span className="font-medium text-gray-900">{student.completionPercentage}%</span>
+        </div>
+        <ProgressBar progress={student.completionPercentage} size="sm" showLabel={false} />
       </div>
       
-      {/* Status Badge */}
-      <div className="mb-4">
+      {/* Status Badge and Missing Subjects - Combined row */}
+      <div className="flex items-center justify-between mb-3">
         <StatusBadge status={student.status} />
-      </div>
-      
-      {/* Subject Progress - Top 3 */}
-      <div className="space-y-4 mb-4">
-        <p className="text-xs font-medium text-gray-600 flex items-center gap-1">
-          <BookOpen size={14} />
-          Subject Progress
-        </p>
-        {topSubjects.map((subject, idx) => (
-          <div key={idx} className="space-y-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-gray-700 truncate max-w-[150px]">{subject.subjectName}</span>
-              <span className="font-medium text-gray-900">{subject.subjectProgress}%</span>
-            </div>
-            <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
-              <div 
-                className={`h-full ${
-                  subject.subjectProgress === 100 ? 'bg-green-500' :
-                  subject.subjectProgress >= 66 ? 'bg-blue-500' :
-                  subject.subjectProgress >= 33 ? 'bg-yellow-500' : 'bg-red-500'
-                }`}
-                style={{ width: `${subject.subjectProgress}%` }}
-              />
-            </div>
+        {student.missingSubjects > 0 && (
+          <div className="flex items-center gap-1 text-yellow-700 bg-yellow-50 px-2 py-0.5 rounded-full">
+            <AlertTriangle size={10} />
+            <span className="text-[10px] font-medium">{student.missingSubjects} missing</span>
           </div>
-        ))}
-        {student.subjects.length > 3 && (
-          <p className="text-xs text-gray-500 mt-1">
-            +{student.subjects.length - 3} more subjects
-          </p>
         )}
       </div>
       
-      {/* Missing Subjects Indicator */}
-      {student.missingSubjects > 0 && (
-        <div className="mb-4 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2">
-          <AlertTriangle size={14} className="text-yellow-600" />
-          <span className="text-xs text-yellow-700">
-            {student.missingSubjects} subject{student.missingSubjects > 1 ? 's' : ''} incomplete
-          </span>
-        </div>
-      )}
-      
-      {/* Action Button */}
+      {/* Action Button - Compact */}
       <button
         onClick={() => onViewDetails(student.studentId)}
-        className="w-full py-2.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+        className="w-full py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors flex items-center justify-center gap-1.5 text-xs font-medium mt-auto"
       >
-        <Eye size={16} />
-        View Details
+        <Eye size={14} />
+        <span>View Report</span>
       </button>
     </div>
   );
@@ -339,7 +301,7 @@ interface ReportDetailModalProps {
   student: StudentProgress | null;
   term: string;
   year: number;
-  totalLearners?: number; // Total learners in class for position
+  totalLearners?: number;
 }
 
 const ReportDetailModal = ({ 
@@ -353,10 +315,21 @@ const ReportDetailModal = ({
   const { generateReportCard } = useResults();
   const [fullReport, setFullReport] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isMobile = useMediaQuery('(max-width: 640px)');
 
   useEffect(() => {
     if (isOpen && student) {
       setLoading(true);
+      setError(null);
+      
+      console.log('📝 Generating report for student:', {
+        studentId: student.studentId,
+        studentName: student.studentName,
+        term,
+        year
+      });
+      
       generateReportCard({
         studentId: student.studentId,
         term: term,
@@ -367,10 +340,19 @@ const ReportDetailModal = ({
         }
       })
         .then(report => {
-          setFullReport(report);
+          if (report) {
+            console.log('✅ Report generated successfully:', report);
+            setFullReport(report);
+          } else {
+            console.warn('⚠️ No report data generated');
+            setError('No results found for this student in the selected term.');
+            setFullReport(null);
+          }
         })
         .catch(error => {
-          console.error('Error generating report:', error);
+          console.error('❌ Error generating report:', error);
+          setError('Failed to generate report. Please try again.');
+          setFullReport(null);
         })
         .finally(() => {
           setLoading(false);
@@ -380,19 +362,17 @@ const ReportDetailModal = ({
 
   if (!isOpen || !student) return null;
 
-  // Format position text (e.g., "5 out of 30")
   const positionText = fullReport?.position 
     ? `${fullReport.position} out of ${totalLearners || '—'}`
     : '—';
 
-  // Determine gender from student ID (assuming pattern: B for boys, G for girls)
   const gender = student.studentId?.startsWith('B') ? 'Male' : 
                  student.studentId?.startsWith('G') ? 'Female' : '—';
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="flex min-h-full items-center justify-center p-4">
+      <div className="flex min-h-full items-center justify-center p-2 sm:p-4">
         <div className="relative bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
           
           {/* Loading State */}
@@ -400,63 +380,77 @@ const ReportDetailModal = ({
             <div className="flex items-center justify-center py-12">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             </div>
+          ) : error ? (
+            <div className="p-6 sm:p-8 text-center">
+              <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 bg-red-100 rounded-full mb-4">
+                <AlertTriangle size={isMobile ? 20 : 24} className="text-red-600" />
+              </div>
+              <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-2">Error</h3>
+              <p className="text-sm text-gray-600 mb-4">{error}</p>
+              <button
+                onClick={onClose}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+              >
+                Close
+              </button>
+            </div>
           ) : (
             <>
-              {/* 1. CENTERED HEADING */}
-              <div className="text-center py-6 border-b border-gray-200 bg-gradient-to-b from-gray-50 to-white">
-                <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+              {/* Header - Compact on mobile */}
+              <div className="text-center py-4 sm:py-6 px-4 border-b border-gray-200 bg-gradient-to-b from-gray-50 to-white">
+                <h1 className="text-lg sm:text-2xl font-bold text-gray-900 tracking-tight">
                   MINISTRY OF EDUCATION
                 </h1>
-                <h2 className="text-xl font-semibold text-gray-800 mt-1">
+                <h2 className="text-base sm:text-xl font-semibold text-gray-800 mt-1">
                   KALABO BOARDING SECONDARY SCHOOL
                 </h2>
-                <h3 className="text-lg font-medium text-blue-600 mt-2 uppercase tracking-wider">
+                <h3 className="text-sm sm:text-lg font-medium text-blue-600 mt-2 uppercase tracking-wider">
                   LEARNER REPORT CARD
                 </h3>
               </div>
 
-              {/* 2. STUDENT INFO DIV */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 p-6 bg-gray-50 border-b border-gray-200">
-                <div>
-                  <p className="text-xs text-gray-500 uppercase tracking-wider">Name</p>
-                  <p className="font-semibold text-gray-900">{student.studentName}</p>
+              {/* Student Info - Responsive grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 p-4 sm:p-6 bg-gray-50 border-b border-gray-200">
+                <div className="col-span-2 sm:col-span-1">
+                  <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider">Name</p>
+                  <p className="font-semibold text-gray-900 text-xs sm:text-sm truncate">{student.studentName}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500 uppercase tracking-wider">Class</p>
-                  <p className="font-semibold text-gray-900">{student.className}</p>
+                  <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider">Class</p>
+                  <p className="font-semibold text-gray-900 text-xs sm:text-sm">{student.className}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500 uppercase tracking-wider">Position</p>
-                  <p className="font-semibold text-blue-600">{positionText}</p>
+                  <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider">Position</p>
+                  <p className="font-semibold text-blue-600 text-xs sm:text-sm truncate">{positionText}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500 uppercase tracking-wider">Gender</p>
-                  <p className="font-semibold text-gray-900">{gender}</p>
+                  <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider">Gender</p>
+                  <p className="font-semibold text-gray-900 text-xs sm:text-sm">{gender}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-gray-500 uppercase tracking-wider">Term/Year</p>
-                  <p className="font-semibold text-gray-900">{term} {year}</p>
+                <div className="col-span-2 sm:col-span-1">
+                  <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider">Term/Year</p>
+                  <p className="font-semibold text-gray-900 text-xs sm:text-sm">{term} {year}</p>
                 </div>
               </div>
 
-              {/* 3. SUBJECTS TABLE */}
-              <div className="p-6 overflow-x-auto">
-                <table className="w-full border-collapse">
+              {/* Subjects Table - Horizontal scroll on mobile */}
+              <div className="p-4 sm:p-6 overflow-x-auto">
+                <table className="w-full border-collapse min-w-[600px] sm:min-w-full">
                   <thead>
                     <tr className="bg-gray-100">
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 border border-gray-300">
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-left text-xs font-semibold text-gray-700 border border-gray-300">
                         Subject
                       </th>
-                      <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700 border border-gray-300">
-                        Week 4
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs font-semibold text-gray-700 border border-gray-300">
+                        W4
                       </th>
-                      <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700 border border-gray-300">
-                        Week 8
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs font-semibold text-gray-700 border border-gray-300">
+                        W8
                       </th>
-                      <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700 border border-gray-300">
-                        End of Term
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs font-semibold text-gray-700 border border-gray-300">
+                        EOT
                       </th>
-                      <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700 border border-gray-300 bg-blue-50">
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs font-semibold text-gray-700 border border-gray-300 bg-blue-50">
                         Grade
                       </th>
                     </tr>
@@ -464,10 +458,10 @@ const ReportDetailModal = ({
                   <tbody>
                     {student.subjects.map((subject, index) => (
                       <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm font-medium text-gray-900 border border-gray-300">
-                          {subject.subjectName}
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-xs font-medium text-gray-900 border border-gray-300">
+                          <div className="truncate max-w-[120px] sm:max-w-none">{subject.subjectName}</div>
                         </td>
-                        <td className="px-4 py-3 text-center text-sm border border-gray-300">
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs border border-gray-300">
                           {subject.week4.marks ? (
                             <span className="font-medium text-gray-900">{subject.week4.marks}%</span>
                           ) : (
@@ -475,11 +469,8 @@ const ReportDetailModal = ({
                               {subject.week4.status === 'absent' ? 'ABS' : '—'}
                             </span>
                           )}
-                          {subject.week4.status !== 'complete' && subject.week4.status !== 'absent' && (
-                            <span className="ml-1 text-xs text-red-500">(M)</span>
-                          )}
                         </td>
-                        <td className="px-4 py-3 text-center text-sm border border-gray-300">
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs border border-gray-300">
                           {subject.week8.marks ? (
                             <span className="font-medium text-gray-900">{subject.week8.marks}%</span>
                           ) : (
@@ -487,11 +478,8 @@ const ReportDetailModal = ({
                               {subject.week8.status === 'absent' ? 'ABS' : '—'}
                             </span>
                           )}
-                          {subject.week8.status !== 'complete' && subject.week8.status !== 'absent' && (
-                            <span className="ml-1 text-xs text-red-500">(M)</span>
-                          )}
                         </td>
-                        <td className="px-4 py-3 text-center text-sm border border-gray-300">
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs border border-gray-300">
                           {subject.endOfTerm.marks ? (
                             <span className="font-medium text-gray-900">{subject.endOfTerm.marks}%</span>
                           ) : (
@@ -499,13 +487,10 @@ const ReportDetailModal = ({
                               {subject.endOfTerm.status === 'absent' ? 'ABS' : '—'}
                             </span>
                           )}
-                          {subject.endOfTerm.status !== 'complete' && subject.endOfTerm.status !== 'absent' && (
-                            <span className="ml-1 text-xs text-red-500">(M)</span>
-                          )}
                         </td>
-                        <td className="px-4 py-3 text-center border border-gray-300 bg-blue-50">
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-center border border-gray-300 bg-blue-50">
                           {subject.grade ? (
-                            <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-white font-bold ${
+                            <span className={`inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-full text-white font-bold text-xs ${
                               subject.grade <= 2 ? 'bg-green-600' :
                               subject.grade <= 4 ? 'bg-blue-600' :
                               subject.grade <= 6 ? 'bg-cyan-600' :
@@ -524,41 +509,41 @@ const ReportDetailModal = ({
                   {/* Summary Row */}
                   <tfoot>
                     <tr className="bg-gray-50">
-                      <td className="px-4 py-3 text-sm font-semibold text-gray-700 border border-gray-300" colSpan={4}>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 text-xs font-semibold text-gray-700 border border-gray-300" colSpan={4}>
                         Overall Average
                       </td>
-                      <td className="px-4 py-3 text-center font-bold text-blue-600 border border-gray-300">
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 text-center font-bold text-blue-600 text-xs sm:text-sm border border-gray-300">
                         {student.overallPercentage > 0 ? `${student.overallPercentage}%` : '—'}
                       </td>
                     </tr>
                   </tfoot>
                 </table>
 
-                {/* Status Indicators Legend */}
-                <div className="mt-4 flex items-center gap-4 text-xs text-gray-500">
+                {/* Legend */}
+                <div className="mt-4 flex flex-wrap items-center gap-3 text-[10px] sm:text-xs text-gray-500">
                   <span className="flex items-center gap-1">
-                    <span className="w-3 h-3 bg-red-500 rounded-full"></span>
+                    <span className="w-2 h-2 bg-red-500 rounded-full"></span>
                     <span>M = Missing</span>
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-3 h-3 bg-gray-500 rounded-full"></span>
+                    <span className="w-2 h-2 bg-gray-500 rounded-full"></span>
                     <span>ABS = Absent</span>
                   </span>
                 </div>
               </div>
 
-              {/* Teacher's Comment Section (Optional) */}
+              {/* Teacher's Comment */}
               {fullReport?.teachersComment && (
-                <div className="px-6 pb-6">
-                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Teacher's Comment</p>
-                    <p className="text-sm text-gray-800 italic">"{fullReport.teachersComment}"</p>
+                <div className="px-4 sm:px-6 pb-4 sm:pb-6">
+                  <div className="bg-gray-50 p-3 sm:p-4 rounded-lg border border-gray-200">
+                    <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider mb-1">Teacher's Comment</p>
+                    <p className="text-xs sm:text-sm text-gray-800 italic">"{fullReport.teachersComment}"</p>
                   </div>
                 </div>
               )}
 
-              {/* Footer with generation date */}
-              <div className="px-6 py-4 border-t border-gray-200 text-xs text-gray-400 text-right">
+              {/* Footer */}
+              <div className="px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-200 text-[10px] sm:text-xs text-gray-400 text-right">
                 Generated: {new Date().toLocaleDateString('en-GB', {
                   day: '2-digit',
                   month: '2-digit',
@@ -575,9 +560,146 @@ const ReportDetailModal = ({
   );
 };
 
+// ==================== FILTER BAR COMPONENT ====================
+const FilterBar = ({
+  selectedClass,
+  setSelectedClass,
+  classOptions,
+  searchTerm,
+  setSearchTerm,
+  selectedTerm,
+  setSelectedTerm,
+  selectedYear,
+  setSelectedYear,
+  terms,
+  years,
+  summary,
+  isTeacher,
+  isMobile
+}: {
+  selectedClass: string;
+  setSelectedClass: (value: string) => void;
+  classOptions: { id: string; name: string }[];
+  searchTerm: string;
+  setSearchTerm: (value: string) => void;
+  selectedTerm: string;
+  setSelectedTerm: (value: string) => void;
+  selectedYear: number;
+  setSelectedYear: (value: number) => void;
+  terms: string[];
+  years: number[];
+  summary: StudentProgressSummary | null;
+  isTeacher: boolean;
+  isMobile: boolean;
+}) => {
+  const [showFilters, setShowFilters] = useState(false);
+
+  return (
+    <div className="mb-4 sm:mb-6 bg-white rounded-xl border border-gray-200 overflow-hidden">
+      {/* Mobile Filter Toggle */}
+      {isMobile && (
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className="w-full flex items-center justify-between p-3 bg-white"
+        >
+          <div className="flex items-center gap-2">
+            <Filter size={16} className="text-gray-400" />
+            <span className="font-medium text-sm text-gray-700">
+              {selectedClass ? 'Filters active' : 'Filter students'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {selectedClass && (
+              <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+            )}
+            <ChevronDown 
+              size={16} 
+              className={`text-gray-500 transition-transform ${showFilters ? 'rotate-180' : ''}`} 
+            />
+          </div>
+        </button>
+      )}
+
+      {/* Filter Content */}
+      <div className={`p-3 sm:p-4 ${isMobile && !showFilters ? 'hidden' : 'block'}`}>
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+          {/* Class selector */}
+          <select
+            value={selectedClass}
+            onChange={e => setSelectedClass(e.target.value)}
+            className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+            disabled={isTeacher}
+          >
+            {classOptions.map(cls => (
+              <option key={cls.id} value={cls.id}>{cls.name}</option>
+            ))}
+          </select>
+          
+          {/* Search */}
+          <div className="flex-1 relative">
+            <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search students..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+            />
+          </div>
+          
+          {/* Term selector */}
+          <select
+            value={selectedTerm}
+            onChange={e => setSelectedTerm(e.target.value)}
+            className="w-full sm:w-28 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+          >
+            {terms.map(term => (
+              <option key={term} value={term}>{term}</option>
+            ))}
+          </select>
+          
+          {/* Year selector */}
+          <select
+            value={selectedYear}
+            onChange={e => setSelectedYear(Number(e.target.value))}
+            className="w-full sm:w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+          >
+            {years.map(year => (
+              <option key={year} value={year}>{year}</option>
+            ))}
+          </select>
+        </div>
+        
+        {/* Summary stats - Scrollable on mobile */}
+        {summary && summary.total > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-100 flex flex-nowrap sm:flex-wrap gap-3 sm:gap-4 text-xs overflow-x-auto pb-1">
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <span className="text-gray-600">Total:</span>
+              <span className="font-medium text-gray-900">{summary.total}</span>
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <span className="text-green-600">Complete:</span>
+              <span className="font-medium text-gray-900">{summary.complete}</span>
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <span className="text-yellow-600">Progress:</span>
+              <span className="font-medium text-gray-900">{summary.incomplete}</span>
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <span className="text-blue-600">Avg:</span>
+              <span className="font-medium text-gray-900">{summary.averageCompletion}%</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ==================== MAIN COMPONENT ====================
 export default function ReportCards() {
   const { user } = useAuth();
+  const isMobile = useMediaQuery('(max-width: 640px)');
   const { classes, isLoading: loadingClasses } = useSchoolClasses();
   const { learners, isLoading: loadingLearners } = useSchoolLearners();
   const { assignments, isLoading: loadingAssignments } = useTeacherAssignments(user?.id || '');
@@ -589,7 +711,6 @@ export default function ReportCards() {
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   
-  // Use the student progress hook - FIXED: No 'data' property, returns students and summary directly
   const {
     students = [],
     summary,
@@ -604,25 +725,19 @@ export default function ReportCards() {
     year: selectedYear,
   });
 
-  // Log the data for debugging
   useEffect(() => {
-    console.log('Student Progress Students:', students);
-    console.log('Student Progress Summary:', summary);
     if (isError) {
       console.error('Error fetching student progress:', error);
     }
-  }, [students, summary, isError, error]);
+  }, [isError, error]);
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
-  // Automatically select class for teachers
+  // Auto-select class for teachers
   useEffect(() => {
     if (user?.userType === 'teacher' && classes.length > 0 && !selectedClass) {
-      // Get teacher's assigned classes
       if (assignments && assignments.length > 0) {
-        // Get unique class IDs from assignments
         const teacherClassIds = [...new Set(assignments.map(a => a.classId))];
-        // Find the first class that matches
         const teacherClass = classes.find(cls => teacherClassIds.includes(cls.id));
         if (teacherClass) {
           setSelectedClass(teacherClass.id);
@@ -631,11 +746,9 @@ export default function ReportCards() {
     }
   }, [classes, user, assignments, selectedClass]);
 
-  // Transform the data from the hook into our expected format
+  // Transform data
   const transformedStudents = useMemo((): StudentProgress[] => {
-    if (!students || students.length === 0) {
-      return [];
-    }
+    if (!students || students.length === 0) return [];
 
     return students.map((student: any) => ({
       studentId: student.studentId || '',
@@ -663,9 +776,9 @@ export default function ReportCards() {
     }));
   }, [students]);
 
-  // Filter students by search
+  // Filter students
   const filteredStudents = useMemo(() => {
-    if (!transformedStudents || transformedStudents.length === 0) return [];
+    if (!transformedStudents.length) return [];
     if (!debouncedSearch) return transformedStudents;
     
     return transformedStudents.filter(student =>
@@ -674,24 +787,15 @@ export default function ReportCards() {
     );
   }, [transformedStudents, debouncedSearch]);
 
-  // Class options for filter
+  // Class options
   const classOptions = useMemo(() => {
-    // For teachers, only show classes they're assigned to
     if (user?.userType === 'teacher' && assignments) {
       const teacherClassIds = [...new Set(assignments.map(a => a.classId))];
       return classes
         .filter(cls => teacherClassIds.includes(cls.id))
-        .map(cls => ({
-          id: cls.id,
-          name: cls.name
-        }));
+        .map(cls => ({ id: cls.id, name: cls.name }));
     }
-    
-    // For admin, show all classes
-    return classes.map(cls => ({
-      id: cls.id,
-      name: cls.name
-    }));
+    return classes.map(cls => ({ id: cls.id, name: cls.name }));
   }, [classes, user, assignments]);
 
   const handleViewDetails = (studentId: string) => {
@@ -710,19 +814,18 @@ export default function ReportCards() {
   if (isLoadingAll) {
     return (
       <DashboardLayout activeTab="reports">
-        <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-pulse mb-8">
+        <div className="min-h-screen bg-gray-50 p-3 sm:p-4 lg:p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 animate-pulse mb-4">
             <div>
-              <div className="h-8 bg-gray-200 rounded w-48 mb-2"></div>
-              <div className="h-4 bg-gray-100 rounded w-64"></div>
+              <div className="h-6 sm:h-7 bg-gray-200 rounded w-32 sm:w-40 mb-1"></div>
+              <div className="h-3 sm:h-4 bg-gray-100 rounded w-40 sm:w-48"></div>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 bg-gray-200 rounded-lg"></div>
-              <div className="h-10 w-10 bg-gray-200 rounded-lg"></div>
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 sm:h-9 sm:w-9 bg-gray-200 rounded-lg"></div>
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {[1, 2, 3, 4, 5, 6].map((i) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            {[1, 2, 3, 4].map((i) => (
               <CardSkeleton key={i} />
             ))}
           </div>
@@ -734,15 +837,15 @@ export default function ReportCards() {
   return (
     <>
       <DashboardLayout activeTab="reports">
-        <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+        <div className="min-h-screen bg-gray-50 p-3 sm:p-4 lg:p-6">
           
           {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
-                Student Progress
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 tracking-tight">
+                Report Cards
               </h1>
-              <p className="text-sm text-gray-600 mt-1">
+              <p className="text-xs sm:text-sm text-gray-600 mt-0.5">
                 {selectedTerm}, {selectedYear}
               </p>
             </div>
@@ -750,29 +853,29 @@ export default function ReportCards() {
             {/* Refresh button */}
             <button
               onClick={() => refetch()}
-              className="p-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all self-end sm:self-auto"
+              className="p-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all self-end sm:self-auto"
               title="Refresh data"
             >
-              <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
+              <RefreshCw size={isMobile ? 16 : 18} className={isFetching ? 'animate-spin' : ''} />
             </button>
           </div>
 
-          {/* Class Selection - MUST select a class first */}
+          {/* Class Selection */}
           {!selectedClass ? (
-            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
-              <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-100 rounded-full mb-4">
-                <BookOpen className="text-blue-600" size={32} />
+            <div className="bg-white rounded-xl border border-gray-200 p-6 sm:p-8 text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-blue-100 rounded-full mb-3">
+                <BookOpen className="text-blue-600" size={isMobile ? 24 : 32} />
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1">
                 Select a Class
               </h3>
-              <p className="text-gray-600 max-w-md mx-auto mb-6">
+              <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto mb-4">
                 Choose a class to view student progress and report cards
               </p>
               <select
                 value=""
                 onChange={e => setSelectedClass(e.target.value)}
-                className="mx-auto px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="" disabled>Select a class</option>
                 {classOptions.map(cls => (
@@ -782,90 +885,27 @@ export default function ReportCards() {
             </div>
           ) : (
             <>
-              {/* Filters Bar */}
-              <div className="mb-6 bg-white rounded-xl border border-gray-200 p-4">
-                <div className="flex flex-col sm:flex-row gap-4">
-                  {/* Class selector (if admin) - show but disable if teacher */}
-                  <select
-                    value={selectedClass}
-                    onChange={e => setSelectedClass(e.target.value)}
-                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-                    disabled={user?.userType === 'teacher'}
-                  >
-                    {classOptions.map(cls => (
-                      <option key={cls.id} value={cls.id}>{cls.name}</option>
-                    ))}
-                  </select>
-                  
-                  {/* Search */}
-                  <div className="flex-1 relative">
-                    <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                    <input
-                      type="text"
-                      placeholder="Search students by name or ID..."
-                      value={searchTerm}
-                      onChange={e => setSearchTerm(e.target.value)}
-                      className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-                    />
-                  </div>
-                  
-                  {/* Term selector */}
-                  <select
-                    value={selectedTerm}
-                    onChange={e => setSelectedTerm(e.target.value)}
-                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-                  >
-                    {terms.map(term => (
-                      <option key={term} value={term}>{term}</option>
-                    ))}
-                  </select>
-                  
-                  {/* Year selector */}
-                  <select
-                    value={selectedYear}
-                    onChange={e => setSelectedYear(Number(e.target.value))}
-                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-                  >
-                    {years.map(year => (
-                      <option key={year} value={year}>{year}</option>
-                    ))}
-                  </select>
-                </div>
-                
-                {/* Summary stats */}
-                {summary && summary.total > 0 && (
-                  <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-600">Total Students:</span>
-                      <span className="ml-2 font-medium text-gray-900">{summary.total}</span>
-                    </div>
-                    <div>
-                      <span className="text-green-600">Complete:</span>
-                      <span className="ml-2 font-medium text-gray-900">{summary.complete}</span>
-                    </div>
-                    <div>
-                      <span className="text-yellow-600">In Progress:</span>
-                      <span className="ml-2 font-medium text-gray-900">{summary.incomplete}</span>
-                    </div>
-                    <div>
-                      <span className="text-blue-600">Avg Completion:</span>
-                      <span className="ml-2 font-medium text-gray-900">{summary.averageCompletion}%</span>
-                    </div>
-                    <div>
-                      <span className="text-green-600">Pass:</span>
-                      <span className="ml-2 font-medium text-gray-900">{summary.passCount}</span>
-                    </div>
-                    <div>
-                      <span className="text-red-600">Fail:</span>
-                      <span className="ml-2 font-medium text-gray-900">{summary.failCount}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {/* Filter Bar */}
+              <FilterBar
+                selectedClass={selectedClass}
+                setSelectedClass={setSelectedClass}
+                classOptions={classOptions}
+                searchTerm={searchTerm}
+                setSearchTerm={setSearchTerm}
+                selectedTerm={selectedTerm}
+                setSelectedTerm={setSelectedTerm}
+                selectedYear={selectedYear}
+                setSelectedYear={setSelectedYear}
+                terms={terms}
+                years={years}
+                summary={summary}
+                isTeacher={user?.userType === 'teacher'}
+                isMobile={isMobile}
+              />
 
               {/* Students Grid */}
               {filteredStudents.length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                   {filteredStudents.map(student => (
                     <StudentCard
                       key={student.studentId}
@@ -875,24 +915,22 @@ export default function ReportCards() {
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-16 bg-white rounded-2xl border border-gray-200">
-                  <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 rounded-full mb-4">
-                    <FileText className="text-gray-400" size={32} />
+                <div className="text-center py-12 bg-white rounded-2xl border border-gray-200">
+                  <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-3">
+                    <FileText className="text-gray-400" size={isMobile ? 24 : 32} />
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  <h3 className="text-base font-semibold text-gray-900 mb-1">
                     No students found
                   </h3>
-                  <p className="text-gray-600">
+                  <p className="text-sm text-gray-600">
                     {searchTerm 
-                      ? 'No students match your search criteria'
-                      : students?.length === 0 
-                        ? 'No progress data available for this class'
-                        : 'No students are enrolled in this class'}
+                      ? 'No students match your search'
+                      : 'No progress data available for this class'}
                   </p>
                   {searchTerm && (
                     <button
                       onClick={() => setSearchTerm('')}
-                      className="mt-4 px-4 py-2 text-sm text-blue-600 hover:text-blue-800 font-medium"
+                      className="mt-3 text-xs text-blue-600 hover:text-blue-800 font-medium"
                     >
                       Clear search
                     </button>

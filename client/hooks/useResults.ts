@@ -1,5 +1,5 @@
 // @/hooks/useResults.ts - Updated with student progress tracking
-// Version 2.0.0 - Added useStudentProgress hook for report cards
+// Version 2.1.0 - Fixed useStudentProgress to fetch raw data and aggregate in memory
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
@@ -29,6 +29,20 @@ export interface StudentProgressData {
   students: StudentProgress[];
   summary: StudentProgressSummary;
 }
+
+// Helper function for grade calculation
+const calculateGrade = (percentage: number): number => {
+  if (percentage < 0) return -1;
+  if (percentage >= 75) return 1;
+  if (percentage >= 70) return 2;
+  if (percentage >= 65) return 3;
+  if (percentage >= 60) return 4;
+  if (percentage >= 55) return 5;
+  if (percentage >= 50) return 6;
+  if (percentage >= 45) return 7;
+  if (percentage >= 40) return 8;
+  return 9;
+};
 
 // ==================== MAIN RESULTS HOOK ====================
 
@@ -246,8 +260,8 @@ export const useResults = (options?: {
   };
 };
 
-// ==================== STUDENT PROGRESS HOOK ====================
-// This is the key hook for the Report Cards page - shows ALL students with progress
+// ==================== FIXED STUDENT PROGRESS HOOK ====================
+// Now follows the same pattern as useResultsAnalytics - fetches raw data and aggregates in memory
 
 export const useStudentProgress = (options: {
   classId?: string;
@@ -274,45 +288,194 @@ export const useStudentProgress = (options: {
         };
       }
       
-      console.log('📊 Fetching student progress:', {
+      console.log('📊 Fetching student progress for:', {
         classId: options.classId,
         term: options.term,
         year: options.year,
       });
       
-      const progress = await resultsService.getStudentProgress(
-        options.classId,
-        options.term,
-        options.year
-      );
+      // STEP 1: Fetch RAW results first (like analysis files do)
+      const rawResults = await resultsService.getAllResults({
+        classId: options.classId,
+        term: options.term,
+        year: options.year,
+      });
       
-      console.log(`✅ Found ${progress.length} students with progress data`);
+      console.log(`✅ Found ${rawResults.length} raw result entries`);
       
-      // Calculate summary statistics
+      // STEP 2: Get all learners in the class to ensure we have all students
+      const learners = await resultsService.getLearnersInClass(options.classId);
+      
+      console.log(`✅ Found ${learners.length} learners in class`);
+
+      // STEP 3: Get expected subjects from teacher assignments
+      const expectedSubjects = await resultsService.getExpectedSubjectsForClass(options.classId);
+      
+      console.log(`✅ Found ${expectedSubjects.length} expected subjects`);
+
+      // If no learners, return empty array
+      if (learners.length === 0) {
+        return {
+          students: [],
+          summary: {
+            total: 0,
+            complete: 0,
+            incomplete: 0,
+            averageCompletion: 0,
+            passCount: 0,
+            failCount: 0,
+            pendingCount: 0,
+          }
+        };
+      }
+
+      // STEP 4: Group raw results by student
+      const resultsByStudent = new Map<string, StudentResult[]>();
+      
+      rawResults.forEach(result => {
+        if (!resultsByStudent.has(result.studentId)) {
+          resultsByStudent.set(result.studentId, []);
+        }
+        resultsByStudent.get(result.studentId)!.push(result);
+      });
+
+      // STEP 5: Build progress for each learner (including those with no results)
+      const students: StudentProgress[] = [];
+      
+      for (const learner of learners) {
+        const studentResults = resultsByStudent.get(learner.id) || [];
+        
+        // Build subject progress for this student
+        const subjects: StudentProgress['subjects'] = [];
+        let totalSubjectsCompleted = 0;
+        let totalPercentage = 0;
+        let subjectsWithScores = 0;
+        
+        // Process each expected subject
+        for (const subject of expectedSubjects) {
+          const subjectResults = studentResults.filter(r => r.subjectId === subject.id);
+          
+          // Get teacher info from assignments
+          const assignments = await resultsService.getTeacherAssignmentsForClass(options.classId);
+          const teacherAssignment = assignments.find(a => a.subjectId === subject.id);
+          
+          // Check each exam type
+          const week4Result = subjectResults.find(r => r.examType === 'week4');
+          const week8Result = subjectResults.find(r => r.examType === 'week8');
+          const endOfTermResult = subjectResults.find(r => r.examType === 'endOfTerm');
+          
+          // Calculate subject completion (how many exams have data)
+          let completedExams = 0;
+          if (week4Result && week4Result.percentage >= 0) completedExams++;
+          if (week8Result && week8Result.percentage >= 0) completedExams++;
+          if (endOfTermResult && endOfTermResult.percentage >= 0) completedExams++;
+          
+          const subjectProgress = Math.round((completedExams / 3) * 100);
+          if (subjectProgress === 100) totalSubjectsCompleted++;
+          
+          // Track overall percentage using end of term if available
+          if (endOfTermResult && endOfTermResult.percentage >= 0) {
+            totalPercentage += endOfTermResult.percentage;
+            subjectsWithScores++;
+          }
+          
+          subjects.push({
+            subjectId: subject.id,
+            subjectName: subject.name,
+            teacherName: teacherAssignment?.teacherName || 'Not assigned',
+            week4: {
+              status: week4Result 
+                ? (week4Result.status === 'absent' ? 'absent' : 'complete') 
+                : 'missing',
+              marks: week4Result?.percentage
+            },
+            week8: {
+              status: week8Result 
+                ? (week8Result.status === 'absent' ? 'absent' : 'complete') 
+                : 'missing',
+              marks: week8Result?.percentage
+            },
+            endOfTerm: {
+              status: endOfTermResult 
+                ? (endOfTermResult.status === 'absent' ? 'absent' : 'complete') 
+                : 'missing',
+              marks: endOfTermResult?.percentage
+            },
+            subjectProgress,
+            grade: endOfTermResult?.grade
+          });
+        }
+        
+        // Calculate overall stats
+        const overallPercentage = subjectsWithScores > 0 
+          ? Math.round(totalPercentage / subjectsWithScores) 
+          : 0;
+        
+        const overallGrade = overallPercentage > 0 ? calculateGrade(overallPercentage) : -1;
+        
+        const completionPercentage = expectedSubjects.length > 0
+          ? Math.round((totalSubjectsCompleted / expectedSubjects.length) * 100)
+          : 0;
+        
+        const isComplete = totalSubjectsCompleted === expectedSubjects.length && expectedSubjects.length > 0;
+        
+        // Get class name from learner data
+        const className = learner.data.className || 
+                         (await resultsService.getClassData(options.classId))?.name || 
+                         'Unknown';
+        
+        const form = learner.data.form || 
+                    learner.data.level?.toString() || 
+                    (await resultsService.getClassData(options.classId))?.level?.toString() || 
+                    '1';
+        
+        students.push({
+          studentId: learner.id,
+          studentName: learner.name,
+          className,
+          classId: options.classId,
+          form,
+          overallPercentage,
+          overallGrade,
+          status: overallPercentage >= 50 ? 'pass' : (overallPercentage > 0 ? 'fail' : 'pending'),
+          isComplete,
+          completionPercentage,
+          subjects,
+          missingSubjects: expectedSubjects.length - totalSubjectsCompleted,
+          totalSubjects: expectedSubjects.length
+        });
+      }
+      
+      // Sort by student name
+      const sortedStudents = students.sort((a, b) => a.studentName.localeCompare(b.studentName));
+      
+      // Calculate summary statistics (like analysis files do)
       const summary: StudentProgressSummary = {
-        total: progress.length,
-        complete: progress.filter(s => s.isComplete).length,
-        incomplete: progress.filter(s => !s.isComplete).length,
-        averageCompletion: progress.length > 0
-          ? Math.round(progress.reduce((sum, s) => sum + s.completionPercentage, 0) / progress.length)
+        total: sortedStudents.length,
+        complete: sortedStudents.filter(s => s.isComplete).length,
+        incomplete: sortedStudents.filter(s => !s.isComplete).length,
+        averageCompletion: sortedStudents.length > 0
+          ? Math.round(sortedStudents.reduce((sum, s) => sum + s.completionPercentage, 0) / sortedStudents.length)
           : 0,
-        passCount: progress.filter(s => s.status === 'pass').length,
-        failCount: progress.filter(s => s.status === 'fail').length,
-        pendingCount: progress.filter(s => s.status === 'pending').length,
+        passCount: sortedStudents.filter(s => s.status === 'pass').length,
+        failCount: sortedStudents.filter(s => s.status === 'fail').length,
+        pendingCount: sortedStudents.filter(s => s.status === 'pending').length,
       };
       
+      console.log(`✅ Processed ${sortedStudents.length} students with progress data`);
+      console.log('📊 Summary:', summary);
+      
       return {
-        students: progress,
+        students: sortedStudents,
         summary,
       };
     },
-    enabled: !!options.classId, // Only fetch when class is selected
-    staleTime: 2 * 60 * 1000, // 2 minutes
-    refetchOnWindowFocus: true, // Refetch when window gains focus
+    enabled: !!options.classId,
+    staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: true,
   });
 
   return {
-    // Main data with fallbacks
     students: progressQuery.data?.students ?? [],
     summary: progressQuery.data?.summary ?? { 
       total: 0, 
@@ -324,16 +487,13 @@ export const useStudentProgress = (options: {
       pendingCount: 0,
     },
     
-    // Loading states
     isLoading: progressQuery.isLoading,
     isFetching: progressQuery.isFetching,
     isError: progressQuery.isError,
     error: progressQuery.error,
     
-    // Refresh
     refetch: progressQuery.refetch,
     
-    // Helper functions
     getStudentById: (studentId: string): StudentProgress | undefined => {
       return progressQuery.data?.students.find(s => s.studentId === studentId);
     },

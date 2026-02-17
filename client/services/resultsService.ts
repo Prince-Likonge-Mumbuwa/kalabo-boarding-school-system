@@ -1,6 +1,6 @@
 // @/services/resultsService.ts
 // COMPLETE REWRITE - ISACTIVE FILTER ELIMINATED
-// Version 5.0.0 - Added student progress tracking for report cards
+// Version 5.1.0 - Added public methods for student progress tracking
 
 import {
   collection,
@@ -379,10 +379,10 @@ class ResultsService {
   // ====================
 
   /**
-   * Get all learners in a class - NO STATUS FILTERS
+   * PUBLIC METHOD: Get all learners in a class - NO STATUS FILTERS
    * This is the critical fix: we fetch EVERY learner regardless of isActive, status, enrolled, etc.
    */
-  private async getLearnersInClass(classId: string): Promise<Array<{ id: string; name: string; data: any }>> {
+  public async getLearnersInClass(classId: string): Promise<Array<{ id: string; name: string; data: any }>> {
     try {
       console.log(`🔍 Fetching ALL learners for class: ${classId} (no status filters)`);
       
@@ -423,9 +423,9 @@ class ResultsService {
   }
 
   /**
-   * Get total count of learners in a class - NO STATUS FILTERS
+   * PUBLIC METHOD: Get total count of learners in a class - NO STATUS FILTERS
    */
-  private async getLearnerCountInClass(classId: string): Promise<number> {
+  public async getLearnerCountInClass(classId: string): Promise<number> {
     try {
       const learners = await this.getLearnersInClass(classId);
       return learners.length;
@@ -487,7 +487,10 @@ class ResultsService {
     }
   }
 
-  private async getExpectedSubjectsForClass(classId: string): Promise<Array<{ id: string; name: string }>> {
+  /**
+   * PUBLIC METHOD: Get expected subjects for a class from teacher assignments
+   */
+  public async getExpectedSubjectsForClass(classId: string): Promise<Array<{ id: string; name: string }>> {
     try {
       const assignments = await this.getTeacherAssignmentsForClass(classId);
       
@@ -1852,9 +1855,12 @@ class ResultsService {
     }
   }
 
-  // ==================== PRIVATE HELPER METHODS ====================
+  // ==================== PUBLIC HELPER METHODS ====================
 
-  private async getClassData(classId: string): Promise<any> {
+  /**
+   * PUBLIC METHOD: Get class data by ID
+   */
+  public async getClassData(classId: string): Promise<any> {
     try {
       const classDoc = await getDoc(doc(this.classesCollection, classId));
       return classDoc.exists() ? classDoc.data() : null;
@@ -1863,6 +1869,8 @@ class ResultsService {
       return null;
     }
   }
+
+  // ==================== PRIVATE HELPER METHODS ====================
 
   private generateResultId(
     studentId: string,
