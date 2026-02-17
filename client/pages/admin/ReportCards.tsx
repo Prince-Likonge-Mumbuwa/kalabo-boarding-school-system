@@ -1,9 +1,11 @@
-// @/pages/admin/ReportCards.tsx - Updated with Student Progress Hook and Progress Bars
+// @/pages/admin/ReportCards.tsx - Complete Updated Version
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useStudentProgress, useResults } from '@/hooks/useResults';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
+import { useSchoolLearners } from '@/hooks/useSchoolLearners';
+import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useAuth } from '@/hooks/useAuth';
 import {
   Download,
@@ -54,7 +56,17 @@ interface StudentProgress {
   totalSubjects: number;
 }
 
-const GRADE_SYSTEM = {
+interface StudentProgressSummary {
+  total: number;
+  complete: number;
+  incomplete: number;
+  averageCompletion: number;
+  passCount: number;
+  failCount: number;
+  pendingCount: number;
+}
+
+const GRADE_SYSTEM: Record<number | 'X', { min: number; max: number; description: string; color: string }> = {
   1: { min: 75, max: 100, description: 'Distinction', color: 'bg-gradient-to-r from-green-500 to-emerald-600' },
   2: { min: 70, max: 74, description: 'Distinction', color: 'bg-gradient-to-r from-green-400 to-green-500' },
   3: { min: 65, max: 69, description: 'Merit', color: 'bg-gradient-to-r from-blue-500 to-blue-600' },
@@ -220,7 +232,7 @@ const StudentCard = ({ student, onViewDetails }: StudentCardProps) => {
   
   // Get top 3 subjects for display
   const topSubjects = useMemo(() => {
-    return student.subjects
+    return [...student.subjects]
       .sort((a, b) => b.subjectProgress - a.subjectProgress)
       .slice(0, 3);
   }, [student.subjects]);
@@ -327,9 +339,17 @@ interface ReportDetailModalProps {
   student: StudentProgress | null;
   term: string;
   year: number;
+  totalLearners?: number; // Total learners in class for position
 }
 
-const ReportDetailModal = ({ isOpen, onClose, student, term, year }: ReportDetailModalProps) => {
+const ReportDetailModal = ({ 
+  isOpen, 
+  onClose, 
+  student, 
+  term, 
+  year,
+  totalLearners = 0
+}: ReportDetailModalProps) => {
   const { generateReportCard } = useResults();
   const [fullReport, setFullReport] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -359,130 +379,196 @@ const ReportDetailModal = ({ isOpen, onClose, student, term, year }: ReportDetai
   }, [isOpen, student, term, year, generateReportCard]);
 
   if (!isOpen || !student) return null;
-  
-  const gradeInfo = getGradeInfo(student.overallGrade);
-  
+
+  // Format position text (e.g., "5 out of 30")
+  const positionText = fullReport?.position 
+    ? `${fullReport.position} out of ${totalLearners || '—'}`
+    : '—';
+
+  // Determine gender from student ID (assuming pattern: B for boys, G for girls)
+  const gender = student.studentId?.startsWith('B') ? 'Male' : 
+                 student.studentId?.startsWith('G') ? 'Female' : '—';
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
       <div className="flex min-h-full items-center justify-center p-4">
         <div className="relative bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
-          {/* Header */}
-          <div className="p-6 border-b border-gray-200">
-            <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">Student Progress Report</h2>
-                <p className="text-gray-600 mt-1">
-                  {term}, {year} • Real-time progress tracking
-                </p>
-                {!student.isComplete && (
-                  <div className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 bg-yellow-100 text-yellow-800 rounded-lg text-sm">
-                    <AlertTriangle size={16} />
-                    In Progress ({student.completionPercentage}% complete)
-                  </div>
-                )}
-              </div>
-              <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                <X size={20} />
-              </button>
-            </div>
-          </div>
           
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto p-6">
-            {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          {/* Loading State */}
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+          ) : (
+            <>
+              {/* 1. CENTERED HEADING */}
+              <div className="text-center py-6 border-b border-gray-200 bg-gradient-to-b from-gray-50 to-white">
+                <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+                  MINISTRY OF EDUCATION
+                </h1>
+                <h2 className="text-xl font-semibold text-gray-800 mt-1">
+                  KALABO BOARDING SECONDARY SCHOOL
+                </h2>
+                <h3 className="text-lg font-medium text-blue-600 mt-2 uppercase tracking-wider">
+                  LEARNER REPORT CARD
+                </h3>
               </div>
-            ) : (
-              <>
-                {/* Student Info */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                  <div>
-                    <p className="text-xs text-gray-500">Student Name</p>
-                    <p className="font-semibold text-gray-900">{student.studentName}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500">Overall Grade</p>
-                    <div className="flex items-center gap-2">
-                      <span className={`px-3 py-1 rounded-full text-white text-sm font-bold ${gradeInfo.color}`}>
-                        {getGradeDisplay(student.overallGrade)}
-                      </span>
-                      <span className="text-sm text-gray-600">{gradeInfo.description}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500">Class</p>
-                    <p className="font-semibold text-gray-900">{student.className}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500">Status</p>
-                    <StatusBadge status={student.status} />
+
+              {/* 2. STUDENT INFO DIV */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 p-6 bg-gray-50 border-b border-gray-200">
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wider">Name</p>
+                  <p className="font-semibold text-gray-900">{student.studentName}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wider">Class</p>
+                  <p className="font-semibold text-gray-900">{student.className}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wider">Position</p>
+                  <p className="font-semibold text-blue-600">{positionText}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wider">Gender</p>
+                  <p className="font-semibold text-gray-900">{gender}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wider">Term/Year</p>
+                  <p className="font-semibold text-gray-900">{term} {year}</p>
+                </div>
+              </div>
+
+              {/* 3. SUBJECTS TABLE */}
+              <div className="p-6 overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 border border-gray-300">
+                        Subject
+                      </th>
+                      <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700 border border-gray-300">
+                        Week 4
+                      </th>
+                      <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700 border border-gray-300">
+                        Week 8
+                      </th>
+                      <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700 border border-gray-300">
+                        End of Term
+                      </th>
+                      <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700 border border-gray-300 bg-blue-50">
+                        Grade
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {student.subjects.map((subject, index) => (
+                      <tr key={index} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-sm font-medium text-gray-900 border border-gray-300">
+                          {subject.subjectName}
+                        </td>
+                        <td className="px-4 py-3 text-center text-sm border border-gray-300">
+                          {subject.week4.marks ? (
+                            <span className="font-medium text-gray-900">{subject.week4.marks}%</span>
+                          ) : (
+                            <span className="text-gray-400 italic">
+                              {subject.week4.status === 'absent' ? 'ABS' : '—'}
+                            </span>
+                          )}
+                          {subject.week4.status !== 'complete' && subject.week4.status !== 'absent' && (
+                            <span className="ml-1 text-xs text-red-500">(M)</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-center text-sm border border-gray-300">
+                          {subject.week8.marks ? (
+                            <span className="font-medium text-gray-900">{subject.week8.marks}%</span>
+                          ) : (
+                            <span className="text-gray-400 italic">
+                              {subject.week8.status === 'absent' ? 'ABS' : '—'}
+                            </span>
+                          )}
+                          {subject.week8.status !== 'complete' && subject.week8.status !== 'absent' && (
+                            <span className="ml-1 text-xs text-red-500">(M)</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-center text-sm border border-gray-300">
+                          {subject.endOfTerm.marks ? (
+                            <span className="font-medium text-gray-900">{subject.endOfTerm.marks}%</span>
+                          ) : (
+                            <span className="text-gray-400 italic">
+                              {subject.endOfTerm.status === 'absent' ? 'ABS' : '—'}
+                            </span>
+                          )}
+                          {subject.endOfTerm.status !== 'complete' && subject.endOfTerm.status !== 'absent' && (
+                            <span className="ml-1 text-xs text-red-500">(M)</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-center border border-gray-300 bg-blue-50">
+                          {subject.grade ? (
+                            <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-white font-bold ${
+                              subject.grade <= 2 ? 'bg-green-600' :
+                              subject.grade <= 4 ? 'bg-blue-600' :
+                              subject.grade <= 6 ? 'bg-cyan-600' :
+                              subject.grade <= 8 ? 'bg-yellow-600' : 'bg-red-600'
+                            }`}>
+                              {getGradeDisplay(subject.grade)}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  
+                  {/* Summary Row */}
+                  <tfoot>
+                    <tr className="bg-gray-50">
+                      <td className="px-4 py-3 text-sm font-semibold text-gray-700 border border-gray-300" colSpan={4}>
+                        Overall Average
+                      </td>
+                      <td className="px-4 py-3 text-center font-bold text-blue-600 border border-gray-300">
+                        {student.overallPercentage > 0 ? `${student.overallPercentage}%` : '—'}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+
+                {/* Status Indicators Legend */}
+                <div className="mt-4 flex items-center gap-4 text-xs text-gray-500">
+                  <span className="flex items-center gap-1">
+                    <span className="w-3 h-3 bg-red-500 rounded-full"></span>
+                    <span>M = Missing</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-3 h-3 bg-gray-500 rounded-full"></span>
+                    <span>ABS = Absent</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Teacher's Comment Section (Optional) */}
+              {fullReport?.teachersComment && (
+                <div className="px-6 pb-6">
+                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Teacher's Comment</p>
+                    <p className="text-sm text-gray-800 italic">"{fullReport.teachersComment}"</p>
                   </div>
                 </div>
+              )}
 
-                {/* Overall Progress */}
-                <div className="mb-8">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4">Overall Progress</h3>
-                  <div className="bg-gray-50 p-4 rounded-xl">
-                    <ProgressBar progress={student.completionPercentage} size="lg" />
-                    <div className="grid grid-cols-3 gap-4 mt-4 text-center">
-                      <div>
-                        <p className="text-2xl font-bold text-gray-900">{student.completionPercentage}%</p>
-                        <p className="text-xs text-gray-500">Complete</p>
-                      </div>
-                      <div>
-                        <p className="text-2xl font-bold text-green-600">
-                          {student.subjects.filter(s => s.endOfTerm.status === 'complete').length}
-                        </p>
-                        <p className="text-xs text-gray-500">Subjects Complete</p>
-                      </div>
-                      <div>
-                        <p className="text-2xl font-bold text-yellow-600">{student.missingSubjects}</p>
-                        <p className="text-xs text-gray-500">Missing Data</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Subject Details */}
-                <h3 className="text-lg font-bold text-gray-900 mb-4">Subject Progress</h3>
-                <div className="space-y-6">
-                  {student.subjects.map((subject, index) => (
-                    <div key={index} className="bg-gray-50 p-4 rounded-xl">
-                      <SubjectProgressRow subject={subject} />
-                    </div>
-                  ))}
-                </div>
-
-                {/* Full Report Data if available */}
-                {fullReport && (
-                  <div className="mt-8 pt-8 border-t border-gray-200">
-                    <h3 className="text-lg font-bold text-gray-900 mb-4">Full Report Card</h3>
-                    <div className="bg-blue-50 p-4 rounded-xl">
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                          <p className="text-xs text-gray-600">Position</p>
-                          <p className="font-medium text-gray-900">{fullReport.position}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-600">Attendance</p>
-                          <p className="font-medium text-gray-900">{fullReport.attendance}%</p>
-                        </div>
-                      </div>
-                      <div className="mb-4">
-                        <p className="text-xs text-gray-600 mb-1">Teacher's Comment</p>
-                        <p className="text-sm text-gray-800 italic">"{fullReport.teachersComment}"</p>
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        Generated: {fullReport.generatedDate}
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+              {/* Footer with generation date */}
+              <div className="px-6 py-4 border-t border-gray-200 text-xs text-gray-400 text-right">
+                Generated: {new Date().toLocaleDateString('en-GB', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -493,69 +579,133 @@ const ReportDetailModal = ({ isOpen, onClose, student, term, year }: ReportDetai
 export default function ReportCards() {
   const { user } = useAuth();
   const { classes, isLoading: loadingClasses } = useSchoolClasses();
+  const { learners, isLoading: loadingLearners } = useSchoolLearners();
+  const { assignments, isLoading: loadingAssignments } = useTeacherAssignments(user?.id || '');
+  
   const [selectedClass, setSelectedClass] = useState<string>('');
   const [selectedTerm, setSelectedTerm] = useState<string>('Term 1');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
-  const debouncedSearch = useDebounce(searchTerm, 300);
-
-  // Automatically select class for teachers
-  useEffect(() => {
-    if (user?.userType === 'teacher' && classes.length > 0 && !selectedClass) {
-      const teacherClass = classes.find(cls =>
-        cls.teachers?.includes(user.id) || cls.formTeacherId === user.id
-      );
-      if (teacherClass) {
-        setSelectedClass(teacherClass.id);
-      }
-    }
-  }, [classes, user, selectedClass]);
-
-  // Fetch student progress using the new hook
+  
+  // Use the student progress hook - FIXED: No 'data' property, returns students and summary directly
   const {
     students = [],
     summary,
     isLoading: loadingProgress,
-    refetch,
+    isFetching,
+    isError,
+    error,
+    refetch
   } = useStudentProgress({
     classId: selectedClass,
     term: selectedTerm,
     year: selectedYear,
   });
 
+  // Log the data for debugging
+  useEffect(() => {
+    console.log('Student Progress Students:', students);
+    console.log('Student Progress Summary:', summary);
+    if (isError) {
+      console.error('Error fetching student progress:', error);
+    }
+  }, [students, summary, isError, error]);
+
+  const debouncedSearch = useDebounce(searchTerm, 300);
+
+  // Automatically select class for teachers
+  useEffect(() => {
+    if (user?.userType === 'teacher' && classes.length > 0 && !selectedClass) {
+      // Get teacher's assigned classes
+      if (assignments && assignments.length > 0) {
+        // Get unique class IDs from assignments
+        const teacherClassIds = [...new Set(assignments.map(a => a.classId))];
+        // Find the first class that matches
+        const teacherClass = classes.find(cls => teacherClassIds.includes(cls.id));
+        if (teacherClass) {
+          setSelectedClass(teacherClass.id);
+        }
+      }
+    }
+  }, [classes, user, assignments, selectedClass]);
+
+  // Transform the data from the hook into our expected format
+  const transformedStudents = useMemo((): StudentProgress[] => {
+    if (!students || students.length === 0) {
+      return [];
+    }
+
+    return students.map((student: any) => ({
+      studentId: student.studentId || '',
+      studentName: student.studentName || '',
+      className: student.className || '',
+      classId: student.classId || '',
+      form: student.form || '',
+      overallPercentage: student.overallPercentage || 0,
+      overallGrade: student.overallGrade || 0,
+      status: student.status || 'pending',
+      isComplete: student.isComplete || false,
+      completionPercentage: student.completionPercentage || 0,
+      subjects: Array.isArray(student.subjects) ? student.subjects.map((subject: any) => ({
+        subjectId: subject.subjectId || '',
+        subjectName: subject.subjectName || '',
+        teacherName: subject.teacherName || '',
+        week4: subject.week4 || { status: 'missing' },
+        week8: subject.week8 || { status: 'missing' },
+        endOfTerm: subject.endOfTerm || { status: 'missing' },
+        subjectProgress: subject.subjectProgress || 0,
+        grade: subject.grade
+      })) : [],
+      missingSubjects: student.missingSubjects || 0,
+      totalSubjects: student.totalSubjects || 0
+    }));
+  }, [students]);
+
   // Filter students by search
   const filteredStudents = useMemo(() => {
-    if (!students || students.length === 0) return [];
-    if (!debouncedSearch) return students;
+    if (!transformedStudents || transformedStudents.length === 0) return [];
+    if (!debouncedSearch) return transformedStudents;
     
-    return students.filter(student =>
-      student.studentName.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-      student.studentId.toLowerCase().includes(debouncedSearch.toLowerCase())
+    return transformedStudents.filter(student =>
+      student.studentName?.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+      student.studentId?.toLowerCase().includes(debouncedSearch.toLowerCase())
     );
-  }, [students, debouncedSearch]);
+  }, [transformedStudents, debouncedSearch]);
 
   // Class options for filter
   const classOptions = useMemo(() => {
+    // For teachers, only show classes they're assigned to
+    if (user?.userType === 'teacher' && assignments) {
+      const teacherClassIds = [...new Set(assignments.map(a => a.classId))];
+      return classes
+        .filter(cls => teacherClassIds.includes(cls.id))
+        .map(cls => ({
+          id: cls.id,
+          name: cls.name
+        }));
+    }
+    
+    // For admin, show all classes
     return classes.map(cls => ({
       id: cls.id,
       name: cls.name
     }));
-  }, [classes]);
+  }, [classes, user, assignments]);
 
   const handleViewDetails = (studentId: string) => {
     setSelectedStudent(studentId);
     setShowReportModal(true);
   };
 
-  const selectedStudentData = students.find(s => s.studentId === selectedStudent);
+  const selectedStudentData = transformedStudents.find(s => s.studentId === selectedStudent);
 
   const terms = ['Term 1', 'Term 2', 'Term 3'];
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
-  const isLoadingAll = loadingProgress || loadingClasses;
+  const isLoadingAll = loadingProgress || loadingClasses || loadingLearners || loadingAssignments;
 
   if (isLoadingAll) {
     return (
@@ -603,7 +753,7 @@ export default function ReportCards() {
               className="p-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all self-end sm:self-auto"
               title="Refresh data"
             >
-              <RefreshCw size={18} className={loadingProgress ? 'animate-spin' : ''} />
+              <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
             </button>
           </div>
 
@@ -635,18 +785,17 @@ export default function ReportCards() {
               {/* Filters Bar */}
               <div className="mb-6 bg-white rounded-xl border border-gray-200 p-4">
                 <div className="flex flex-col sm:flex-row gap-4">
-                  {/* Class selector (if admin) */}
-                  {user?.userType === 'admin' && (
-                    <select
-                      value={selectedClass}
-                      onChange={e => setSelectedClass(e.target.value)}
-                      className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-                    >
-                      {classOptions.map(cls => (
-                        <option key={cls.id} value={cls.id}>{cls.name}</option>
-                      ))}
-                    </select>
-                  )}
+                  {/* Class selector (if admin) - show but disable if teacher */}
+                  <select
+                    value={selectedClass}
+                    onChange={e => setSelectedClass(e.target.value)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                    disabled={user?.userType === 'teacher'}
+                  >
+                    {classOptions.map(cls => (
+                      <option key={cls.id} value={cls.id}>{cls.name}</option>
+                    ))}
+                  </select>
                   
                   {/* Search */}
                   <div className="flex-1 relative">
@@ -714,7 +863,7 @@ export default function ReportCards() {
                 )}
               </div>
 
-              {/* Students Grid - ALWAYS SHOWS ALL STUDENTS */}
+              {/* Students Grid */}
               {filteredStudents.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {filteredStudents.map(student => (
@@ -736,7 +885,9 @@ export default function ReportCards() {
                   <p className="text-gray-600">
                     {searchTerm 
                       ? 'No students match your search criteria'
-                      : 'No students are enrolled in this class'}
+                      : students?.length === 0 
+                        ? 'No progress data available for this class'
+                        : 'No students are enrolled in this class'}
                   </p>
                   {searchTerm && (
                     <button
@@ -764,6 +915,7 @@ export default function ReportCards() {
           student={selectedStudentData}
           term={selectedTerm}
           year={selectedYear}
+          totalLearners={transformedStudents.length}
         />
       )}
     </>

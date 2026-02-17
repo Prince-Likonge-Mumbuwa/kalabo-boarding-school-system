@@ -1,3 +1,4 @@
+// @/pages/admin/AdminResultsAnalysis.tsx - FIXED VERSION
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo, useEffect } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
@@ -9,7 +10,7 @@ import {
   Filter,
   TrendingUp,
   TrendingDown,
-  Download,
+  Printer, // Changed from Download to Printer
   BarChart3,
   PieChart,
   ChevronDown,
@@ -363,6 +364,453 @@ const ChartSkeleton = () => (
   </div>
 );
 
+// ==================== PRINT PDF FUNCTION ====================
+const generatePrintHTML = (data: {
+  schoolName: string;
+  term: string;
+  year: number;
+  selectedClass: string;
+  schoolMetrics: any;
+  gradeDistribution: GradeDistribution[];
+  classPerformance: ClassPerformance[];
+  subjectPerformance: SubjectPerformance[];
+  generatedDate: string;
+}) => {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>School Results - ${data.term} ${data.year}</title>
+      <style>
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+        
+        body {
+          font-family: Arial, sans-serif;
+          background: white;
+          padding: 20px;
+          color: #1e293b;
+        }
+        
+        .print-container {
+          max-width: 1200px;
+          margin: 0 auto;
+        }
+        
+        .header {
+          text-align: center;
+          margin-bottom: 30px;
+          padding-bottom: 20px;
+          border-bottom: 2px solid #2563eb;
+        }
+        
+        .ministry {
+          font-size: 16px;
+          color: #475569;
+          letter-spacing: 1px;
+          margin-bottom: 5px;
+        }
+        
+        .school-name {
+          font-size: 28px;
+          font-weight: bold;
+          color: #0f172a;
+          margin-bottom: 5px;
+        }
+        
+        .report-title {
+          font-size: 22px;
+          color: #2563eb;
+          font-weight: bold;
+          margin-bottom: 10px;
+        }
+        
+        .report-subtitle {
+          font-size: 14px;
+          color: #64748b;
+        }
+        
+        .generated-date {
+          font-size: 11px;
+          color: #94a3b8;
+          margin-top: 10px;
+        }
+        
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 15px;
+          margin: 30px 0;
+        }
+        
+        .stat-card {
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 15px;
+          text-align: center;
+          background: #f8fafc;
+        }
+        
+        .stat-label {
+          font-size: 12px;
+          color: #64748b;
+          margin-bottom: 5px;
+        }
+        
+        .stat-value {
+          font-size: 28px;
+          font-weight: bold;
+          margin: 5px 0;
+        }
+        
+        .stat-value.blue { color: #2563eb; }
+        .stat-value.green { color: #16a34a; }
+        .stat-value.amber { color: #d97706; }
+        .stat-value.red { color: #dc2626; }
+        
+        .stat-sub {
+          font-size: 11px;
+          color: #64748b;
+        }
+        
+        h2 {
+          font-size: 18px;
+          margin: 30px 0 15px;
+          color: #0f172a;
+          border-left: 4px solid #2563eb;
+          padding-left: 10px;
+        }
+        
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 15px 0;
+          font-size: 12px;
+        }
+        
+        th {
+          background: #1e293b;
+          color: white;
+          padding: 10px;
+          text-align: center;
+          font-weight: 600;
+        }
+        
+        td {
+          border: 1px solid #e2e8f0;
+          padding: 8px;
+          text-align: center;
+        }
+        
+        tr:nth-child(even) {
+          background: #f8fafc;
+        }
+        
+        .grade-badge {
+          display: inline-block;
+          padding: 4px 8px;
+          border-radius: 4px;
+          color: white;
+          font-weight: bold;
+          font-size: 11px;
+        }
+        
+        .grade-1, .grade-2 { background: #10b981; }
+        .grade-3, .grade-4 { background: #3b82f6; }
+        .grade-5, .grade-6 { background: #f59e0b; }
+        .grade-7, .grade-8 { background: #f97316; }
+        .grade-9 { background: #ef4444; }
+        
+        .legend {
+          display: flex;
+          gap: 20px;
+          margin: 15px 0;
+          font-size: 11px;
+          flex-wrap: wrap;
+        }
+        
+        .legend-item {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        
+        .legend-color {
+          width: 12px;
+          height: 12px;
+          border-radius: 3px;
+        }
+        
+        .footer {
+          margin-top: 40px;
+          padding-top: 20px;
+          border-top: 1px solid #e2e8f0;
+          font-size: 10px;
+          color: #94a3b8;
+          text-align: center;
+        }
+        
+        .signatures {
+          display: flex;
+          justify-content: space-between;
+          margin: 40px 0 20px;
+        }
+        
+        .signature-line {
+          width: 200px;
+          border-top: 1px solid #94a3b8;
+          margin-bottom: 5px;
+        }
+        
+        .signature-label {
+          font-size: 11px;
+          color: #64748b;
+        }
+        
+        @media print {
+          body { padding: 0; }
+          .no-print { display: none; }
+        }
+        
+        .text-left { text-align: left; }
+        .font-bold { font-weight: bold; }
+        .mt-20 { margin-top: 20px; }
+        .mb-10 { margin-bottom: 10px; }
+      </style>
+    </head>
+    <body>
+      <div class="print-container">
+        
+        <!-- Header -->
+        <div class="header">
+          <div class="ministry">MINISTRY OF EDUCATION</div>
+          <div class="school-name">${data.schoolName}</div>
+          <div class="report-title">SCHOOL RESULTS ANALYSIS REPORT</div>
+          <div class="report-subtitle">${data.term} ${data.year} | ${data.selectedClass}</div>
+          <div class="generated-date">Generated: ${data.generatedDate}</div>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Students</div>
+            <div class="stat-value blue">${data.schoolMetrics.totalStudents}</div>
+            <div class="stat-sub">${data.schoolMetrics.classesCount} classes</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Pass Rate</div>
+            <div class="stat-value green">${data.schoolMetrics.passRate}%</div>
+            <div class="stat-sub">${data.schoolMetrics.distinctionRate}% distinction</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Average Score</div>
+            <div class="stat-value amber">${data.schoolMetrics.averageScore}%</div>
+            <div class="stat-sub">mean performance</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Fail Rate</div>
+            <div class="stat-value red">${data.schoolMetrics.failRate}%</div>
+            <div class="stat-sub">Grade 9 students</div>
+          </div>
+        </div>
+
+        <!-- Grade Distribution -->
+        <h2>Grade Distribution</h2>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Grade</th>
+              <th>Status</th>
+              <th>Boys</th>
+              <th>Girls</th>
+              <th>Total</th>
+              <th>%</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.gradeDistribution.map(g => {
+              const status = g.grade <= 2 ? 'Distinction' : 
+                            g.grade <= 4 ? 'Merit' : 
+                            g.grade <= 6 ? 'Credit' : 
+                            g.grade <= 8 ? 'Satisfactory' : 'Fail';
+              return `
+                <tr>
+                  <td><span class="grade-badge grade-${g.grade}">${g.grade}</span></td>
+                  <td>${status}</td>
+                  <td>${g.boys}</td>
+                  <td>${g.girls}</td>
+                  <td class="font-bold">${g.total}</td>
+                  <td>${g.percentage}%</td>
+                </tr>
+              `;
+            }).join('')}
+            <tr style="background: #f1f5f9; font-weight: bold;">
+              <td colspan="2">TOTAL</td>
+              <td>${data.gradeDistribution.reduce((sum, g) => sum + g.boys, 0)}</td>
+              <td>${data.gradeDistribution.reduce((sum, g) => sum + g.girls, 0)}</td>
+              <td>${data.gradeDistribution.reduce((sum, g) => sum + g.total, 0)}</td>
+              <td>100%</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Legend -->
+        <div class="legend">
+          <div class="legend-item"><span class="legend-color" style="background: #10b981;"></span> Distinction (1-2)</div>
+          <div class="legend-item"><span class="legend-color" style="background: #3b82f6;"></span> Merit (3-4)</div>
+          <div class="legend-item"><span class="legend-color" style="background: #f59e0b;"></span> Credit (5-6)</div>
+          <div class="legend-item"><span class="legend-color" style="background: #f97316;"></span> Satisfactory (7-8)</div>
+          <div class="legend-item"><span class="legend-color" style="background: #ef4444;"></span> Fail (9)</div>
+        </div>
+
+        <!-- Class Performance -->
+        <h2>Class Performance Summary</h2>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Class</th>
+              <th>Students</th>
+              <th>Boys/Girls</th>
+              <th>Quality</th>
+              <th>Quantity</th>
+              <th>Fail</th>
+              <th>Top Grade</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.classPerformance.slice(0, 10).map(cls => {
+              const topGrade = cls.gradeDistribution.length > 0 
+                ? cls.gradeDistribution.reduce((min, g) => g.grade < min.grade ? g : min).grade
+                : 9;
+              return `
+                <tr>
+                  <td class="text-left font-bold">${cls.className}</td>
+                  <td>${cls.candidates.total}</td>
+                  <td>${cls.candidates.boys}/${cls.candidates.girls}</td>
+                  <td style="color: #16a34a;">${cls.performance.quality.percentage}%</td>
+                  <td style="color: #2563eb;">${cls.performance.quantity.percentage}%</td>
+                  <td style="color: #dc2626;">${cls.performance.fail.percentage}%</td>
+                  <td><span class="grade-badge grade-${topGrade}">${topGrade}</span></td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+
+        <!-- Subject Performance -->
+        <h2>Subject Performance Analysis</h2>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Subject</th>
+              <th>Teacher</th>
+              <th>Classes</th>
+              <th>Students</th>
+              <th>Avg Grade</th>
+              <th>Quality</th>
+              <th>Quantity</th>
+              <th>Fail</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.subjectPerformance.slice(0, 15).map(sub => `
+              <tr>
+                <td class="text-left">${sub.subject}</td>
+                <td class="text-left">${sub.teacher}</td>
+                <td>${sub.classCount}</td>
+                <td>${sub.studentCount}</td>
+                <td>${sub.averageGrade}</td>
+                <td style="color: #16a34a; font-weight: bold;">${sub.qualityRate}%</td>
+                <td style="color: #2563eb; font-weight: bold;">${sub.quantityRate}%</td>
+                <td style="color: #dc2626; font-weight: bold;">${sub.failRate}%</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <!-- Key Insights -->
+        <h2>Key Insights</h2>
+        
+        <table>
+          <tbody>
+            <tr>
+              <td class="text-left" style="width: 30%;">Top Performing Subjects</td>
+              <td class="text-left">${data.subjectPerformance.sort((a, b) => b.qualityRate - a.qualityRate).slice(0, 3).map(s => s.subject).join(', ')}</td>
+            </tr>
+            <tr>
+              <td class="text-left">Subjects Needing Attention</td>
+              <td class="text-left">${data.subjectPerformance.filter(s => s.failRate > 15).map(s => s.subject).join(', ') || 'None'}</td>
+            </tr>
+            <tr>
+              <td class="text-left">Overall Pass Rate</td>
+              <td class="text-left">${data.schoolMetrics.passRate}% (Target: 70%)</td>
+            </tr>
+            <tr>
+              <td class="text-left">Total Assessments</td>
+              <td class="text-left">${data.schoolMetrics.totalAssessments}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Recommendations -->
+        <h2>Recommendations</h2>
+        
+        <table>
+          <tbody>
+            <tr>
+              <td class="text-left" style="color: ${data.schoolMetrics.passRate >= 70 ? '#16a34a' : '#dc2626'};">
+                ${data.schoolMetrics.passRate >= 70 
+                  ? '✓ Pass rate target met. Maintain current teaching strategies.'
+                  : '! Pass rate below target. Consider intervention programs for struggling students.'}
+              </td>
+            </tr>
+            ${data.subjectPerformance.filter(s => s.failRate > 15).length > 0 ? `
+              <tr>
+                <td class="text-left" style="color: #f97316;">
+                  ! Review teaching approaches for: ${data.subjectPerformance.filter(s => s.failRate > 15).map(s => s.subject).join(', ')}
+                </td>
+              </tr>
+            ` : ''}
+            <tr>
+              <td class="text-left">• Schedule parent-teacher meetings for students with Grade 9</td>
+            </tr>
+            <tr>
+              <td class="text-left">• Conduct department meetings to share best practices</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Signatures -->
+        <div class="signatures">
+          <div>
+            <div class="signature-line"></div>
+            <div class="signature-label">Head Teacher</div>
+            <div class="signature-label">Date: _______________</div>
+          </div>
+          <div>
+            <div class="signature-line"></div>
+            <div class="signature-label">Academic Coordinator</div>
+            <div class="signature-label">Date: _______________</div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+          <p>Total Assessments: ${data.schoolMetrics.totalAssessments} • Generated: ${data.generatedDate}</p>
+          <p>This is a computer-generated report. No signature is required.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+};
+
 // ==================== MAIN COMPONENT ====================
 export default function AdminResultsAnalysis() {
   const { user } = useAuth();
@@ -382,6 +830,7 @@ export default function AdminResultsAnalysis() {
   const [selectedTerm, setSelectedTerm] = useState<string>('Term 1');
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   // Get classes for filter
   const { classes, isLoading: classesLoading } = useSchoolClasses({ isActive: true });
@@ -454,7 +903,6 @@ export default function AdminResultsAnalysis() {
       } else if (gender === 'F') {
         gradeMap.set(result.grade, { ...current, girls: current.girls + 1 });
       }
-      // If gender is undefined, we don't count it in boys/girls
     });
 
     const total = endOfTermResults.length;
@@ -711,8 +1159,8 @@ export default function AdminResultsAnalysis() {
     }).sort((a, b) => a.failRate - b.failRate);
   }, [results]);
 
-  // Handle PDF export - DYNAMIC IMPORT TO AVOID ISSUES
-  const handlePDFExport = async () => {
+  // ==================== NEW PRINT FUNCTION (REPLACES PDF EXPORT) ====================
+  const handlePrintPDF = () => {
     try {
       if (!results || results.length === 0) {
         showNotification(
@@ -723,70 +1171,81 @@ export default function AdminResultsAnalysis() {
         return;
       }
 
+      setIsPrinting(true);
+      
       showNotification(
         'info',
-        'Generating PDF...',
-        'Your report is being prepared.'
+        'Preparing print view...',
+        'The print dialog will open in a moment.'
       );
 
-      // Prepare data for PDF
-      const pdfData = {
+      // Prepare data for print
+      const printData = {
         schoolName: 'Kalabo Boarding Secondary School',
         term: selectedTerm,
         year: selectedYear,
+        selectedClass: selectedClass !== 'all' 
+          ? classes?.find(c => c.id === selectedClass)?.name || selectedClass
+          : 'All Classes',
+        schoolMetrics,
+        gradeDistribution,
+        classPerformance,
+        subjectPerformance,
         generatedDate: new Date().toLocaleDateString('en-GB', {
           day: '2-digit',
           month: '2-digit',
           year: 'numeric',
           hour: '2-digit',
-          minute: '2-digit'
-        }),
-        metrics: schoolMetrics,
-        gradeDistribution,
-        classPerformance: classPerformance.slice(0, 10),
-        subjectPerformance: subjectPerformance.slice(0, 15),
-        selectedClass: selectedClass !== 'all' 
-          ? classes?.find(c => c.id === selectedClass)?.name || selectedClass
-          : 'All Classes'
+          minute: '2-digit',
+          second: '2-digit'
+        })
       };
 
-      // Dynamically import pdfMake and the generator
-      const pdfMake = (await import('pdfmake/build/pdfmake')).default;
-      const pdfFonts = (await import('pdfmake/build/vfs_fonts')).default;
+      // Generate HTML content
+      const printHTML = generatePrintHTML(printData);
+
+      // Open print window
+      const printWindow = window.open('', '_blank');
       
-      // Set up fonts with error handling
-      if (pdfFonts && pdfFonts.pdfMake && pdfFonts.pdfMake.vfs) {
-        pdfMake.vfs = pdfFonts.pdfMake.vfs;
-      } else {
-        console.warn('pdfMake fonts not loaded properly, using fallback');
-        // Fallback - create empty vfs
-        pdfMake.vfs = { 'Roboto-Regular.ttf': '' };
+      if (!printWindow) {
+        showNotification(
+          'error',
+          'Pop-up blocked',
+          'Please allow pop-ups for this site to print.'
+        );
+        setIsPrinting(false);
+        return;
       }
 
-      // Dynamically import the generator
-      const { generateAdminResultsPDF } = await import('@/services/pdf/adminResultsPDF');
+      // Write content to new window
+      printWindow.document.write(printHTML);
+      printWindow.document.close();
       
-      // Generate PDF
-      const docDefinition = generateAdminResultsPDF(pdfData);
-      
-      // Create and download PDF
-      const fileName = `School_Results_${selectedTerm}_${selectedYear}_${new Date().toISOString().split('T')[0]}.pdf`;
-      
-      pdfMake.createPdf(docDefinition).download(fileName);
+      // Wait for content to load then print
+      printWindow.onload = () => {
+        setTimeout(() => {
+          printWindow.print();
+          printWindow.onafterprint = () => {
+            printWindow.close();
+          };
+          setIsPrinting(false);
+        }, 500);
+      };
 
       showNotification(
         'success',
-        'PDF Generated Successfully',
-        `File: ${fileName}`
+        'Print view ready',
+        'Use "Save as PDF" in the print dialog.'
       );
-      
+
     } catch (error) {
-      console.error('PDF Generation Error:', error);
+      console.error('Print Error:', error);
       showNotification(
         'error',
-        'PDF Generation Failed',
-        'An error occurred while generating the report.'
+        'Print Failed',
+        'An error occurred while preparing the print view.'
       );
+      setIsPrinting(false);
     }
   };
 
@@ -880,12 +1339,18 @@ export default function AdminResultsAnalysis() {
             {/* Action Buttons */}
             <div className="flex items-center gap-2">
               <button
-                onClick={handlePDFExport}
-                disabled={results.length === 0 || isFetching}
+                onClick={handlePrintPDF}
+                disabled={results.length === 0 || isFetching || isPrinting}
                 className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Download size={18} />
-                <span className={isMobile ? 'hidden sm:inline' : ''}>Export PDF</span>
+                {isPrinting ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Printer size={18} />
+                )}
+                <span className={isMobile ? 'hidden sm:inline' : ''}>
+                  {isPrinting ? 'Preparing...' : 'Print / Save PDF'}
+                </span>
               </button>
               
               <button

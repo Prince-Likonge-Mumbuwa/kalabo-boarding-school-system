@@ -1,7 +1,9 @@
+// @/pages/teacher/TeacherDashboard.tsx - UPDATED WITH REAL PASS RATE
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
+import { useResultsAnalytics } from '@/hooks/useResults';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { BookOpen, Users, TrendingUp, AlertCircle, Loader2, Calendar, ChevronRight, FileText, ClipboardCheck, BarChart3 } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
@@ -86,9 +88,10 @@ interface MetricCardProps {
   description: string;
   color: 'blue' | 'purple' | 'green';
   trend?: string;
+  isLoading?: boolean;
 }
 
-const MetricCard = ({ label, value, icon: Icon, description, color, trend }: MetricCardProps) => {
+const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoading }: MetricCardProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
   
   const colorStyles = {
@@ -131,14 +134,20 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend }: Met
           <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">
             {label}
           </p>
-          <div className="flex items-baseline gap-1">
-            <p className={`text-2xl sm:text-3xl lg:text-4xl font-bold ${style.value}`}>
-              {value}
-            </p>
-            {trend && (
-              <span className="text-xs text-gray-500 ml-1">{trend}</span>
-            )}
-          </div>
+          {isLoading ? (
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-16 bg-gray-200 rounded animate-pulse"></div>
+            </div>
+          ) : (
+            <div className="flex items-baseline gap-1">
+              <p className={`text-2xl sm:text-3xl lg:text-4xl font-bold ${style.value}`}>
+                {value}
+              </p>
+              {trend && (
+                <span className="text-xs text-gray-500 ml-1">{trend}</span>
+              )}
+            </div>
+          )}
         </div>
         <div className={`
           p-2 sm:p-3 rounded-xl flex-shrink-0
@@ -276,12 +285,25 @@ const ClassCard = ({ classItem, isFormTeacher, userId }: ClassCardProps) => {
 export default function TeacherDashboard() {
   const { user } = useAuth();
   const isMobile = useMediaQuery('(max-width: 640px)');
+  const [selectedTerm] = useState<string>('Term 1');
+  const [selectedYear] = useState<number>(new Date().getFullYear());
   
   // Fetch all active classes
   const { 
     classes, 
     isLoading: classesLoading 
   } = useSchoolClasses({ isActive: true });
+
+  // Fetch results analytics for pass rate calculation
+  const { 
+    analytics, 
+    isLoading: resultsLoading,
+    isFetching 
+  } = useResultsAnalytics({
+    teacherId: user?.id || '',
+    term: selectedTerm,
+    year: selectedYear,
+  });
 
   // Find classes assigned to this teacher
   const assignedClasses = useMemo(() => {
@@ -298,13 +320,12 @@ export default function TeacherDashboard() {
     return assignedClasses.find(cls => cls.formTeacherId === user?.id);
   }, [assignedClasses, user?.id]);
 
-  // Calculate stats - Form Teacher card replaced with Pass Rate
+  // Calculate stats with real pass rate from analytics
   const stats = useMemo(() => {
     const totalStudents = assignedClasses.reduce((sum, cls) => sum + (cls.students || 0), 0);
     
-    // Calculate mock pass rate (in real implementation, this would come from results)
-    // For demo purposes, we're using 78%
-    const passRate = assignedClasses.length > 0 ? 78 : 0;
+    // Get real pass rate from analytics data
+    const passRate = analytics?.passRate || 0;
     
     return {
       classesHandled: assignedClasses.length,
@@ -314,7 +335,7 @@ export default function TeacherDashboard() {
       isFormTeacher: !!formTeacherClass,
       formClassName: formTeacherClass?.name,
     };
-  }, [assignedClasses, user?.subjects, formTeacherClass]);
+  }, [assignedClasses, user?.subjects, formTeacherClass, analytics]);
 
   // Loading state
   if (classesLoading) {
@@ -347,6 +368,15 @@ export default function TeacherDashboard() {
                   </span>
                 </>
               )}
+              {(resultsLoading || isFetching) && (
+                <>
+                  <span className="text-gray-300">•</span>
+                  <span className="inline-flex items-center gap-1.5 text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full text-xs">
+                    <Loader2 size={12} className="animate-spin" />
+                    updating stats
+                  </span>
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -376,7 +406,7 @@ export default function TeacherDashboard() {
           </div>
         )}
 
-        {/* ===== KEY METRICS - 3 CARDS (Form Teacher → Pass Rate) ===== */}
+        {/* ===== KEY METRICS - 3 CARDS WITH REAL PASS RATE ===== */}
         {assignedClasses.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
             <MetricCard
@@ -395,11 +425,12 @@ export default function TeacherDashboard() {
             />
             <MetricCard
               label="Pass rate"
-              value={`${stats.passRate}%`}
+              value={stats.passRate > 0 ? `${stats.passRate}%` : '—'}
               icon={TrendingUp}
-              description="Average student pass rate across subjects"
+              description={`Average student pass rate across all subjects • ${selectedTerm} ${selectedYear}`}
               color="green"
-              trend="78%"
+              trend={stats.passRate > 0 ? 'current term' : undefined}
+              isLoading={resultsLoading}
             />
           </div>
         )}
