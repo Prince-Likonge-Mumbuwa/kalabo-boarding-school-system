@@ -1,6 +1,7 @@
 // @/services/resultsService.ts
 // COMPLETE REWRITE - ISACTIVE FILTER ELIMINATED
-// Version 5.1.0 - Added public methods for student progress tracking
+// Version 5.2.0 - Dual ID system: Custom IDs for display, Document IDs for queries
+// FIX: getStudentProgress matches using custom IDs, generateReportCard uses document IDs for results
 
 import {
   collection,
@@ -23,7 +24,7 @@ import { db } from '@/lib/firebase';
 
 export interface StudentResult {
   id: string;
-  studentId: string;
+  studentId: string; // This stores the DOCUMENT ID for querying
   studentName: string;
   classId: string;
   className: string;
@@ -43,6 +44,8 @@ export interface StudentResult {
   status: 'entered' | 'absent' | 'not_entered';
   createdAt: string;
   updatedAt: string;
+  // Optional: store custom ID for reference if needed
+  customStudentId?: string;
 }
 
 export interface SubjectResultSummary {
@@ -61,7 +64,7 @@ export interface SubjectResultSummary {
 
 export interface ReportCardData {
   id: string;
-  studentId: string;
+  studentId: string; // This is the CUSTOM ID for display
   studentName: string;
   className: string;
   classId: string;
@@ -83,11 +86,13 @@ export interface ReportCardData {
   year: number;
   isComplete: boolean;
   completionPercentage: number;
+  // Optional: include document ID for debugging
+  documentId?: string;
 }
 
 export interface ReportReadinessCheck {
   isReady: boolean;
-  studentId: string;
+  studentId: string; // Custom ID
   studentName: string;
   totalSubjects: number;
   completeSubjects: number;
@@ -147,9 +152,9 @@ export interface BulkReportOperation {
   };
 }
 
-// NEW TYPE: Student Progress with detailed subject status
+// Student Progress with detailed subject status
 export interface StudentProgress {
-  studentId: string;
+  studentId: string; // This is the CUSTOM student ID (e.g., STU0240542AV) for display
   studentName: string;
   className: string;
   classId: string;
@@ -174,6 +179,8 @@ export interface StudentProgress {
   // Missing data info
   missingSubjects: number;
   totalSubjects: number;
+  // Optional: store document ID for internal use
+  documentId?: string;
 }
 
 // ==================== CONSTANTS & CONFIGURATION ====================
@@ -184,7 +191,7 @@ const COLLECTIONS = {
   CLASSES: 'classes',
   TEACHER_ASSIGNMENTS: 'teacher_assignments',
   USERS: 'users',
-  REPORT_CARDS: 'report_cards', // Added for future use
+  REPORT_CARDS: 'report_cards',
 } as const;
 
 const SUBJECT_NORMALIZATION_MAP: Record<string, string> = {
@@ -380,40 +387,55 @@ class ResultsService {
 
   /**
    * PUBLIC METHOD: Get all learners in a class - NO STATUS FILTERS
-   * This is the critical fix: we fetch EVERY learner regardless of isActive, status, enrolled, etc.
+   * Returns learners with their CUSTOM student IDs as the primary identifier
    */
-  public async getLearnersInClass(classId: string): Promise<Array<{ id: string; name: string; data: any }>> {
+  public async getLearnersInClass(classId: string): Promise<Array<{ 
+    id: string; // This will be the CUSTOM student ID (e.g., STU0240542AV)
+    name: string; 
+    data: any;
+    documentId: string; // Firestore document ID for queries
+  }>> {
     try {
-      console.log(`🔍 Fetching ALL learners for class: ${classId} (no status filters)`);
+      console.log(`🔍 Fetching ALL learners for class: ${classId}`);
       
-      // SIMPLE QUERY: Just classId, nothing else
       const learnersQuery = query(
         this.learnersCollection,
         where('classId', '==', classId)
-        // NO isActive filter - we want ALL learners
-        // NO status filter - we want ALL learners
-        // NO enrolled filter - we want ALL learners
       );
       
       const snapshot = await getDocs(learnersQuery);
       
-      const learners: Array<{ id: string; name: string; data: any }> = [];
+      const learners: Array<{ id: string; name: string; data: any; documentId: string }> = [];
       snapshot.forEach(doc => {
         const data = doc.data();
-        // Get name from any possible field
         const name = data.name || data.studentName || data.fullName || data.displayName || 'Unknown';
         
+        // Get the custom student ID from the learner document
+        const customStudentId = data.studentId || 
+                               data.id || 
+                               data.registrationNumber || 
+                               data.admissionNumber;
+        
+        if (!customStudentId) {
+          console.warn(`⚠️ Learner ${doc.id} has no custom student ID! Using document ID as fallback.`);
+        }
+        
+        // Use custom ID as primary, fallback to document ID
+        const primaryId = customStudentId || doc.id;
+        
         learners.push({
-          id: doc.id,
+          id: primaryId, // This is the CUSTOM ID for display (e.g., STU0240542AV)
           name,
-          data
+          data: {
+            ...data,
+            firestoreDocId: doc.id
+          },
+          documentId: doc.id // This is the DOCUMENT ID for queries
         });
       });
       
-      console.log(`✅ Found ${learners.length} total learners in class ${classId} (no status filtering)`);
-      if (learners.length > 0) {
-        console.log(`   Sample: ${learners.slice(0, 3).map(l => l.name).join(', ')}${learners.length > 3 ? '...' : ''}`);
-      }
+      console.log(`✅ Found ${learners.length} learners in class ${classId}`);
+      console.log('📝 Learner mappings:', learners.map(l => `${l.name}: CustomID=${l.id}, DocID=${l.documentId}`).join(', '));
       
       return learners;
     } catch (error) {
@@ -423,7 +445,7 @@ class ResultsService {
   }
 
   /**
-   * PUBLIC METHOD: Get total count of learners in a class - NO STATUS FILTERS
+   * PUBLIC METHOD: Get total count of learners in a class
    */
   public async getLearnerCountInClass(classId: string): Promise<number> {
     try {
@@ -432,6 +454,110 @@ class ResultsService {
     } catch (error) {
       console.error(`❌ Error getting learner count for class ${classId}:`, error);
       return 0;
+    }
+  }
+
+  /**
+   * PRIVATE METHOD: Resolve document ID from custom ID
+   */
+  private async resolveDocumentId(customId: string): Promise<string | null> {
+    try {
+      // Try to find by custom ID field
+      const customIdQuery = query(
+        this.learnersCollection,
+        where('studentId', '==', customId)
+      );
+      const customSnapshot = await getDocs(customIdQuery);
+      
+      if (!customSnapshot.empty) {
+        return customSnapshot.docs[0].id;
+      }
+
+      // Try other possible ID fields
+      const regQuery = query(
+        this.learnersCollection,
+        where('registrationNumber', '==', customId)
+      );
+      const regSnapshot = await getDocs(regQuery);
+      
+      if (!regSnapshot.empty) {
+        return regSnapshot.docs[0].id;
+      }
+
+      const admissionQuery = query(
+        this.learnersCollection,
+        where('admissionNumber', '==', customId)
+      );
+      const admissionSnapshot = await getDocs(admissionQuery);
+      
+      if (!admissionSnapshot.empty) {
+        return admissionSnapshot.docs[0].id;
+      }
+
+      // Check if it's already a document ID
+      const docRef = doc(this.learnersCollection, customId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return customId;
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error resolving document ID:', error);
+      return null;
+    }
+  }
+
+  /**
+   * PRIVATE METHOD: Get student document and IDs from any input ID
+   */
+  private async getStudentDocument(inputId: string): Promise<{
+    doc: any;
+    documentId: string;
+    customId: string;
+    data: any;
+  } | null> {
+    try {
+      // Try to find by custom ID first
+      const customIdQuery = query(
+        this.learnersCollection,
+        where('studentId', '==', inputId)
+      );
+      const customSnapshot = await getDocs(customIdQuery);
+      
+      if (!customSnapshot.empty) {
+        const doc = customSnapshot.docs[0];
+        const data = doc.data();
+        const customId = data.studentId || data.id || data.registrationNumber || data.admissionNumber || inputId;
+        
+        return {
+          doc,
+          documentId: doc.id,
+          customId,
+          data
+        };
+      }
+
+      // Try as document ID
+      const docRef = doc(this.learnersCollection, inputId);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const customId = data.studentId || data.id || data.registrationNumber || data.admissionNumber || inputId;
+        
+        return {
+          doc: docSnap,
+          documentId: inputId,
+          customId,
+          data
+        };
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error getting student document:', error);
+      return null;
     }
   }
 
@@ -476,9 +602,6 @@ class ResultsService {
       });
 
       console.log(`📚 Found ${assignments.length} teacher assignments for class ${classId}`);
-      assignments.forEach(a => {
-        console.log(`   - ${a.subject} → Normalized: ${a.subjectId} (Teacher: ${a.teacherName})`);
-      });
       
       return assignments;
     } catch (error) {
@@ -513,10 +636,9 @@ class ResultsService {
     }
   }
 
-  // ==================== NEW METHOD: GET STUDENT PROGRESS ====================
+  // ==================== GET STUDENT PROGRESS ====================
   /**
-   * Get ALL students with their progress data - Like teacher management, always shows all students
-   * This is the key method for the Report Cards page
+   * Get ALL students with their progress data - Matches using custom IDs for display
    */
   async getStudentProgress(
     classId: string,
@@ -524,9 +646,9 @@ class ResultsService {
     year: number
   ): Promise<StudentProgress[]> {
     try {
-      console.log(`🔍 Getting ALL students with progress for class: ${classId}, ${term} ${year}`);
+      console.log(`🔍 Getting student progress for class: ${classId}, ${term} ${year}`);
       
-      // 1. Get ALL learners in class (NO FILTERS - like teacher management)
+      // 1. Get ALL learners with their mappings
       const learners = await this.getLearnersInClass(classId);
       
       if (learners.length === 0) {
@@ -534,7 +656,7 @@ class ResultsService {
         return [];
       }
       
-      // 2. Get expected subjects from teacher assignments
+      // 2. Get expected subjects
       const expectedSubjects = await this.getExpectedSubjectsForClass(classId);
       
       // 3. Get all results for this class/term/year
@@ -553,13 +675,23 @@ class ResultsService {
       
       console.log(`📊 Found ${allResults.length} total result entries`);
       
+      // Group results by studentId (which stores DOCUMENT IDs)
+      const resultsByDocumentId = new Map<string, StudentResult[]>();
+      allResults.forEach(result => {
+        if (!resultsByDocumentId.has(result.studentId)) {
+          resultsByDocumentId.set(result.studentId, []);
+        }
+        resultsByDocumentId.get(result.studentId)!.push(result);
+      });
+      
       // 4. Build progress for each student
       const studentProgress: StudentProgress[] = [];
       
       for (const learner of learners) {
-        const studentResults = allResults.filter(r => r.studentId === learner.id);
+        // Get results using the learner's DOCUMENT ID
+        const studentResults = resultsByDocumentId.get(learner.documentId) || [];
         
-        // Build subject progress for this student
+        // Build subject progress
         const subjects: StudentProgress['subjects'] = [];
         let totalSubjectsCompleted = 0;
         let totalPercentage = 0;
@@ -568,16 +700,13 @@ class ResultsService {
         for (const subject of expectedSubjects) {
           const subjectResults = studentResults.filter(r => r.subjectId === subject.id);
           
-          // Get teacher info from assignments
           const assignments = await this.getTeacherAssignmentsForClass(classId);
           const teacherAssignment = assignments.find(a => a.subjectId === subject.id);
           
-          // Check each exam type
           const week4Result = subjectResults.find(r => r.examType === 'week4');
           const week8Result = subjectResults.find(r => r.examType === 'week8');
           const endOfTermResult = subjectResults.find(r => r.examType === 'endOfTerm');
           
-          // Calculate subject completion (how many exams have data)
           let completedExams = 0;
           if (week4Result) completedExams++;
           if (week8Result) completedExams++;
@@ -586,7 +715,6 @@ class ResultsService {
           const subjectProgress = Math.round((completedExams / 3) * 100);
           if (subjectProgress === 100) totalSubjectsCompleted++;
           
-          // Track overall percentage using end of term if available
           if (endOfTermResult && endOfTermResult.percentage >= 0) {
             totalPercentage += endOfTermResult.percentage;
             subjectsWithScores++;
@@ -619,7 +747,6 @@ class ResultsService {
           });
         }
         
-        // Calculate overall stats
         const overallPercentage = subjectsWithScores > 0 
           ? Math.round(totalPercentage / subjectsWithScores) 
           : 0;
@@ -632,9 +759,7 @@ class ResultsService {
         
         const isComplete = totalSubjectsCompleted === expectedSubjects.length && expectedSubjects.length > 0;
         
-        // Get class name from learner data or from class
         const className = learner.data.className || 
-                         learner.data.class?.name || 
                          (await this.getClassData(classId))?.name || 
                          'Unknown';
         
@@ -644,7 +769,7 @@ class ResultsService {
                     '1';
         
         studentProgress.push({
-          studentId: learner.id,
+          studentId: learner.id, // This is the CUSTOM ID for display
           studentName: learner.name,
           className,
           classId,
@@ -656,16 +781,14 @@ class ResultsService {
           completionPercentage,
           subjects,
           missingSubjects: expectedSubjects.length - totalSubjectsCompleted,
-          totalSubjects: expectedSubjects.length
+          totalSubjects: expectedSubjects.length,
+          documentId: learner.documentId // Include document ID for internal use
         });
       }
       
-      // Sort by student name
       const sorted = studentProgress.sort((a, b) => a.studentName.localeCompare(b.studentName));
       
       console.log(`✅ Found progress data for ${sorted.length} students`);
-      console.log(`   Complete: ${sorted.filter(s => s.isComplete).length}`);
-      console.log(`   In Progress: ${sorted.filter(s => !s.isComplete).length}`);
       
       return sorted;
     } catch (error) {
@@ -778,7 +901,6 @@ class ResultsService {
         }
       });
 
-      // Get total students - NO STATUS FILTER
       const totalStudents = await this.getLearnerCountInClass(classId);
       
       return Array.from(subjectMap.entries()).map(([subjectId, data]) => {
@@ -818,19 +940,20 @@ class ResultsService {
   // ==================== REPORT READINESS ====================
 
   async validateReportCardReadiness(
-    studentId: string,
+    studentId: string, // Can be custom ID or document ID
     term: string,
     year: number
   ): Promise<ReportReadinessCheck> {
     try {
       console.log(`🔍 Validating report readiness for student: ${studentId}`);
       
-      const studentDoc = await getDoc(doc(this.learnersCollection, studentId));
-      if (!studentDoc.exists()) {
+      const studentDoc = await this.getStudentDocument(studentId);
+      
+      if (!studentDoc) {
         throw new Error(`Student not found: ${studentId}`);
       }
       
-      const studentData = studentDoc.data();
+      const { data: studentData, customId, documentId } = studentDoc;
       const studentName = studentData.name || studentData.studentName || 'Unknown';
       const classId = studentData.classId;
 
@@ -842,11 +965,7 @@ class ResultsService {
       
       console.log(`📚 Student ${studentName} in class ${classId} expects ${expectedSubjects.length} subjects`);
 
-      if (expectedSubjects.length === 0) {
-        console.warn(`⚠️ No teacher assignments for class ${classId}. Using actual results only.`);
-      }
-
-      const results = await this.getStudentResults(studentId, { term, year });
+      const results = await this.getStudentResults(documentId, { term, year });
       
       console.log(`📝 Found ${results.length} result entries for student`);
 
@@ -920,7 +1039,7 @@ class ResultsService {
 
       return {
         isReady,
-        studentId,
+        studentId: customId, // Return custom ID for display
         studentName,
         totalSubjects: subjectMap.size,
         completeSubjects,
@@ -950,10 +1069,9 @@ class ResultsService {
       const expectedSubjectIds = expectedSubjectsWithIds.map(s => s.id);
       const hasAssignments = expectedSubjectsWithIds.length > 0;
 
-      // GET ALL LEARNERS - NO STATUS FILTERS
       const learners = await this.getLearnersInClass(classId);
       
-      console.log(`👥 Found ${learners.length} total students in class (no status filtering)`);
+      console.log(`👥 Found ${learners.length} total students in class`);
 
       const readinessChecks = await Promise.allSettled(
         learners.map(learner =>
@@ -1024,7 +1142,7 @@ class ResultsService {
     year: number;
     totalMarks: number;
     results: Array<{
-      studentId: string;
+      studentId: string; // This can be either custom ID or document ID
       studentName: string;
       marks: number;
     }>;
@@ -1046,8 +1164,7 @@ class ResultsService {
       if (existing.exists && !options?.overwrite) {
         throw new Error(
           `Results already exist for ${normalizedSubjectName} - ${data.examType}. ` +
-          `Found ${existing.count} existing entries. ` +
-          `Set overwrite option to true to replace them.`
+          `Found ${existing.count} existing entries.`
         );
       }
 
@@ -1059,7 +1176,15 @@ class ResultsService {
       const classData = classDoc.data();
       const form = classData?.level?.toString() || '1';
 
-      data.results.forEach(result => {
+      for (const result of data.results) {
+        // Resolve the document ID for this student
+        const studentDoc = await this.getStudentDocument(result.studentId);
+        
+        if (!studentDoc) {
+          console.warn(`⚠️ Could not resolve student ID: ${result.studentId}, skipping...`);
+          continue;
+        }
+
         const percentage = result.marks < 0
           ? -1
           : Math.round((result.marks / data.totalMarks) * 100);
@@ -1070,14 +1195,14 @@ class ResultsService {
 
         const resultData: StudentResult = {
           id: this.generateResultId(
-            result.studentId,
+            studentDoc.documentId, // Use document ID for the result ID
             normalizedSubjectId,
             data.examType,
             data.term,
             data.year
           ),
-          studentId: result.studentId,
-          studentName: result.studentName,
+          studentId: studentDoc.documentId, // Store DOCUMENT ID for queries
+          studentName: studentDoc.data.name || result.studentName,
           classId: data.classId,
           className: data.className,
           form,
@@ -1096,15 +1221,16 @@ class ResultsService {
           status,
           createdAt: now,
           updatedAt: now,
+          customStudentId: studentDoc.customId // Optionally store custom ID for reference
         };
 
         const docRef = doc(this.resultsCollection, resultData.id);
         batch.set(docRef, resultData, { merge: true });
         savedResults.push(resultData);
-      });
+      }
 
       await batch.commit();
-      console.log(`✅ Saved ${savedResults.length} results for ${normalizedSubjectName} - ${data.examName}`);
+      console.log(`✅ Saved ${savedResults.length} results for ${normalizedSubjectName}`);
 
       return {
         success: true,
@@ -1121,7 +1247,7 @@ class ResultsService {
   // ==================== GENERATE REPORT CARD ====================
   
   async generateReportCard(
-    studentId: string,
+    studentId: string, // This is the CUSTOM ID from the UI (e.g., STU0240542AV)
     term: string,
     year: number,
     options?: {
@@ -1130,15 +1256,17 @@ class ResultsService {
     }
   ): Promise<ReportCardData | null> {
     try {
-      console.log(`📝 Generating report card for student: ${studentId}, ${term} ${year}`);
+      console.log(`📝 Generating report card for student with custom ID: ${studentId}, ${term} ${year}`);
       
-      const studentDoc = await getDoc(doc(this.learnersCollection, studentId));
-      if (!studentDoc.exists()) {
+      // STEP 1: Get student document and both IDs
+      const studentDoc = await this.getStudentDocument(studentId);
+      
+      if (!studentDoc) {
         console.warn(`⚠️ Student not found: ${studentId}`);
         return null;
       }
       
-      const studentData = studentDoc.data();
+      const { data: studentData, documentId, customId } = studentDoc;
       const studentName = studentData.name || studentData.studentName || 'Unknown';
       const classId = studentData.classId;
       
@@ -1147,6 +1275,7 @@ class ResultsService {
         return null;
       }
 
+      // Get class data
       const classDoc = await getDoc(doc(this.classesCollection, classId));
       if (!classDoc.exists()) {
         console.warn(`⚠️ Class not found: ${classId}`);
@@ -1156,9 +1285,12 @@ class ResultsService {
       const className = classData.name || 'Unknown';
       const form = classData.level?.toString() || '1';
 
+      // STEP 2: Fetch results using the DOCUMENT ID
+      console.log(`🔍 Fetching results using document ID: ${documentId}`);
+      
       const resultsQuery = query(
         this.resultsCollection,
-        where('studentId', '==', studentId),
+        where('studentId', '==', documentId), // Use document ID here!
         where('term', '==', term),
         where('year', '==', year)
       );
@@ -1175,8 +1307,9 @@ class ResultsService {
         allResults.push(doc.data() as StudentResult);
       });
 
-      console.log(`📚 Found ${allResults.length} result records for student`);
+      console.log(`📚 Found ${allResults.length} result records using document ID: ${documentId}`);
 
+      // Process results into subject map
       const subjectMap = new Map<string, {
         subjectId: string;
         subjectName: string;
@@ -1209,6 +1342,7 @@ class ResultsService {
         if (result.examType === 'endOfTerm') subject.endOfTerm = result.percentage;
       });
 
+      // Build subjects array
       const subjects: SubjectResultSummary[] = [];
       let totalPercentage = 0;
       let validSubjectsCount = 0;
@@ -1268,16 +1402,17 @@ class ResultsService {
         return null;
       }
 
-      const position = await this.calculatePosition(studentId, classId, term, year);
+      const position = await this.calculatePosition(documentId, classId, term, year);
       const teachersComment = this.generateTeacherComment(
         overallGrade,
         averagePercentage,
         subjects
       );
 
+      // STEP 3: Return report card with CUSTOM ID for display
       const reportCard: ReportCardData = {
-        id: `report-${studentId}-${term}-${year}`,
-        studentId,
+        id: `report-${customId}-${term}-${year}`,
+        studentId: customId, // Return the CUSTOM ID for display
         studentName,
         className,
         classId,
@@ -1288,7 +1423,7 @@ class ResultsService {
         totalMarks: totalPercentage,
         percentage: averagePercentage,
         status: averagePercentage >= 50 && averagePercentage > 0 ? 'pass' : 'fail',
-        improvement: await this.calculateImprovement(studentId, term, year),
+        improvement: await this.calculateImprovement(documentId, term, year),
         subjects: subjects.sort((a, b) => a.subjectName.localeCompare(b.subjectName)),
         attendance: studentData.attendance || 95,
         teachersComment,
@@ -1299,9 +1434,11 @@ class ResultsService {
         year,
         isComplete,
         completionPercentage,
+        documentId // Include for debugging if needed
       };
 
       console.log(`✅ Generated report card for ${studentName}: ${averagePercentage}%`);
+      console.log(`   Display ID: ${customId}, Document ID used for queries: ${documentId}`);
 
       return reportCard;
     } catch (error) {
@@ -1323,9 +1460,7 @@ class ResultsService {
   ): Promise<BulkReportOperation> {
     try {
       console.log(`🎓 Generating class report cards for: ${classId}, ${term} ${year}`);
-      console.log(`   Options: includeIncomplete=${options?.includeIncomplete}, markMissing=${options?.markMissing}`);
-
-      // GET ALL LEARNERS - NO STATUS FILTERS (THIS IS THE CRITICAL FIX)
+      
       const learners = await this.getLearnersInClass(classId);
       
       if (learners.length === 0) {
@@ -1343,9 +1478,8 @@ class ResultsService {
         };
       }
 
-      console.log(`👥 Generating reports for ${learners.length} learners in class ${classId}`);
+      console.log(`👥 Generating reports for ${learners.length} learners`);
 
-      // Generate report cards for ALL learners
       const reportCardsPromises = learners.map(learner =>
         this.generateReportCard(learner.id, term, year, {
           includeIncomplete: options?.includeIncomplete ?? true,
@@ -1374,10 +1508,7 @@ class ResultsService {
         }
       });
 
-      console.log(`📊 Report generation complete:`);
-      console.log(`   ✅ Success: ${successCount}`);
-      console.log(`   ⚠️  Null (no data): ${nullCount}`);
-      console.log(`   ❌ Errors: ${errorCount}`);
+      console.log(`📊 Report generation complete: ${successCount} success, ${nullCount} no data, ${errorCount} errors`);
 
       const passed = reportCards.filter(r => r.status === 'pass').length;
       const failed = reportCards.filter(r => r.status === 'fail').length;
@@ -1454,7 +1585,7 @@ class ResultsService {
   }
 
   async getStudentResults(
-    studentId: string,
+    studentId: string, // This should be the DOCUMENT ID for queries
     filters?: {
       term?: string;
       year?: number;
@@ -1857,9 +1988,6 @@ class ResultsService {
 
   // ==================== PUBLIC HELPER METHODS ====================
 
-  /**
-   * PUBLIC METHOD: Get class data by ID
-   */
   public async getClassData(classId: string): Promise<any> {
     try {
       const classDoc = await getDoc(doc(this.classesCollection, classId));
@@ -1873,7 +2001,7 @@ class ResultsService {
   // ==================== PRIVATE HELPER METHODS ====================
 
   private generateResultId(
-    studentId: string,
+    studentId: string, // This should be the DOCUMENT ID
     subjectId: string,
     examType: string,
     term: string,
@@ -1930,7 +2058,7 @@ class ResultsService {
   }
 
   private async calculatePosition(
-    studentId: string,
+    studentDocId: string, // This should be the DOCUMENT ID
     classId: string,
     term: string,
     year: number
@@ -1971,7 +2099,7 @@ class ResultsService {
         }))
         .sort((a, b) => b.average - a.average);
 
-      const position = rankings.findIndex(r => r.studentId === studentId) + 1;
+      const position = rankings.findIndex(r => r.studentId === studentDocId) + 1;
       const total = rankings.length;
       const suffix = this.getOrdinalSuffix(position);
       
@@ -1992,7 +2120,7 @@ class ResultsService {
   }
 
   private async calculateImprovement(
-    studentId: string,
+    studentDocId: string, // This should be the DOCUMENT ID
     currentTerm: string,
     currentYear: number
   ): Promise<'improved' | 'declined' | 'stable'> {
@@ -2001,7 +2129,7 @@ class ResultsService {
       const previousTerm = termMap[currentTerm as keyof typeof termMap];
       const previousYear = currentTerm === 'Term 1' ? currentYear - 1 : currentYear;
 
-      const currentResults = await this.getStudentResults(studentId, {
+      const currentResults = await this.getStudentResults(studentDocId, {
         term: currentTerm,
         year: currentYear,
       });
@@ -2011,7 +2139,7 @@ class ResultsService {
         ? currentEndOfTerm.reduce((sum, r) => sum + r.percentage, 0) / currentEndOfTerm.length
         : 0;
 
-      const previousResults = await this.getStudentResults(studentId, {
+      const previousResults = await this.getStudentResults(studentDocId, {
         term: previousTerm,
         year: previousYear,
       });
