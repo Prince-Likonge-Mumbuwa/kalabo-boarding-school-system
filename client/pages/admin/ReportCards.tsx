@@ -1,4 +1,4 @@
-// @/pages/admin/ReportCards.tsx - OPTIMIZED VERSION
+// @/pages/admin/ReportCards.tsx - OPTIMIZED TABULAR FORMAT with Mobile Support
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -9,26 +9,23 @@ import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useAuth } from '@/hooks/useAuth';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import {
-  Download,
-  Mail,
   Search,
   Eye,
   CheckCircle,
   XCircle,
   FileText,
-  X,
   BookOpen,
-  Calendar,
   AlertTriangle,
   RefreshCw,
   GraduationCap,
   Clock,
-  Award,
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Filter,
-  ChevronDown
+  ChevronDown,
+  Printer,
+  Download,
+  X,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 // ==================== TYPES ====================
@@ -59,31 +56,58 @@ interface StudentProgress {
   totalSubjects: number;
 }
 
-interface StudentProgressSummary {
-  total: number;
-  complete: number;
-  incomplete: number;
-  averageCompletion: number;
-  passCount: number;
-  failCount: number;
-  pendingCount: number;
+interface ReportCardSubject {
+  subjectId: string;
+  subjectName: string;
+  week4: number;
+  week8: number;
+  endOfTerm: number;
+  grade: number;
+  gradeDescription: string;
 }
 
-const GRADE_SYSTEM: Record<number | 'X', { min: number; max: number; description: string; color: string }> = {
-  1: { min: 75, max: 100, description: 'Distinction', color: 'bg-gradient-to-r from-green-500 to-emerald-600' },
-  2: { min: 70, max: 74, description: 'Distinction', color: 'bg-gradient-to-r from-green-400 to-green-500' },
-  3: { min: 65, max: 69, description: 'Merit', color: 'bg-gradient-to-r from-blue-500 to-blue-600' },
-  4: { min: 60, max: 64, description: 'Merit', color: 'bg-gradient-to-r from-blue-400 to-blue-500' },
-  5: { min: 55, max: 59, description: 'Credit', color: 'bg-gradient-to-r from-cyan-400 to-cyan-500' },
-  6: { min: 50, max: 54, description: 'Credit', color: 'bg-gradient-to-r from-cyan-300 to-cyan-400' },
-  7: { min: 45, max: 49, description: 'Satisfactory', color: 'bg-gradient-to-r from-yellow-400 to-yellow-500' },
-  8: { min: 40, max: 44, description: 'Satisfactory', color: 'bg-gradient-to-r from-orange-400 to-orange-500' },
-  9: { min: 0, max: 39, description: 'Unsatisfactory', color: 'bg-gradient-to-r from-red-400 to-red-500' },
-  X: { min: -1, max: -1, description: 'Absent', color: 'bg-gradient-to-r from-gray-400 to-gray-500' },
+interface ReportCardData {
+  id: string;
+  studentId: string;
+  studentName: string;
+  className: string;
+  classId: string;
+  form: string;
+  grade: number;
+  position: string;
+  gender: string;
+  totalMarks: number;
+  percentage: number;
+  status: 'pass' | 'fail';
+  improvement: 'improved' | 'declined' | 'stable';
+  subjects: ReportCardSubject[];
+  attendance: number;
+  teachersComment: string;
+  parentsEmail: string;
+  parentsPhone?: string;
+  generatedDate: string;
+  term: string;
+  year: number;
+  isComplete: boolean;
+  completionPercentage: number;
+}
+
+const GRADE_SYSTEM: Record<number | 'X', { min: number; max: number; description: string; color: string; shortDesc: string }> = {
+  1: { min: 75, max: 100, description: 'Distinction', shortDesc: 'D1', color: 'bg-green-600' },
+  2: { min: 70, max: 74, description: 'Distinction', shortDesc: 'D2', color: 'bg-green-500' },
+  3: { min: 65, max: 69, description: 'Merit', shortDesc: 'M1', color: 'bg-blue-600' },
+  4: { min: 60, max: 64, description: 'Merit', shortDesc: 'M2', color: 'bg-blue-500' },
+  5: { min: 55, max: 59, description: 'Credit', shortDesc: 'C1', color: 'bg-cyan-600' },
+  6: { min: 50, max: 54, description: 'Credit', shortDesc: 'C2', color: 'bg-cyan-500' },
+  7: { min: 45, max: 49, description: 'Satisfactory', shortDesc: 'S1', color: 'bg-yellow-500' },
+  8: { min: 40, max: 44, description: 'Satisfactory', shortDesc: 'S2', color: 'bg-orange-500' },
+  9: { min: 0, max: 39, description: 'Unsatisfactory', shortDesc: 'U', color: 'bg-red-500' },
+  X: { min: -1, max: -1, description: 'Absent', shortDesc: 'ABS', color: 'bg-gray-500' },
 };
 
 const getGradeDisplay = (grade: number): string => grade === -1 ? 'X' : grade.toString();
-const getGradeInfo = (grade: number) => GRADE_SYSTEM[grade === -1 ? 'X' : grade] || GRADE_SYSTEM[9];
+const getGradeDescription = (grade: number): string => GRADE_SYSTEM[grade === -1 ? 'X' : grade]?.shortDesc || '—';
+const getGradeColor = (grade: number): string => GRADE_SYSTEM[grade === -1 ? 'X' : grade]?.color || 'bg-gray-500';
 
 // ==================== STATUS BADGE ====================
 const StatusBadge = ({ status }: { status: 'pass' | 'fail' | 'pending' }) => {
@@ -104,30 +128,15 @@ const StatusBadge = ({ status }: { status: 'pass' | 'fail' | 'pending' }) => {
 };
 
 // ==================== PROGRESS BAR ====================
-const ProgressBar = ({ 
-  progress, 
-  size = 'md',
-  showLabel = true,
-  color 
-}: { 
-  progress: number; 
-  size?: 'sm' | 'md' | 'lg';
-  showLabel?: boolean;
-  color?: string;
-}) => {
+const ProgressBar = ({ progress, size = 'md', showLabel = true }: { progress: number; size?: 'sm' | 'md' | 'lg'; showLabel?: boolean }) => {
   const getProgressColor = (p: number) => {
-    if (color) return color;
     if (p >= 75) return 'bg-green-500';
     if (p >= 50) return 'bg-blue-500';
     if (p >= 25) return 'bg-yellow-500';
     return 'bg-red-500';
   };
 
-  const heights = {
-    sm: 'h-1.5',
-    md: 'h-2',
-    lg: 'h-3',
-  };
+  const heights = { sm: 'h-1.5', md: 'h-2', lg: 'h-3' };
 
   return (
     <div className="w-full">
@@ -138,63 +147,7 @@ const ProgressBar = ({
         </div>
       )}
       <div className={`w-full ${heights[size]} bg-gray-200 rounded-full overflow-hidden`}>
-        <div 
-          className={`h-full ${getProgressColor(progress)} transition-all duration-300`}
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-    </div>
-  );
-};
-
-// ==================== SUBJECT PROGRESS ROW (for modal only) ====================
-const SubjectProgressRow = ({ subject }: { subject: SubjectProgress }) => {
-  const getExamStatusColor = (status: string) => {
-    switch(status) {
-      case 'complete': return 'text-green-600 bg-green-50';
-      case 'absent': return 'text-gray-600 bg-gray-50';
-      default: return 'text-red-600 bg-red-50';
-    }
-  };
-
-  const getExamStatusIcon = (status: string) => {
-    switch(status) {
-      case 'complete': return <CheckCircle size={12} className="text-green-600" />;
-      case 'absent': return <XCircle size={12} className="text-gray-600" />;
-      default: return <AlertTriangle size={12} className="text-red-600" />;
-    }
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex-1">
-          <span className="text-sm font-medium text-gray-900">{subject.subjectName}</span>
-          <span className="ml-2 text-xs text-gray-500">({subject.teacherName})</span>
-        </div>
-        <span className="text-xs font-medium text-gray-900">{subject.subjectProgress}%</span>
-      </div>
-      
-      {/* Subject Progress Bar */}
-      <ProgressBar progress={subject.subjectProgress} size="sm" showLabel={false} />
-      
-      {/* Exam Status Icons */}
-      <div className="flex items-center gap-3 mt-1">
-        <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getExamStatusColor(subject.week4.status)}`}>
-          {getExamStatusIcon(subject.week4.status)}
-          <span>W4</span>
-          {subject.week4.marks && <span className="ml-1 font-medium">{subject.week4.marks}%</span>}
-        </div>
-        <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getExamStatusColor(subject.week8.status)}`}>
-          {getExamStatusIcon(subject.week8.status)}
-          <span>W8</span>
-          {subject.week8.marks && <span className="ml-1 font-medium">{subject.week8.marks}%</span>}
-        </div>
-        <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getExamStatusColor(subject.endOfTerm.status)}`}>
-          {getExamStatusIcon(subject.endOfTerm.status)}
-          <span>EOT</span>
-          {subject.endOfTerm.marks && <span className="ml-1 font-medium">{subject.endOfTerm.marks}%</span>}
-        </div>
+        <div className={`h-full ${getProgressColor(progress)} transition-all duration-300`} style={{ width: `${progress}%` }} />
       </div>
     </div>
   );
@@ -220,19 +173,20 @@ const CardSkeleton = () => (
   </div>
 );
 
-// ==================== STUDENT CARD COMPONENT - SIMPLIFIED ====================
+// ==================== STUDENT CARD COMPONENT ====================
 interface StudentCardProps {
   student: StudentProgress;
-  onViewDetails: (studentId: string) => void;
+  onClick: () => void;
 }
 
-const StudentCard = ({ student, onViewDetails }: StudentCardProps) => {
-  const gradeInfo = getGradeInfo(student.overallGrade);
+const StudentCard = ({ student, onClick }: StudentCardProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg transition-all duration-300 hover:border-gray-300 hover:-translate-y-0.5 h-full flex flex-col">
-      {/* Header */}
+    <button
+      onClick={onClick}
+      className="w-full bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg transition-all duration-300 hover:border-blue-300 hover:-translate-y-0.5 text-left"
+    >
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className="w-10 h-10 bg-gradient-to-br from-blue-50 to-indigo-100 rounded-full flex items-center justify-center flex-shrink-0">
@@ -243,317 +197,385 @@ const StudentCard = ({ student, onViewDetails }: StudentCardProps) => {
             <p className="text-xs text-gray-500 truncate">{student.studentId}</p>
           </div>
         </div>
-        <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm ${gradeInfo.color} flex-shrink-0`}>
+        <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm ${getGradeColor(student.overallGrade)} flex-shrink-0`}>
           {student.overallGrade > 0 ? getGradeDisplay(student.overallGrade) : '—'}
         </div>
       </div>
       
-      {/* Class and Quick Stats - 2 columns */}
       <div className="grid grid-cols-2 gap-2 mb-3">
         <div>
           <p className="text-[10px] text-gray-500">Class</p>
           <p className="font-medium text-gray-900 text-xs truncate">{student.className}</p>
         </div>
         <div className="text-right">
-          <p className="text-[10px] text-gray-500">Overall</p>
+          <p className="text-[10px] text-gray-500">Average</p>
           <p className="font-bold text-blue-600 text-xs sm:text-sm">
             {student.overallPercentage > 0 ? `${student.overallPercentage}%` : '—'}
           </p>
         </div>
       </div>
       
-      {/* SINGLE Overall Progress Bar - SIMPLIFIED */}
       <div className="mb-3">
         <div className="flex items-center justify-between text-[10px] mb-1">
-          <span className="text-gray-600">Report Readiness</span>
+          <span className="text-gray-600">Completion</span>
           <span className="font-medium text-gray-900">{student.completionPercentage}%</span>
         </div>
         <ProgressBar progress={student.completionPercentage} size="sm" showLabel={false} />
       </div>
       
-      {/* Status Badge and Missing Subjects - Combined row */}
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between">
         <StatusBadge status={student.status} />
         {student.missingSubjects > 0 && (
-          <div className="flex items-center gap-1 text-yellow-700 bg-yellow-50 px-2 py-0.5 rounded-full">
+          <div className="flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
             <AlertTriangle size={10} />
             <span className="text-[10px] font-medium">{student.missingSubjects} missing</span>
           </div>
         )}
       </div>
+    </button>
+  );
+};
+
+// ==================== MOBILE CARD VIEW ====================
+const MobileSubjectCard = ({ subject }: { subject: ReportCardSubject }) => {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-3 mb-2">
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="font-medium text-gray-900 text-sm">{subject.subjectName}</h4>
+        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs ${getGradeColor(subject.grade)}`}>
+          {subject.grade > 0 ? getGradeDisplay(subject.grade) : '—'}
+        </div>
+      </div>
       
-      {/* Action Button - Compact */}
-      <button
-        onClick={() => onViewDetails(student.studentId)}
-        className="w-full py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors flex items-center justify-center gap-1.5 text-xs font-medium mt-auto"
-      >
-        <Eye size={14} />
-        <span>View Report</span>
-      </button>
+      <div className="grid grid-cols-3 gap-2">
+        <div className="text-center p-2 bg-gray-50 rounded-lg">
+          <p className="text-[10px] text-gray-500">W4</p>
+          <p className="font-medium text-xs">
+            {subject.week4 >= 0 ? `${subject.week4}%` : 
+             subject.week4 === -1 ? 'ABS' : '—'}
+          </p>
+        </div>
+        <div className="text-center p-2 bg-gray-50 rounded-lg">
+          <p className="text-[10px] text-gray-500">W8</p>
+          <p className="font-medium text-xs">
+            {subject.week8 >= 0 ? `${subject.week8}%` : 
+             subject.week8 === -1 ? 'ABS' : '—'}
+          </p>
+        </div>
+        <div className="text-center p-2 bg-blue-50 rounded-lg">
+          <p className="text-[10px] text-blue-600">EOT</p>
+          <p className="font-medium text-xs text-blue-600">
+            {subject.endOfTerm >= 0 ? `${subject.endOfTerm}%` : 
+             subject.endOfTerm === -1 ? 'ABS' : '—'}
+          </p>
+        </div>
+      </div>
+      
+      <div className="mt-2 text-center">
+        <span className="text-xs font-medium text-gray-700">
+          {getGradeDescription(subject.grade)}
+        </span>
+      </div>
     </div>
   );
 };
 
-// ==================== REPORT DETAIL MODAL ====================
-interface ReportDetailModalProps {
+// ==================== TABULAR REPORT MODAL ====================
+interface ReportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  student: StudentProgress | null;
-  term: string;
-  year: number;
-  totalLearners?: number;
+  report: ReportCardData | null;
+  studentName: string;
+  loading?: boolean;
 }
 
-const ReportDetailModal = ({ 
-  isOpen, 
-  onClose, 
-  student, 
-  term, 
-  year,
-  totalLearners = 0
-}: ReportDetailModalProps) => {
-  const { generateReportCard } = useResults();
-  const [fullReport, setFullReport] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportModalProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
 
-  useEffect(() => {
-    if (isOpen && student) {
-      setLoading(true);
-      setError(null);
-      
-      console.log('📝 Generating report for student:', {
-        studentId: student.studentId,
-        studentName: student.studentName,
-        term,
-        year
-      });
-      
-      generateReportCard({
-        studentId: student.studentId,
-        term: term,
-        year: year,
-        options: {
-          includeIncomplete: true,
-          markMissing: true,
-        }
-      })
-        .then(report => {
-          if (report) {
-            console.log('✅ Report generated successfully:', report);
-            setFullReport(report);
-          } else {
-            console.warn('⚠️ No report data generated');
-            setError('No results found for this student in the selected term.');
-            setFullReport(null);
-          }
-        })
-        .catch(error => {
-          console.error('❌ Error generating report:', error);
-          setError('Failed to generate report. Please try again.');
-          setFullReport(null);
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    }
-  }, [isOpen, student, term, year, generateReportCard]);
+  if (!isOpen) return null;
 
-  if (!isOpen || !student) return null;
+  const handlePrint = () => {
+    window.print();
+  };
 
-  const positionText = fullReport?.position 
-    ? `${fullReport.position} out of ${totalLearners || '—'}`
-    : '—';
+  // Mobile View
+  if (isMobile) {
+    return (
+      <div className="fixed inset-0 z-50 overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+        <div className="relative bg-white min-h-screen w-full">
+          
+          {/* Mobile Header */}
+          <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+            <button onClick={onClose} className="p-2">
+              <ChevronLeft size={20} className="text-gray-600" />
+            </button>
+            <h2 className="text-sm font-semibold text-gray-900">Report Card</h2>
+            <button onClick={handlePrint} className="p-2">
+              <Printer size={18} className="text-gray-600" />
+            </button>
+          </div>
 
-  const gender = student.studentId?.startsWith('B') ? 'Male' : 
-                 student.studentId?.startsWith('G') ? 'Female' : '—';
+          {/* Mobile Content */}
+          <div className="p-4">
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-600 border-t-transparent"></div>
+              </div>
+            ) : !report ? (
+              <div className="text-center py-12">
+                <FileText size={48} className="mx-auto text-gray-300 mb-3" />
+                <p className="text-gray-500">No report data available</p>
+              </div>
+            ) : (
+              <>
+                {/* School Header */}
+                <div className="text-center mb-4">
+                  <h1 className="text-lg font-bold text-gray-900">MINISTRY OF EDUCATION</h1>
+                  <h2 className="text-base font-semibold text-gray-800">KALABO BOARDING SECONDARY SCHOOL</h2>
+                  <p className="text-xs text-blue-600 mt-1 uppercase">Learner Report Card</p>
+                </div>
 
+                {/* Student Info Cards */}
+                <div className="space-y-2 mb-4">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-gray-50 p-2 rounded-lg">
+                      <p className="text-[10px] text-gray-500">Name</p>
+                      <p className="font-medium text-xs truncate">{report.studentName}</p>
+                    </div>
+                    <div className="bg-gray-50 p-2 rounded-lg">
+                      <p className="text-[10px] text-gray-500">ID</p>
+                      <p className="font-medium text-xs truncate">{report.studentId}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="bg-gray-50 p-2 rounded-lg">
+                      <p className="text-[10px] text-gray-500">Class</p>
+                      <p className="font-medium text-xs">{report.className}</p>
+                    </div>
+                    <div className="bg-gray-50 p-2 rounded-lg">
+                      <p className="text-[10px] text-gray-500">Term</p>
+                      <p className="font-medium text-xs">{report.term}</p>
+                    </div>
+                    <div className="bg-gray-50 p-2 rounded-lg">
+                      <p className="text-[10px] text-gray-500">Avg</p>
+                      <p className="font-medium text-xs text-blue-600">{report.percentage}%</p>
+                    </div>
+                    <div className="bg-gray-50 p-2 rounded-lg">
+                      <p className="text-[10px] text-gray-500">Pos</p>
+                      <p className="font-medium text-xs text-blue-600">{report.position.split(' ')[0]}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Subjects as Cards */}
+                <div className="space-y-2 mb-4">
+                  <h3 className="text-xs font-semibold text-gray-700 mb-2">Subjects</h3>
+                  {report.subjects.map((subject, index) => (
+                    <MobileSubjectCard key={index} subject={subject} />
+                  ))}
+                </div>
+
+                {/* Teacher's Comment */}
+                <div className="bg-gray-50 p-3 rounded-lg mb-4">
+                  <p className="text-[10px] text-gray-500 uppercase mb-1">Teacher's Comment</p>
+                  <p className="text-xs text-gray-800">"{report.teachersComment}"</p>
+                </div>
+
+                {/* Footer */}
+                <div className="text-[10px] text-gray-400 text-right">
+                  Generated: {new Date().toLocaleDateString('en-GB')}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Desktop View
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
-      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="flex min-h-full items-center justify-center p-2 sm:p-4">
-        <div className="relative bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div className="relative bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl">
           
-          {/* Loading State */}
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            </div>
-          ) : error ? (
-            <div className="p-6 sm:p-8 text-center">
-              <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 bg-red-100 rounded-full mb-4">
-                <AlertTriangle size={isMobile ? 20 : 24} className="text-red-600" />
-              </div>
-              <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-2">Error</h3>
-              <p className="text-sm text-gray-600 mb-4">{error}</p>
-              <button
-                onClick={onClose}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-              >
-                Close
-              </button>
-            </div>
-          ) : (
-            <>
-              {/* Header - Compact on mobile */}
-              <div className="text-center py-4 sm:py-6 px-4 border-b border-gray-200 bg-gradient-to-b from-gray-50 to-white">
-                <h1 className="text-lg sm:text-2xl font-bold text-gray-900 tracking-tight">
-                  MINISTRY OF EDUCATION
-                </h1>
-                <h2 className="text-base sm:text-xl font-semibold text-gray-800 mt-1">
-                  KALABO BOARDING SECONDARY SCHOOL
-                </h2>
-                <h3 className="text-sm sm:text-lg font-medium text-blue-600 mt-2 uppercase tracking-wider">
-                  LEARNER REPORT CARD
-                </h3>
-              </div>
+          {/* Modal Header */}
+          <div className="sticky top-0 z-10 bg-white border-b border-gray-200 rounded-t-2xl px-6 py-3 flex items-center justify-end gap-2">
+            <button
+              onClick={handlePrint}
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Print"
+            >
+              <Printer size={18} />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </div>
 
-              {/* Student Info - Responsive grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 p-4 sm:p-6 bg-gray-50 border-b border-gray-200">
-                <div className="col-span-2 sm:col-span-1">
-                  <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider">Name</p>
-                  <p className="font-semibold text-gray-900 text-xs sm:text-sm truncate">{student.studentName}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider">Class</p>
-                  <p className="font-semibold text-gray-900 text-xs sm:text-sm">{student.className}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider">Position</p>
-                  <p className="font-semibold text-blue-600 text-xs sm:text-sm truncate">{positionText}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider">Gender</p>
-                  <p className="font-semibold text-gray-900 text-xs sm:text-sm">{gender}</p>
-                </div>
-                <div className="col-span-2 sm:col-span-1">
-                  <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider">Term/Year</p>
-                  <p className="font-semibold text-gray-900 text-xs sm:text-sm">{term} {year}</p>
-                </div>
+          {/* Modal Content */}
+          <div className="flex-1 overflow-auto p-6">
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-600 border-t-transparent"></div>
               </div>
+            ) : !report ? (
+              <div className="text-center py-12">
+                <FileText size={48} className="mx-auto text-gray-300 mb-3" />
+                <p className="text-gray-500">No report data available</p>
+              </div>
+            ) : (
+              <div className="min-w-[900px]">
+                {/* School Header */}
+                <div className="text-center mb-6">
+                  <h1 className="text-2xl font-bold text-gray-900">MINISTRY OF EDUCATION</h1>
+                  <h2 className="text-xl font-semibold text-gray-800 mt-1">KALABO BOARDING SECONDARY SCHOOL</h2>
+                  <h3 className="text-lg font-medium text-blue-600 mt-2 uppercase tracking-wider">LEARNER REPORT CARD</h3>
+                </div>
 
-              {/* Subjects Table - Horizontal scroll on mobile */}
-              <div className="p-4 sm:p-6 overflow-x-auto">
-                <table className="w-full border-collapse min-w-[600px] sm:min-w-full">
+                {/* Student Info Grid */}
+                <div className="grid grid-cols-8 gap-3 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                  <div className="col-span-2">
+                    <p className="text-xs text-gray-500">Student Name</p>
+                    <p className="font-semibold text-gray-900 truncate">{report.studentName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">ID</p>
+                    <p className="font-semibold text-gray-900">{report.studentId}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Class</p>
+                    <p className="font-semibold text-gray-900">{report.className}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Gender</p>
+                    <p className="font-semibold text-gray-900">{report.gender}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Term</p>
+                    <p className="font-semibold text-gray-900">{report.term}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Position</p>
+                    <p className="font-semibold text-blue-600">{report.position}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Average</p>
+                    <p className="font-semibold text-gray-900">{report.percentage}%</p>
+                  </div>
+                </div>
+
+                {/* Results Table - Compact */}
+                <table className="w-full border-collapse mb-6 text-sm">
                   <thead>
                     <tr className="bg-gray-100">
-                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-left text-xs font-semibold text-gray-700 border border-gray-300">
-                        Subject
-                      </th>
-                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs font-semibold text-gray-700 border border-gray-300">
-                        W4
-                      </th>
-                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs font-semibold text-gray-700 border border-gray-300">
-                        W8
-                      </th>
-                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs font-semibold text-gray-700 border border-gray-300">
-                        EOT
-                      </th>
-                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs font-semibold text-gray-700 border border-gray-300 bg-blue-50">
-                        Grade
-                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 border border-gray-300">Subject</th>
+                      <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300">W4</th>
+                      <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300">W8</th>
+                      <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300 bg-blue-50">EOT</th>
+                      <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300 bg-blue-50">Grade</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 border border-gray-300">Description</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {student.subjects.map((subject, index) => (
+                    {report.subjects.map((subject, index) => (
                       <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-xs font-medium text-gray-900 border border-gray-300">
-                          <div className="truncate max-w-[120px] sm:max-w-none">{subject.subjectName}</div>
+                        <td className="px-3 py-2 text-xs font-medium text-gray-900 border border-gray-300">
+                          {subject.subjectName}
                         </td>
-                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs border border-gray-300">
-                          {subject.week4.marks ? (
-                            <span className="font-medium text-gray-900">{subject.week4.marks}%</span>
-                          ) : (
-                            <span className="text-gray-400 italic">
-                              {subject.week4.status === 'absent' ? 'ABS' : '—'}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs border border-gray-300">
-                          {subject.week8.marks ? (
-                            <span className="font-medium text-gray-900">{subject.week8.marks}%</span>
-                          ) : (
-                            <span className="text-gray-400 italic">
-                              {subject.week8.status === 'absent' ? 'ABS' : '—'}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs border border-gray-300">
-                          {subject.endOfTerm.marks ? (
-                            <span className="font-medium text-gray-900">{subject.endOfTerm.marks}%</span>
-                          ) : (
-                            <span className="text-gray-400 italic">
-                              {subject.endOfTerm.status === 'absent' ? 'ABS' : '—'}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-center border border-gray-300 bg-blue-50">
-                          {subject.grade ? (
-                            <span className={`inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-full text-white font-bold text-xs ${
-                              subject.grade <= 2 ? 'bg-green-600' :
-                              subject.grade <= 4 ? 'bg-blue-600' :
-                              subject.grade <= 6 ? 'bg-cyan-600' :
-                              subject.grade <= 8 ? 'bg-yellow-600' : 'bg-red-600'
-                            }`}>
-                              {getGradeDisplay(subject.grade)}
-                            </span>
+                        <td className="px-3 py-2 text-center text-xs border border-gray-300">
+                          {subject.week4 >= 0 ? (
+                            <span className="font-medium text-gray-900">{subject.week4}%</span>
+                          ) : subject.week4 === -1 ? (
+                            <span className="text-gray-500 italic">ABS</span>
                           ) : (
                             <span className="text-gray-400">—</span>
                           )}
                         </td>
+                        <td className="px-3 py-2 text-center text-xs border border-gray-300">
+                          {subject.week8 >= 0 ? (
+                            <span className="font-medium text-gray-900">{subject.week8}%</span>
+                          ) : subject.week8 === -1 ? (
+                            <span className="text-gray-500 italic">ABS</span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-center text-xs border border-gray-300 bg-blue-50">
+                          {subject.endOfTerm >= 0 ? (
+                            <span className="font-bold text-blue-700">{subject.endOfTerm}%</span>
+                          ) : subject.endOfTerm === -1 ? (
+                            <span className="text-gray-500 italic">ABS</span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-center border border-gray-300 bg-blue-50">
+                          {subject.grade > 0 ? (
+                            <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${getGradeColor(subject.grade)}`}>
+                              {getGradeDisplay(subject.grade)}
+                            </span>
+                          ) : subject.grade === -1 ? (
+                            <span className="text-gray-500 font-medium">X</span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-gray-700 border border-gray-300">
+                          {getGradeDescription(subject.grade)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
-                  
-                  {/* Summary Row */}
                   <tfoot>
                     <tr className="bg-gray-50">
-                      <td className="px-2 sm:px-4 py-2 sm:py-3 text-xs font-semibold text-gray-700 border border-gray-300" colSpan={4}>
-                        Overall Average
+                      <td colSpan={3} className="px-3 py-2 text-right text-xs font-semibold text-gray-700 border border-gray-300">
+                        Overall Average:
                       </td>
-                      <td className="px-2 sm:px-4 py-2 sm:py-3 text-center font-bold text-blue-600 text-xs sm:text-sm border border-gray-300">
-                        {student.overallPercentage > 0 ? `${student.overallPercentage}%` : '—'}
+                      <td colSpan={3} className="px-3 py-2 text-left text-xs font-bold text-blue-600 border border-gray-300">
+                        {report.percentage}%
                       </td>
                     </tr>
                   </tfoot>
                 </table>
 
+                {/* Teacher's Comment */}
+                <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Teacher's Comment</p>
+                  <p className="text-sm text-gray-800">"{report.teachersComment}"</p>
+                </div>
+
                 {/* Legend */}
-                <div className="mt-4 flex flex-wrap items-center gap-3 text-[10px] sm:text-xs text-gray-500">
+                <div className="flex items-center gap-4 text-xs text-gray-500">
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 bg-red-500 rounded-full"></span>
-                    <span>M = Missing</span>
+                    <span className="w-3 h-3 bg-gray-200 border border-gray-400 rounded-full"></span>
+                    <span>— = Not Entered</span>
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 bg-gray-500 rounded-full"></span>
+                    <span className="w-3 h-3 bg-gray-500 rounded-full"></span>
                     <span>ABS = Absent</span>
                   </span>
                 </div>
-              </div>
 
-              {/* Teacher's Comment */}
-              {fullReport?.teachersComment && (
-                <div className="px-4 sm:px-6 pb-4 sm:pb-6">
-                  <div className="bg-gray-50 p-3 sm:p-4 rounded-lg border border-gray-200">
-                    <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wider mb-1">Teacher's Comment</p>
-                    <p className="text-xs sm:text-sm text-gray-800 italic">"{fullReport.teachersComment}"</p>
-                  </div>
+                {/* Footer */}
+                <div className="mt-4 text-right text-xs text-gray-400">
+                  Generated: {new Date().toLocaleDateString('en-GB', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
                 </div>
-              )}
-
-              {/* Footer */}
-              <div className="px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-200 text-[10px] sm:text-xs text-gray-400 text-right">
-                Generated: {new Date().toLocaleDateString('en-GB', {
-                  day: '2-digit',
-                  month: '2-digit',
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
               </div>
-            </>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -588,7 +610,7 @@ const FilterBar = ({
   setSelectedYear: (value: number) => void;
   terms: string[];
   years: number[];
-  summary: StudentProgressSummary | null;
+  summary: { total: number; complete: number; incomplete: number; averageCompletion: number } | null;
   isTeacher: boolean;
   isMobile: boolean;
 }) => {
@@ -596,7 +618,6 @@ const FilterBar = ({
 
   return (
     <div className="mb-4 sm:mb-6 bg-white rounded-xl border border-gray-200 overflow-hidden">
-      {/* Mobile Filter Toggle */}
       {isMobile && (
         <button
           onClick={() => setShowFilters(!showFilters)}
@@ -609,21 +630,14 @@ const FilterBar = ({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {selectedClass && (
-              <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-            )}
-            <ChevronDown 
-              size={16} 
-              className={`text-gray-500 transition-transform ${showFilters ? 'rotate-180' : ''}`} 
-            />
+            {selectedClass && <span className="w-2 h-2 bg-blue-500 rounded-full"></span>}
+            <ChevronDown size={16} className={`text-gray-500 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
           </div>
         </button>
       )}
 
-      {/* Filter Content */}
       <div className={`p-3 sm:p-4 ${isMobile && !showFilters ? 'hidden' : 'block'}`}>
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
-          {/* Class selector */}
           <select
             value={selectedClass}
             onChange={e => setSelectedClass(e.target.value)}
@@ -635,7 +649,6 @@ const FilterBar = ({
             ))}
           </select>
           
-          {/* Search */}
           <div className="flex-1 relative">
             <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
             <input
@@ -647,7 +660,6 @@ const FilterBar = ({
             />
           </div>
           
-          {/* Term selector */}
           <select
             value={selectedTerm}
             onChange={e => setSelectedTerm(e.target.value)}
@@ -658,7 +670,6 @@ const FilterBar = ({
             ))}
           </select>
           
-          {/* Year selector */}
           <select
             value={selectedYear}
             onChange={e => setSelectedYear(Number(e.target.value))}
@@ -670,7 +681,6 @@ const FilterBar = ({
           </select>
         </div>
         
-        {/* Summary stats - Scrollable on mobile */}
         {summary && summary.total > 0 && (
           <div className="mt-3 pt-3 border-t border-gray-100 flex flex-nowrap sm:flex-wrap gap-3 sm:gap-4 text-xs overflow-x-auto pb-1">
             <div className="flex items-center gap-1 flex-shrink-0">
@@ -701,23 +711,24 @@ export default function ReportCards() {
   const { user } = useAuth();
   const isMobile = useMediaQuery('(max-width: 640px)');
   const { classes, isLoading: loadingClasses } = useSchoolClasses();
-  const { learners, isLoading: loadingLearners } = useSchoolLearners();
   const { assignments, isLoading: loadingAssignments } = useTeacherAssignments(user?.id || '');
   
   const [selectedClass, setSelectedClass] = useState<string>('');
   const [selectedTerm, setSelectedTerm] = useState<string>('Term 1');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   
+  // Cache for generated reports
+  const [reportCache, setReportCache] = useState<Map<string, ReportCardData>>(new Map());
+  const [loadingReports, setLoadingReports] = useState<Set<string>>(new Set());
+
   const {
     students = [],
     summary,
     isLoading: loadingProgress,
     isFetching,
-    isError,
-    error,
     refetch
   } = useStudentProgress({
     classId: selectedClass,
@@ -725,11 +736,7 @@ export default function ReportCards() {
     year: selectedYear,
   });
 
-  useEffect(() => {
-    if (isError) {
-      console.error('Error fetching student progress:', error);
-    }
-  }, [isError, error]);
+  const { generateReportCard } = useResults();
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
@@ -746,10 +753,80 @@ export default function ReportCards() {
     }
   }, [classes, user, assignments, selectedClass]);
 
+  // Generate reports for all students when data loads
+  useEffect(() => {
+    const generateAllReports = async () => {
+      if (!students.length || !selectedTerm || !selectedYear) return;
+
+      const studentsToGenerate = students.filter((s: StudentProgress) => 
+        !reportCache.has(s.studentId) && !loadingReports.has(s.studentId)
+      );
+
+      if (studentsToGenerate.length === 0) return;
+
+      setLoadingReports(prev => {
+        const newSet = new Set(prev);
+        studentsToGenerate.forEach(s => newSet.add(s.studentId));
+        return newSet;
+      });
+
+      const batchSize = 5;
+      for (let i = 0; i < studentsToGenerate.length; i += batchSize) {
+        const batch = studentsToGenerate.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map(async (student: StudentProgress) => {
+            try {
+              const report = await generateReportCard({
+                studentId: student.studentId,
+                term: selectedTerm,
+                year: selectedYear,
+                options: {
+                  includeIncomplete: true,
+                  markMissing: true,
+                }
+              });
+
+              if (report) {
+                // Transform report to remove teacher field and add grade descriptions
+                const transformedReport: ReportCardData = {
+                  ...report,
+                  subjects: report.subjects.map(s => ({
+                    subjectId: s.subjectId,
+                    subjectName: s.subjectName,
+                    week4: s.week4,
+                    week8: s.week8,
+                    endOfTerm: s.endOfTerm,
+                    grade: s.grade,
+                    gradeDescription: getGradeDescription(s.grade)
+                  }))
+                };
+                
+                setReportCache(prev => {
+                  const newMap = new Map(prev);
+                  newMap.set(student.studentId, transformedReport);
+                  return newMap;
+                });
+              }
+            } catch (error) {
+              console.error(`Failed to generate report for ${student.studentName}:`, error);
+            } finally {
+              setLoadingReports(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(student.studentId);
+                return newSet;
+              });
+            }
+          })
+        );
+      }
+    };
+
+    generateAllReports();
+  }, [students, selectedTerm, selectedYear, generateReportCard]);
+
   // Transform data
   const transformedStudents = useMemo((): StudentProgress[] => {
     if (!students || students.length === 0) return [];
-
     return students.map((student: any) => ({
       studentId: student.studentId || '',
       studentName: student.studentName || '',
@@ -798,18 +875,20 @@ export default function ReportCards() {
     return classes.map(cls => ({ id: cls.id, name: cls.name }));
   }, [classes, user, assignments]);
 
-  const handleViewDetails = (studentId: string) => {
-    setSelectedStudent(studentId);
+  const handleViewReport = (studentId: string) => {
+    setSelectedStudentId(studentId);
     setShowReportModal(true);
   };
 
-  const selectedStudentData = transformedStudents.find(s => s.studentId === selectedStudent);
+  const selectedStudent = transformedStudents.find(s => s.studentId === selectedStudentId);
+  const selectedReport = selectedStudentId ? reportCache.get(selectedStudentId) : null;
+  const isLoadingReport = selectedStudentId ? loadingReports.has(selectedStudentId) : false;
 
   const terms = ['Term 1', 'Term 2', 'Term 3'];
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
-  const isLoadingAll = loadingProgress || loadingClasses || loadingLearners || loadingAssignments;
+  const isLoadingAll = loadingProgress || loadingClasses || loadingAssignments;
 
   if (isLoadingAll) {
     return (
@@ -825,9 +904,7 @@ export default function ReportCards() {
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {[1, 2, 3, 4].map((i) => (
-              <CardSkeleton key={i} />
-            ))}
+            {[1, 2, 3, 4].map(i => <CardSkeleton key={i} />)}
           </div>
         </div>
       </DashboardLayout>
@@ -839,7 +916,6 @@ export default function ReportCards() {
       <DashboardLayout activeTab="reports">
         <div className="min-h-screen bg-gray-50 p-3 sm:p-4 lg:p-6">
           
-          {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
             <div>
               <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 tracking-tight">
@@ -850,7 +926,6 @@ export default function ReportCards() {
               </p>
             </div>
             
-            {/* Refresh button */}
             <button
               onClick={() => refetch()}
               className="p-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all self-end sm:self-auto"
@@ -860,7 +935,6 @@ export default function ReportCards() {
             </button>
           </div>
 
-          {/* Class Selection */}
           {!selectedClass ? (
             <div className="bg-white rounded-xl border border-gray-200 p-6 sm:p-8 text-center">
               <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-blue-100 rounded-full mb-3">
@@ -885,7 +959,6 @@ export default function ReportCards() {
             </div>
           ) : (
             <>
-              {/* Filter Bar */}
               <FilterBar
                 selectedClass={selectedClass}
                 setSelectedClass={setSelectedClass}
@@ -903,14 +976,13 @@ export default function ReportCards() {
                 isMobile={isMobile}
               />
 
-              {/* Students Grid */}
               {filteredStudents.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                   {filteredStudents.map(student => (
                     <StudentCard
                       key={student.studentId}
                       student={student}
-                      onViewDetails={handleViewDetails}
+                      onClick={() => handleViewReport(student.studentId)}
                     />
                   ))}
                 </div>
@@ -942,20 +1014,17 @@ export default function ReportCards() {
         </div>
       </DashboardLayout>
       
-      {/* Detail Modal */}
-      {selectedStudentData && (
-        <ReportDetailModal
-          isOpen={showReportModal}
-          onClose={() => {
-            setShowReportModal(false);
-            setSelectedStudent(null);
-          }}
-          student={selectedStudentData}
-          term={selectedTerm}
-          year={selectedYear}
-          totalLearners={transformedStudents.length}
-        />
-      )}
+      {/* Report Modal */}
+      <ReportModal
+        isOpen={showReportModal}
+        onClose={() => {
+          setShowReportModal(false);
+          setSelectedStudentId(null);
+        }}
+        report={selectedReport}
+        studentName={selectedStudent?.studentName || ''}
+        loading={isLoadingReport}
+      />
     </>
   );
 }

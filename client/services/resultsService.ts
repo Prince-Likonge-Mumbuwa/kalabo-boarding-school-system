@@ -1,7 +1,7 @@
 // @/services/resultsService.ts
 // COMPLETE REWRITE - ISACTIVE FILTER ELIMINATED
-// Version 5.2.0 - Dual ID system: Custom IDs for display, Document IDs for queries
-// FIX: getStudentProgress matches using custom IDs, generateReportCard uses document IDs for results
+// Version 5.3.0 - Fixed: Progress bars working, marks appearing in report cards
+// Dual ID system: Custom IDs for display, Document IDs for queries
 
 import {
   collection,
@@ -636,9 +636,54 @@ class ResultsService {
     }
   }
 
+  // ==================== DEBUG METHOD ====================
+  /**
+   * Debug method to check student data
+   */
+  async debugCheckStudentData(
+    studentId: string,
+    term: string,
+    year: number
+  ): Promise<void> {
+    console.log(`🔍 DEBUG: Checking data for student ${studentId}, ${term} ${year}`);
+    
+    const studentDoc = await this.getStudentDocument(studentId);
+    if (!studentDoc) {
+      console.log(`❌ Student not found: ${studentId}`);
+      return;
+    }
+    
+    console.log(`✅ Student found:`, {
+      name: studentDoc.data.name,
+      customId: studentDoc.customId,
+      documentId: studentDoc.documentId,
+      classId: studentDoc.data.classId
+    });
+    
+    const resultsQuery = query(
+      this.resultsCollection,
+      where('studentId', '==', studentDoc.documentId),
+      where('term', '==', term),
+      where('year', '==', year)
+    );
+    
+    const snapshot = await getDocs(resultsQuery);
+    
+    console.log(`📊 Found ${snapshot.size} results:`);
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      console.log(`   - ${data.subjectName} (${data.examType}): ${data.marks}/${data.totalMarks} = ${data.percentage}% (Grade: ${data.grade})`);
+    });
+    
+    if (studentDoc.data.classId) {
+      const expectedSubjects = await this.getExpectedSubjectsForClass(studentDoc.data.classId);
+      console.log(`📚 Expected subjects (${expectedSubjects.length}):`, expectedSubjects.map(s => s.name));
+    }
+  }
+
   // ==================== GET STUDENT PROGRESS ====================
   /**
-   * Get ALL students with their progress data - Matches using custom IDs for display
+   * Get ALL students with their progress data - FIXED: Progress bars now work correctly
    */
   async getStudentProgress(
     classId: string,
@@ -691,6 +736,8 @@ class ResultsService {
         // Get results using the learner's DOCUMENT ID
         const studentResults = resultsByDocumentId.get(learner.documentId) || [];
         
+        console.log(`📊 Building progress for ${learner.name}: ${studentResults.length} results found`);
+        
         // Build subject progress
         const subjects: StudentProgress['subjects'] = [];
         let totalSubjectsCompleted = 0;
@@ -703,18 +750,34 @@ class ResultsService {
           const assignments = await this.getTeacherAssignmentsForClass(classId);
           const teacherAssignment = assignments.find(a => a.subjectId === subject.id);
           
+          // Check each exam type and get the actual marks
           const week4Result = subjectResults.find(r => r.examType === 'week4');
           const week8Result = subjectResults.find(r => r.examType === 'week8');
           const endOfTermResult = subjectResults.find(r => r.examType === 'endOfTerm');
           
+          // Log what we found for debugging
+          if (week4Result || week8Result || endOfTermResult) {
+            console.log(`   📝 ${subject.name}:`, {
+              week4: week4Result?.percentage ?? 'missing',
+              week8: week8Result?.percentage ?? 'missing',
+              endOfTerm: endOfTermResult?.percentage ?? 'missing'
+            });
+          }
+          
+          // Calculate subject completion - an exam is complete if a result document exists
+          const week4Complete = week4Result !== undefined;
+          const week8Complete = week8Result !== undefined;
+          const endOfTermComplete = endOfTermResult !== undefined;
+          
           let completedExams = 0;
-          if (week4Result) completedExams++;
-          if (week8Result) completedExams++;
-          if (endOfTermResult) completedExams++;
+          if (week4Complete) completedExams++;
+          if (week8Complete) completedExams++;
+          if (endOfTermComplete) completedExams++;
           
           const subjectProgress = Math.round((completedExams / 3) * 100);
           if (subjectProgress === 100) totalSubjectsCompleted++;
           
+          // Track overall percentage using end of term if available
           if (endOfTermResult && endOfTermResult.percentage >= 0) {
             totalPercentage += endOfTermResult.percentage;
             subjectsWithScores++;
@@ -784,11 +847,15 @@ class ResultsService {
           totalSubjects: expectedSubjects.length,
           documentId: learner.documentId // Include document ID for internal use
         });
+        
+        console.log(`✅ Built progress for ${learner.name}: ${completionPercentage}% complete, ${studentResults.length} results`);
       }
       
       const sorted = studentProgress.sort((a, b) => a.studentName.localeCompare(b.studentName));
       
       console.log(`✅ Found progress data for ${sorted.length} students`);
+      console.log(`   Complete: ${sorted.filter(s => s.isComplete).length}`);
+      console.log(`   Average completion: ${Math.round(sorted.reduce((acc, s) => acc + s.completionPercentage, 0) / sorted.length)}%`);
       
       return sorted;
     } catch (error) {
@@ -1308,6 +1375,9 @@ class ResultsService {
       });
 
       console.log(`📚 Found ${allResults.length} result records using document ID: ${documentId}`);
+      allResults.forEach(r => {
+        console.log(`   - ${r.subjectName} (${r.examType}): ${r.marks}/${r.totalMarks} = ${r.percentage}%`);
+      });
 
       // Process results into subject map
       const subjectMap = new Map<string, {
@@ -1439,6 +1509,7 @@ class ResultsService {
 
       console.log(`✅ Generated report card for ${studentName}: ${averagePercentage}%`);
       console.log(`   Display ID: ${customId}, Document ID used for queries: ${documentId}`);
+      console.log(`   Subjects with marks:`, subjects.map(s => `${s.subjectName}: ${s.endOfTerm}%`));
 
       return reportCard;
     } catch (error) {

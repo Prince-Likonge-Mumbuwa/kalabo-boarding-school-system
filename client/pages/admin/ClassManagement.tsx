@@ -1,3 +1,4 @@
+// @/pages/admin/ClassManagement.tsx
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
@@ -167,8 +168,13 @@ export default function ClassManagement() {
     }
   };
 
-  // Handle individual learner addition
-  const handleAddIndividualLearner = async (data: { name: string; age: number; parentPhone: string }) => {
+  // Handle individual learner addition - FIXED with gender field
+  const handleAddIndividualLearner = async (data: { 
+    name: string; 
+    age: number; 
+    gender: 'male' | 'female';  // Gender field added to match modal
+    parentPhone: string;
+  }) => {
     if (!selectedClass) return;
     
     try {
