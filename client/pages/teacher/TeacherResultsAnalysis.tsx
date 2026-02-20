@@ -8,7 +8,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { 
   Filter, Loader2, RefreshCw, TrendingUp, TrendingDown, 
   Download, Target, Users, Award, AlertCircle, ChevronDown,
-  BarChart3, PieChart
+  BarChart3, PieChart, Printer
 } from 'lucide-react';
 
 // ==================== IMPORT TYPES FROM SCHOOL ====================
@@ -64,51 +64,32 @@ interface LocalClassPerformance {
   };
 }
 
-// ==================== STAT CARD ====================
+// ==================== CLEAN SQUARE STAT CARD FOR MOBILE ====================
 interface StatCardProps {
   label: string;
   value: string;
-  sublabel: string;
   icon: React.ElementType;
   color: 'green' | 'blue' | 'red';
-  trend?: 'up' | 'down' | 'stable';
-  trendValue?: string;
-  genderBreakdown?: { boys: number; girls: number; total: number };
-  isMobile: boolean; // ADDED: Pass isMobile as prop
 }
 
-const StatCard = ({ 
-  label, 
-  value, 
-  sublabel, 
-  icon: Icon, 
-  color, 
-  trend, 
-  trendValue, 
-  genderBreakdown,
-  isMobile // FIXED: Use prop instead of hook inside component
-}: StatCardProps) => {
-  
+const StatCard = ({ label, value, icon: Icon, color }: StatCardProps) => {
   const colors = {
     green: {
-      bg: 'bg-gradient-to-br from-green-50 to-emerald-50',
-      iconBg: 'bg-green-100',
-      iconColor: 'text-green-600',
-      value: 'text-green-600',
+      bg: 'bg-green-50',
+      text: 'text-green-700',
+      icon: 'text-green-600',
       border: 'border-green-200'
     },
     blue: {
-      bg: 'bg-gradient-to-br from-blue-50 to-indigo-50',
-      iconBg: 'bg-blue-100',
-      iconColor: 'text-blue-600',
-      value: 'text-blue-600',
+      bg: 'bg-blue-50',
+      text: 'text-blue-700',
+      icon: 'text-blue-600',
       border: 'border-blue-200'
     },
     red: {
-      bg: 'bg-gradient-to-br from-red-50 to-orange-50',
-      iconBg: 'bg-red-100',
-      iconColor: 'text-red-600',
-      value: 'text-red-600',
+      bg: 'bg-red-50',
+      text: 'text-red-700',
+      icon: 'text-red-600',
       border: 'border-red-200'
     }
   };
@@ -117,43 +98,19 @@ const StatCard = ({
 
   return (
     <div className={`
-      bg-white rounded-xl border ${style.border} p-4 sm:p-5
-      hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5
+      aspect-square bg-white rounded-xl border ${style.border} p-3
+      flex flex-col items-center justify-center text-center
+      hover:shadow-md transition-all
     `}>
-      <div className="flex items-start justify-between">
-        <div className="flex-1 min-w-0">
-          <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">
-            {label}
-          </p>
-          <div className="flex items-baseline gap-1">
-            <p className={`text-2xl sm:text-3xl lg:text-4xl font-bold ${style.value}`}>
-              {value}
-            </p>
-            {trend && trendValue && (
-              <div className="flex items-center gap-0.5 ml-1">
-                {trend === 'up' && <TrendingUp size={12} className="text-green-500" />}
-                {trend === 'down' && <TrendingDown size={12} className="text-red-500" />}
-                <span className="text-[10px] sm:text-xs text-gray-500">{trendValue}</span>
-              </div>
-            )}
-          </div>
-          
-          {genderBreakdown && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-[10px] sm:text-xs text-blue-600">♂ {genderBreakdown.boys}</span>
-              <span className="text-[10px] sm:text-xs text-pink-600">♀ {genderBreakdown.girls}</span>
-              <span className="text-[10px] sm:text-xs text-gray-500">∑ {genderBreakdown.total}</span>
-            </div>
-          )}
-          
-          <p className="text-[10px] sm:text-xs text-gray-500 mt-1 truncate">
-            {sublabel}
-          </p>
-        </div>
-        <div className={`p-2 sm:p-2.5 rounded-lg flex-shrink-0 ${style.iconBg}`}>
-          <Icon size={isMobile ? 18 : 20} className={style.iconColor} />
-        </div>
+      <div className={`p-2 rounded-lg ${style.bg} mb-1`}>
+        <Icon size={20} className={style.icon} />
       </div>
+      <p className="text-xs font-medium text-gray-600 mb-0.5">
+        {label}
+      </p>
+      <p className={`text-xl font-bold ${style.text}`}>
+        {value}
+      </p>
     </div>
   );
 };
@@ -206,36 +163,34 @@ const GradeDistributionChart = ({ data, viewMode, onToggleView }: {
   ));
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <div>
-          <h3 className="text-lg font-bold text-gray-900">Grade Distribution</h3>
-          <p className="text-sm text-gray-600 mt-1">
-            {viewMode === 'detailed' 
-              ? 'Boys vs Girls by Grade' 
-              : 'Total Students by Grade'}
+          <h3 className="text-base sm:text-lg font-bold text-gray-900">Grade Distribution</h3>
+          <p className="text-xs sm:text-sm text-gray-600 mt-1">
+            {viewMode === 'detailed' ? 'Boys vs Girls by Grade' : 'Total Students by Grade'}
           </p>
         </div>
         <button
           onClick={onToggleView}
-          className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+          className="flex items-center justify-center gap-2 px-3 py-2 text-xs sm:text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors w-full sm:w-auto"
         >
           {viewMode === 'detailed' ? (
             <>
-              <BarChart3 size={16} />
+              <BarChart3 size={14} />
               <span>Show Totals</span>
             </>
           ) : (
             <>
-              <PieChart size={16} />
+              <PieChart size={14} />
               <span>Show Gender Split</span>
             </>
           )}
         </button>
       </div>
 
-      <div className="relative h-80">
-        <div className="absolute left-0 top-0 bottom-0 w-12 flex flex-col justify-between text-xs text-gray-500">
+      <div className="relative h-60 sm:h-80">
+        <div className="absolute left-0 top-0 bottom-0 w-8 sm:w-12 flex flex-col justify-between text-[10px] sm:text-xs text-gray-500">
           <span>{maxValue}</span>
           <span>{Math.round(maxValue * 0.75)}</span>
           <span>{Math.round(maxValue * 0.5)}</span>
@@ -243,10 +198,10 @@ const GradeDistributionChart = ({ data, viewMode, onToggleView }: {
           <span>0</span>
         </div>
 
-        <div className="absolute left-16 right-0 top-0 bottom-0">
+        <div className="absolute left-10 sm:left-16 right-0 top-0 bottom-0">
           <div className="flex items-end justify-around h-full">
             {data.map((item) => (
-              <div key={item.grade} className="flex flex-col items-center w-16">
+              <div key={item.grade} className="flex flex-col items-center w-12 sm:w-16">
                 <div className="flex gap-1 w-full justify-center mb-2">
                   {viewMode === 'detailed' ? (
                     <>
@@ -254,14 +209,14 @@ const GradeDistributionChart = ({ data, viewMode, onToggleView }: {
                         <div className="flex flex-col items-center group">
                           <div className="relative">
                             <div 
-                              className="w-6 bg-blue-500 rounded-t transition-all duration-500 hover:bg-blue-600"
-                              style={{ height: `${(item.boys / maxValue) * 200}px`, minHeight: '4px' }}
+                              className="w-4 sm:w-6 bg-blue-500 rounded-t transition-all duration-500 hover:bg-blue-600"
+                              style={{ height: `${(item.boys / maxValue) * 150}px`, minHeight: '4px' }}
                             />
-                            <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap">
+                            <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-[10px] rounded px-2 py-1 whitespace-nowrap z-10">
                               Boys: {item.boys}
                             </div>
                           </div>
-                          <span className="text-xs text-blue-600 mt-1">B</span>
+                          <span className="text-[10px] text-blue-600 mt-1">B</span>
                         </div>
                       )}
                       
@@ -269,14 +224,14 @@ const GradeDistributionChart = ({ data, viewMode, onToggleView }: {
                         <div className="flex flex-col items-center group">
                           <div className="relative">
                             <div 
-                              className="w-6 bg-rose-500 rounded-t transition-all duration-500 hover:bg-rose-600"
-                              style={{ height: `${(item.girls / maxValue) * 200}px`, minHeight: '4px' }}
+                              className="w-4 sm:w-6 bg-rose-500 rounded-t transition-all duration-500 hover:bg-rose-600"
+                              style={{ height: `${(item.girls / maxValue) * 150}px`, minHeight: '4px' }}
                             />
-                            <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap">
+                            <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-[10px] rounded px-2 py-1 whitespace-nowrap z-10">
                               Girls: {item.girls}
                             </div>
                           </div>
-                          <span className="text-xs text-rose-600 mt-1">G</span>
+                          <span className="text-[10px] text-rose-600 mt-1">G</span>
                         </div>
                       )}
                     </>
@@ -285,9 +240,9 @@ const GradeDistributionChart = ({ data, viewMode, onToggleView }: {
                       <div className="relative w-full">
                         <div 
                           className="w-full bg-indigo-500 rounded-t transition-all duration-500 hover:bg-indigo-600"
-                          style={{ height: `${(item.total / maxValue) * 200}px`, minHeight: '4px' }}
+                          style={{ height: `${(item.total / maxValue) * 150}px`, minHeight: '4px' }}
                         >
-                          <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-xs rounded px-2 py-1">
+                          <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-[10px] rounded px-2 py-1 whitespace-nowrap z-10">
                             Total: {item.total}
                           </div>
                         </div>
@@ -297,7 +252,7 @@ const GradeDistributionChart = ({ data, viewMode, onToggleView }: {
                 </div>
 
                 <GradeBadge grade={item.grade} />
-                <span className="text-xs text-gray-500 mt-1">
+                <span className="text-[10px] text-gray-500 mt-1">
                   {item.percentage}%
                 </span>
               </div>
@@ -316,19 +271,19 @@ const GradeDistributionChart = ({ data, viewMode, onToggleView }: {
         </div>
       </div>
 
-      <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between text-sm">
+      <div className="mt-4 sm:mt-6 pt-4 border-t border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs sm:text-sm">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <span className="w-3 h-3 bg-blue-500 rounded"></span>
+            <span className="w-2 h-2 sm:w-3 sm:h-3 bg-blue-500 rounded"></span>
             <span className="text-gray-600">Boys</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="w-3 h-3 bg-rose-500 rounded"></span>
+            <span className="w-2 h-2 sm:w-3 sm:h-3 bg-rose-500 rounded"></span>
             <span className="text-gray-600">Girls</span>
           </div>
         </div>
-        <p className="text-gray-500">
-          Total Students: {data.reduce((sum, d) => sum + d.total, 0)}
+        <p className="text-gray-500 text-xs">
+          Total: {data.reduce((sum, d) => sum + d.total, 0)} students
         </p>
       </div>
     </div>
@@ -340,10 +295,10 @@ const EmptyState = ({ hasAssignments }: { hasAssignments: boolean }) => {
   if (!hasAssignments) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-8 sm:p-12 text-center max-w-3xl mx-auto">
-        <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-yellow-50 to-amber-50 rounded-full mb-5">
-          <Users className="text-yellow-600" size={32} />
+        <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-yellow-50 to-amber-50 rounded-full mb-4 sm:mb-5">
+          <Users className="text-yellow-600" size={24} />
         </div>
-        <h3 className="text-xl sm:text-2xl font-semibold text-gray-900 mb-2">
+        <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mb-2">
           No Teaching Assignments
         </h3>
         <p className="text-sm sm:text-base text-gray-600 max-w-md mx-auto">
@@ -355,10 +310,10 @@ const EmptyState = ({ hasAssignments }: { hasAssignments: boolean }) => {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-8 sm:p-12 text-center">
-      <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-full mb-5">
-        <Target className="text-blue-500" size={32} />
+      <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-full mb-4 sm:mb-5">
+        <Target className="text-blue-500" size={24} />
       </div>
-      <h3 className="text-xl sm:text-2xl font-semibold text-gray-900 mb-2">
+      <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mb-2">
         No Results Available
       </h3>
       <p className="text-sm sm:text-base text-gray-600 max-w-md mx-auto">
@@ -371,22 +326,18 @@ const EmptyState = ({ hasAssignments }: { hasAssignments: boolean }) => {
 // ==================== SKELETON ====================
 const Skeleton = () => (
   <div className="space-y-6 animate-pulse">
-    <div className="grid grid-cols-3 gap-3 sm:gap-4">
+    <div className="grid grid-cols-3 gap-2 sm:gap-4">
       {[1, 2, 3].map(i => (
-        <div key={i} className="bg-white rounded-xl border border-gray-200 p-4 sm:p-5">
-          <div className="flex items-start justify-between">
-            <div className="flex-1">
-              <div className="h-3 bg-gray-200 rounded w-16 mb-2"></div>
-              <div className="h-6 sm:h-7 bg-gray-300 rounded w-12"></div>
-            </div>
-            <div className="p-2 bg-gray-100 rounded-lg">
-              <div className="w-4 h-4 sm:w-5 sm:h-5 bg-gray-300 rounded"></div>
-            </div>
+        <div key={i} className="aspect-square bg-white rounded-xl border border-gray-200 p-3">
+          <div className="flex flex-col items-center justify-center h-full">
+            <div className="w-10 h-10 bg-gray-200 rounded-lg mb-2"></div>
+            <div className="h-3 bg-gray-200 rounded w-12 mb-1"></div>
+            <div className="h-5 bg-gray-300 rounded w-10"></div>
           </div>
         </div>
       ))}
     </div>
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
+    <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
       <div className="h-5 bg-gray-200 rounded w-40 mb-4"></div>
       <div className="space-y-3">
         {[1, 2, 3, 4, 5].map(i => (
@@ -668,16 +619,8 @@ export default function TeacherResultsAnalysis() {
     };
   }, [results, studentGenderMap]);
 
-  const trends = useMemo(() => {
-    return {
-      qualityPass: 'up' as const,
-      quantityPass: 'up' as const,
-      fail: 'down' as const
-    };
-  }, []);
-
-  // ==================== PDF EXPORT - FIXED WITH DYNAMIC IMPORTS ====================
-  const handlePDFExport = async () => {
+  // ==================== BROWSER PRINT/PDF FUNCTIONALITY ====================
+  const handlePrintPDF = async () => {
     try {
       if (!results || results.length === 0) {
         alert('No data to export');
@@ -753,18 +696,17 @@ export default function TeacherResultsAnalysis() {
         })
       };
 
-      // FIXED: Dynamically import the PDF generator and await the result
+      // Dynamically import the PDF generator
       const { generateTeacherResultsPDF } = await import('@/services/pdf/teacherResultsPDF');
       
-      // FIXED: Await the PDF generation (now async)
+      // Generate the PDF document definition
       const docDefinition = await generateTeacherResultsPDF(pdfData);
       
-      // FIXED: Dynamically import pdfMake for download
+      // Dynamically import pdfMake
       const pdfMake = (await import('pdfmake/build/pdfmake')).default;
       
-      // Create filename and download
-      const fileName = `Teacher_${user?.name?.replace(/\s+/g, '_')}_${selectedTerm}_${selectedYear}.pdf`;
-      pdfMake.createPdf(docDefinition).download(fileName);
+      // Open in new window for printing/download
+      pdfMake.createPdf(docDefinition).open();
 
     } catch (error) {
       console.error('PDF Generation Error:', error);
@@ -799,45 +741,47 @@ export default function TeacherResultsAnalysis() {
     <DashboardLayout activeTab="analysis">
       <div className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8">
         
+        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 tracking-tight">
               Results Analysis
             </h1>
-            <p className="text-sm sm:text-base text-gray-600 mt-1">
+            <p className="text-xs sm:text-sm text-gray-600 mt-1">
               {selectedClass === 'all' ? 'All classes' : assignedClasses.find(c => c.id === selectedClass)?.name}
               {selectedSubject !== 'all' && ` • ${selectedSubject}`}
               {isFetching && (
-                <span className="inline-flex items-center gap-1.5 text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full text-xs ml-2">
-                  <Loader2 size={12} className="animate-spin" />
+                <span className="inline-flex items-center gap-1 text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full text-xs ml-2">
+                  <Loader2 size={10} className="animate-spin" />
                   updating
                 </span>
               )}
             </p>
           </div>
           
+          {/* Action Buttons */}
           <div className="flex items-center gap-2">
             <button
-              onClick={handlePDFExport}
+              onClick={handlePrintPDF}
               disabled={!hasData}
               className={`
                 inline-flex items-center justify-center
-                bg-blue-600 text-white rounded-xl hover:bg-blue-700
+                bg-blue-600 text-white rounded-lg sm:rounded-xl hover:bg-blue-700
                 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
                 disabled:opacity-50 disabled:cursor-not-allowed
                 ${isMobile ? 'p-2.5' : 'px-4 py-2.5 gap-2'}
               `}
-              title="Export PDF"
+              title="Print / Save as PDF"
             >
-              <Download size={isMobile ? 18 : 16} />
-              {!isMobile && 'Export PDF'}
+              <Printer size={isMobile ? 18 : 16} />
+              {!isMobile && 'Print PDF'}
             </button>
             <button
               onClick={() => refetch()}
               disabled={isFetching}
               className={`
                 inline-flex items-center justify-center
-                border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50
+                border border-gray-300 text-gray-700 rounded-lg sm:rounded-xl hover:bg-gray-50
                 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
                 disabled:opacity-50 disabled:cursor-not-allowed
                 ${isMobile ? 'p-2.5' : 'px-4 py-2.5 gap-2'}
@@ -850,42 +794,46 @@ export default function TeacherResultsAnalysis() {
           </div>
         </div>
 
+        {/* Empty State - No Assignments */}
         {!hasAssignments && <EmptyState hasAssignments={false} />}
 
+        {/* Filters Section */}
         {hasAssignments && (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             
+            {/* Mobile Filter Toggle */}
             {isMobile && (
               <button
                 onClick={() => setShowMobileFilters(!showMobileFilters)}
-                className="w-full flex items-center justify-between p-4 bg-white"
+                className="w-full flex items-center justify-between p-3 bg-white"
               >
                 <div className="flex items-center gap-2">
-                  <Filter size={18} className="text-gray-400" />
-                  <span className="font-medium text-gray-700">
+                  <Filter size={16} className="text-gray-400" />
+                  <span className="text-sm font-medium text-gray-700">
                     {selectedClass !== 'all' || selectedSubject !== 'all' ? 'Filters active' : 'Filter results'}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   {(selectedClass !== 'all' || selectedSubject !== 'all') && (
-                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                    <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
                   )}
                   <ChevronDown 
-                    size={18} 
+                    size={16} 
                     className={`text-gray-500 transition-transform ${showMobileFilters ? 'rotate-180' : ''}`} 
                   />
                 </div>
               </button>
             )}
 
+            {/* Filter Controls */}
             <div className={`
-              p-4 sm:p-5
+              p-3 sm:p-4
               ${isMobile && !showMobileFilters ? 'hidden' : 'block'}
             `}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
                     Class
                   </label>
                   <select
@@ -894,9 +842,9 @@ export default function TeacherResultsAnalysis() {
                       setSelectedClass(e.target.value);
                       setSelectedSubject('all');
                     }}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg 
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg 
                              focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                             text-sm bg-white hover:border-gray-400 transition-colors"
+                             text-sm bg-white"
                   >
                     <option value="all">All Classes</option>
                     {assignedClasses.map(cls => (
@@ -906,17 +854,16 @@ export default function TeacherResultsAnalysis() {
                 </div>
                 
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
                     Subject
                   </label>
                   <select
                     value={selectedSubject}
                     onChange={e => setSelectedSubject(e.target.value)}
                     disabled={assignedSubjects.length === 0}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg 
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg 
                              focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                             text-sm bg-white hover:border-gray-400 transition-colors
-                             disabled:bg-gray-100 disabled:cursor-not-allowed"
+                             text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                   >
                     <option value="all">All Subjects</option>
                     {assignedSubjects.map(subject => (
@@ -926,15 +873,15 @@ export default function TeacherResultsAnalysis() {
                 </div>
                 
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
                     Term
                   </label>
                   <select
                     value={selectedTerm}
                     onChange={e => setSelectedTerm(e.target.value)}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg 
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg 
                              focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                             text-sm bg-white hover:border-gray-400 transition-colors"
+                             text-sm bg-white"
                   >
                     <option value="Term 1">Term 1</option>
                     <option value="Term 2">Term 2</option>
@@ -943,15 +890,15 @@ export default function TeacherResultsAnalysis() {
                 </div>
                 
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
                     Year
                   </label>
                   <select
                     value={selectedYear}
                     onChange={e => setSelectedYear(Number(e.target.value))}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg 
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg 
                              focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                             text-sm bg-white hover:border-gray-400 transition-colors"
+                             text-sm bg-white"
                   >
                     {years.map(year => (
                       <option key={year} value={year}>{year}</option>
@@ -960,8 +907,9 @@ export default function TeacherResultsAnalysis() {
                 </div>
               </div>
               
+              {/* Clear Filters */}
               {(selectedClass !== 'all' || selectedSubject !== 'all' || selectedTerm !== 'Term 1' || selectedYear !== currentYear) && (
-                <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
+                <div className="mt-3 pt-3 border-t border-gray-100 flex justify-end">
                   <button
                     onClick={clearFilters}
                     className="text-xs text-blue-600 hover:text-blue-800 font-medium"
@@ -974,56 +922,31 @@ export default function TeacherResultsAnalysis() {
           </div>
         )}
 
+        {/* Clean Square Stats Cards - 3x1 Grid */}
         {hasAssignments && hasData && (
           <div className="grid grid-cols-3 gap-2 sm:gap-4">
             <StatCard
-              label="Quality Pass"
+              label="Quality"
               value={`${coreMetrics.qualityPass.percentage}%`}
-              sublabel={`Grades 1-6`}
               icon={Target}
               color="green"
-              trend={trends.qualityPass}
-              trendValue="+3%"
-              genderBreakdown={{
-                boys: coreMetrics.qualityPass.boys,
-                girls: coreMetrics.qualityPass.girls,
-                total: coreMetrics.qualityPass.count
-              }}
-              isMobile={isMobile} // FIXED: Pass isMobile prop
             />
             <StatCard
-              label="Quantity Pass"
+              label="Quantity"
               value={`${coreMetrics.quantityPass.percentage}%`}
-              sublabel={`Grades 1-8`}
               icon={Award}
               color="blue"
-              trend={trends.quantityPass}
-              trendValue="+2%"
-              genderBreakdown={{
-                boys: coreMetrics.quantityPass.boys,
-                girls: coreMetrics.quantityPass.girls,
-                total: coreMetrics.quantityPass.count
-              }}
-              isMobile={isMobile} // FIXED: Pass isMobile prop
             />
             <StatCard
               label="Fail"
               value={`${coreMetrics.fail.percentage}%`}
-              sublabel={`Grade 9`}
               icon={AlertCircle}
               color="red"
-              trend={trends.fail}
-              trendValue="-5%"
-              genderBreakdown={{
-                boys: coreMetrics.fail.boys,
-                girls: coreMetrics.fail.girls,
-                total: coreMetrics.fail.count
-              }}
-              isMobile={isMobile} // FIXED: Pass isMobile prop
             />
           </div>
         )}
 
+        {/* Grade Distribution Chart */}
         {hasAssignments && hasData && gradeDistribution.length > 0 && (
           <GradeDistributionChart
             data={gradeDistribution}
@@ -1032,50 +955,53 @@ export default function TeacherResultsAnalysis() {
           />
         )}
 
+        {/* Grade Distribution Table */}
         {hasAssignments && hasData && gradeDistribution.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             
-            <div className="px-4 sm:px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+            <div className="px-4 sm:px-6 py-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-semibold text-gray-900 text-sm sm:text-base">
                     Grade Distribution Details
                   </h3>
-                  <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+                  <p className="text-xs text-gray-500 mt-0.5">
                     End of Term • {gradeDistribution.reduce((sum, g) => sum + g.total, 0)} assessments
                   </p>
                 </div>
               </div>
             </div>
 
+            {/* Mobile View - Clean Cards */}
             {isMobile ? (
               <div className="divide-y divide-gray-100">
                 {gradeDistribution.map((row) => (
-                  <div key={row.grade} className="p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-3">
+                  <div key={row.grade} className="p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
                         <GradeBadge grade={row.grade} />
-                        <span className="text-sm font-medium text-gray-700">
+                        <span className="text-xs font-medium text-gray-700">
                           {row.description}
                         </span>
                       </div>
-                      <span className="text-lg font-bold text-gray-900">{row.total}</span>
+                      <span className="text-base font-bold text-gray-900">{row.total}</span>
                     </div>
-                    <div className="flex items-center gap-4 text-xs">
+                    <div className="flex items-center gap-3 text-xs">
                       <div className="flex items-center gap-1">
                         <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-                        <span className="text-gray-600">Boys: {row.boys}</span>
+                        <span className="text-gray-600">{row.boys}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <span className="w-2 h-2 bg-rose-500 rounded-full"></span>
-                        <span className="text-gray-600">Girls: {row.girls}</span>
+                        <span className="text-gray-600">{row.girls}</span>
                       </div>
-                      <span className="text-gray-500">{row.percentage}%</span>
+                      <span className="text-gray-400 text-xs">{row.percentage}%</span>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
+              /* Desktop View - Table */
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
@@ -1155,8 +1081,10 @@ export default function TeacherResultsAnalysis() {
           </div>
         )}
 
+        {/* Empty State - No Results */}
         {hasAssignments && !hasData && <EmptyState hasAssignments={true} />}
 
+        {/* Footer Stats */}
         {hasAssignments && hasData && (
           <div className="text-xs text-gray-500 text-center sm:text-left pt-4 border-t border-gray-200">
             <span className="font-medium">End of Term Results</span>
