@@ -1,11 +1,16 @@
-// @/pages/teacher/TeacherDashboard.tsx - UPDATED WITH REAL PASS RATE
+// @/pages/teacher/TeacherDashboard.tsx - FIXED VERSION
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useResultsAnalytics } from '@/hooks/useResults';
+import { attendanceService } from '@/services/attendanceService';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { BookOpen, Users, TrendingUp, AlertCircle, Loader2, Calendar, ChevronRight, FileText, ClipboardCheck, BarChart3 } from 'lucide-react';
+import { 
+  BookOpen, Users, TrendingUp, AlertCircle, Loader2, 
+  Calendar, ChevronRight, FileText, ClipboardCheck, 
+  BarChart3, GraduationCap, UserCheck, UserX, Clock
+} from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -18,22 +23,25 @@ const DashboardSkeleton = () => (
       <div className="h-4 sm:h-5 bg-gray-100 rounded w-72"></div>
     </div>
     
-    {/* Metrics Skeleton - 3 cards */}
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-      {[1, 2, 3].map(i => (
-        <div key={i} className="bg-white rounded-xl border border-gray-200 p-5 sm:p-6">
-          <div className="flex items-start justify-between">
-            <div className="flex-1">
-              <div className="h-3 bg-gray-200 rounded w-24 mb-2"></div>
-              <div className="h-7 sm:h-8 bg-gray-300 rounded w-12"></div>
+    {/* Metrics Skeleton - 4 cards (2x2) */}
+    <div>
+      <div className="h-6 bg-gray-200 rounded w-40 mb-4"></div>
+      <div className="grid grid-cols-2 gap-4">
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="h-3 bg-gray-200 rounded w-20 mb-2"></div>
+                <div className="h-7 sm:h-8 bg-gray-300 rounded w-12"></div>
+              </div>
+              <div className="p-2 sm:p-3 bg-gray-100 rounded-lg">
+                <div className="w-5 h-5 sm:w-6 sm:h-6 bg-gray-300 rounded"></div>
+              </div>
             </div>
-            <div className="p-2 sm:p-3 bg-gray-100 rounded-lg">
-              <div className="w-5 h-5 sm:w-6 sm:h-6 bg-gray-300 rounded"></div>
-            </div>
+            <div className="h-2 bg-gray-200 rounded w-24 mt-4"></div>
           </div>
-          <div className="h-2 bg-gray-200 rounded w-32 mt-4"></div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
     
     {/* Quick Actions Skeleton - 3 buttons */}
@@ -58,7 +66,7 @@ const DashboardSkeleton = () => (
   </div>
 );
 
-// ==================== EMPTY STATE - PROFESSIONAL ====================
+// ==================== EMPTY STATE ====================
 const EmptyState = () => (
   <div className="bg-white rounded-2xl border border-gray-200 p-8 sm:p-12 text-center max-w-3xl mx-auto shadow-sm">
     <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-full mb-5">
@@ -86,12 +94,13 @@ interface MetricCardProps {
   value: string | number;
   icon: React.ElementType;
   description: string;
-  color: 'blue' | 'purple' | 'green';
+  color: 'blue' | 'purple' | 'green' | 'orange' | 'red' | 'indigo';
   trend?: string;
   isLoading?: boolean;
+  subtext?: string;
 }
 
-const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoading }: MetricCardProps) => {
+const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoading, subtext }: MetricCardProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
   
   const colorStyles = {
@@ -118,6 +127,30 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
       value: 'text-green-600',
       border: 'border-green-200',
       hover: 'hover:border-green-300'
+    },
+    orange: {
+      bg: 'bg-gradient-to-br from-orange-50 to-amber-50',
+      iconBg: 'bg-orange-100',
+      iconColor: 'text-orange-600',
+      value: 'text-orange-600',
+      border: 'border-orange-200',
+      hover: 'hover:border-orange-300'
+    },
+    red: {
+      bg: 'bg-gradient-to-br from-red-50 to-rose-50',
+      iconBg: 'bg-red-100',
+      iconColor: 'text-red-600',
+      value: 'text-red-600',
+      border: 'border-red-200',
+      hover: 'hover:border-red-300'
+    },
+    indigo: {
+      bg: 'bg-gradient-to-br from-indigo-50 to-blue-50',
+      iconBg: 'bg-indigo-100',
+      iconColor: 'text-indigo-600',
+      value: 'text-indigo-600',
+      border: 'border-indigo-200',
+      hover: 'hover:border-indigo-300'
     }
   };
 
@@ -125,7 +158,7 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
 
   return (
     <div className={`
-      bg-white rounded-xl border border-gray-200 p-5 sm:p-6
+      bg-white rounded-xl border border-gray-200 p-5
       hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5
       ${style.hover}
     `}>
@@ -140,13 +173,16 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
             </div>
           ) : (
             <div className="flex items-baseline gap-1">
-              <p className={`text-2xl sm:text-3xl lg:text-4xl font-bold ${style.value}`}>
+              <p className={`text-2xl sm:text-3xl font-bold ${style.value}`}>
                 {value}
               </p>
               {trend && (
                 <span className="text-xs text-gray-500 ml-1">{trend}</span>
               )}
             </div>
+          )}
+          {subtext && (
+            <p className="text-xs text-gray-500 mt-1">{subtext}</p>
           )}
         </div>
         <div className={`
@@ -156,7 +192,7 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
           <Icon size={isMobile ? 18 : 20} />
         </div>
       </div>
-      <p className="text-xs text-gray-500 mt-3 sm:mt-4 truncate">
+      <p className="text-xs text-gray-500 mt-3 truncate">
         {description}
       </p>
     </div>
@@ -287,6 +323,8 @@ export default function TeacherDashboard() {
   const isMobile = useMediaQuery('(max-width: 640px)');
   const [selectedTerm] = useState<string>('Term 1');
   const [selectedYear] = useState<number>(new Date().getFullYear());
+  const [attendanceRate, setAttendanceRate] = useState<number>(0);
+  const [loadingAttendance, setLoadingAttendance] = useState(false);
   
   // Fetch all active classes
   const { 
@@ -320,22 +358,66 @@ export default function TeacherDashboard() {
     return assignedClasses.find(cls => cls.formTeacherId === user?.id);
   }, [assignedClasses, user?.id]);
 
-  // Calculate stats with real pass rate from analytics
+  // Fetch attendance data for all assigned classes
+  useEffect(() => {
+    const fetchAttendanceData = async () => {
+      if (assignedClasses.length === 0) return;
+      
+      setLoadingAttendance(true);
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        let totalPresent = 0;
+        let totalStudents = 0;
+        
+        // For each class, get today's attendance
+        for (const cls of assignedClasses) {
+          const records = await attendanceService.getByClassAndDate(cls.id, today);
+          const studentsInClass = cls.students || 0;
+          
+          if (studentsInClass > 0) {
+            const present = records.filter(r => 
+              r.status === 'present' || r.status === 'late'
+            ).length;
+            
+            totalPresent += present;
+            totalStudents += studentsInClass;
+          }
+        }
+        
+        const rate = totalStudents > 0 ? Math.round((totalPresent / totalStudents) * 100) : 0;
+        setAttendanceRate(rate);
+      } catch (error) {
+        console.error('Error fetching attendance:', error);
+        setAttendanceRate(0);
+      } finally {
+        setLoadingAttendance(false);
+      }
+    };
+
+    fetchAttendanceData();
+  }, [assignedClasses]);
+
+  // Calculate stats - FIXED: Removed references to qualityRate and failRate
   const stats = useMemo(() => {
     const totalStudents = assignedClasses.reduce((sum, cls) => sum + (cls.students || 0), 0);
     
-    // Get real pass rate from analytics data
+    // Get pass rate from analytics
     const passRate = analytics?.passRate || 0;
+    
+    // Calculate average percentage from grade distribution if available
+    const averagePercentage = analytics?.averagePercentage || 0;
     
     return {
       classesHandled: assignedClasses.length,
       totalStudents,
       subjects: user?.subjects || [],
       passRate,
+      averagePercentage,
+      attendanceRate,
       isFormTeacher: !!formTeacherClass,
       formClassName: formTeacherClass?.name,
     };
-  }, [assignedClasses, user?.subjects, formTeacherClass, analytics]);
+  }, [assignedClasses, user?.subjects, formTeacherClass, analytics, attendanceRate]);
 
   // Loading state
   if (classesLoading) {
@@ -368,7 +450,7 @@ export default function TeacherDashboard() {
                   </span>
                 </>
               )}
-              {(resultsLoading || isFetching) && (
+              {(resultsLoading || isFetching || loadingAttendance) && (
                 <>
                   <span className="text-gray-300">•</span>
                   <span className="inline-flex items-center gap-1.5 text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full text-xs">
@@ -381,7 +463,7 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        {/* ===== EMPTY STATE - PROFESSIONAL ===== */}
+        {/* ===== EMPTY STATE ===== */}
         {assignedClasses.length === 0 && (
           <EmptyState />
         )}
@@ -406,39 +488,60 @@ export default function TeacherDashboard() {
           </div>
         )}
 
-        {/* ===== KEY METRICS - 3 CARDS WITH REAL PASS RATE ===== */}
+        {/* ===== KEY METRICS - 2x2 MATRIX ===== */}
         {assignedClasses.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-            <MetricCard
-              label="Classes assigned"
-              value={stats.classesHandled}
-              icon={BookOpen}
-              description={`${stats.classesHandled} class${stats.classesHandled !== 1 ? 'es' : ''} you currently teach`}
-              color="blue"
-            />
-            <MetricCard
-              label="Total students"
-              value={stats.totalStudents}
-              icon={Users}
-              description="Learners across all your classes"
-              color="purple"
-            />
-            <MetricCard
-              label="Pass rate"
-              value={stats.passRate > 0 ? `${stats.passRate}%` : '—'}
-              icon={TrendingUp}
-              description={`Average student pass rate across all subjects • ${selectedTerm} ${selectedYear}`}
-              color="green"
-              trend={stats.passRate > 0 ? 'current term' : undefined}
-              isLoading={resultsLoading}
-            />
+          <div>
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">
+              Performance Overview
+            </h2>
+            <div className="grid grid-cols-2 gap-4">
+              {/* Card 1: Classes Assigned */}
+              <MetricCard
+                label="Classes"
+                value={stats.classesHandled}
+                icon={BookOpen}
+                description="Classes you currently teach"
+                color="blue"
+              />
+              
+              {/* Card 2: Total Students */}
+              <MetricCard
+                label="Students"
+                value={stats.totalStudents}
+                icon={Users}
+                description="Learners across all classes"
+                color="purple"
+              />
+              
+              {/* Card 3: Pass Rate */}
+              <MetricCard
+                label="Pass Rate"
+                value={stats.passRate > 0 ? `${stats.passRate}%` : '—'}
+                icon={TrendingUp}
+                description={`Average pass rate • ${selectedTerm} ${selectedYear}`}
+                color="green"
+                isLoading={resultsLoading}
+                subtext={stats.averagePercentage > 0 ? `${stats.averagePercentage}% avg` : undefined}
+              />
+              
+              {/* Card 4: Attendance Rate */}
+              <MetricCard
+                label="Attendance"
+                value={stats.attendanceRate > 0 ? `${stats.attendanceRate}%` : '—'}
+                icon={UserCheck}
+                description="Average daily attendance"
+                color="orange"
+                isLoading={loadingAttendance}
+                subtext="today's average"
+              />
+            </div>
           </div>
         )}
 
-        {/* ===== QUICK ACTIONS - 1×3 MATRIX, SMALLER BUTTONS ===== */}
+        {/* ===== QUICK ACTIONS - 1×3 MATRIX ===== */}
         {assignedClasses.length > 0 && (
           <div>
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3 sm:mb-4">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">
               Quick actions
             </h2>
             <div className="grid grid-cols-3 gap-2 sm:gap-3">
@@ -467,7 +570,7 @@ export default function TeacherDashboard() {
         {/* ===== CLASSES OVERVIEW ===== */}
         {assignedClasses.length > 0 && (
           <div>
-            <div className="flex items-center justify-between mb-3 sm:mb-4">
+            <div className="flex items-center justify-between mb-4">
               <h2 className="text-base sm:text-lg font-semibold text-gray-900">
                 Your classes
               </h2>
@@ -475,7 +578,7 @@ export default function TeacherDashboard() {
                 {assignedClasses.length} total
               </span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {assignedClasses.map((classItem) => (
                 <ClassCard
                   key={classItem.id}
