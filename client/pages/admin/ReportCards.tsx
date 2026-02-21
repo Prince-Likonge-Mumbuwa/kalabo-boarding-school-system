@@ -1,4 +1,4 @@
-// @/pages/admin/ReportCards.tsx - OPTIMIZED TABULAR FORMAT with Mobile Support
+// @/pages/admin/ReportCards.tsx - OPTIMIZED TABULAR FORMAT with Mobile Support and PDF Download
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -66,7 +66,7 @@ interface ReportCardSubject {
   gradeDescription: string;
 }
 
-interface ReportCardData {
+export interface ReportCardData {
   id: string;
   studentId: string;
   studentName: string;
@@ -292,11 +292,30 @@ interface ReportModalProps {
 const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportModalProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
 
-  if (!isOpen) return null;
+  const handleDownloadPDF = async () => {
+    if (!report) return;
+    try {
+      const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
+      const pdfBytes = await generateReportCardPDF(report);
+      const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `report-card-${report.studentId}-${report.term}-${report.year}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('PDF download failed:', error);
+    }
+  };
 
   const handlePrint = () => {
     window.print();
   };
+
+  if (!isOpen) return null;
 
   // Mobile View
   if (isMobile) {
@@ -311,9 +330,14 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
               <ChevronLeft size={20} className="text-gray-600" />
             </button>
             <h2 className="text-sm font-semibold text-gray-900">Report Card</h2>
-            <button onClick={handlePrint} className="p-2">
-              <Printer size={18} className="text-gray-600" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={handleDownloadPDF} className="p-2" title="Download PDF">
+                <Download size={18} className="text-gray-600" />
+              </button>
+              <button onClick={handlePrint} className="p-2" title="Print">
+                <Printer size={18} className="text-gray-600" />
+              </button>
+            </div>
           </div>
 
           {/* Mobile Content */}
@@ -385,7 +409,7 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
 
                 {/* Footer */}
                 <div className="text-[10px] text-gray-400 text-right">
-                  Generated: {new Date().toLocaleDateString('en-GB')}
+                  Generated: {report.generatedDate}
                 </div>
               </>
             )}
@@ -404,6 +428,13 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
           
           {/* Modal Header */}
           <div className="sticky top-0 z-10 bg-white border-b border-gray-200 rounded-t-2xl px-6 py-3 flex items-center justify-end gap-2">
+            <button
+              onClick={handleDownloadPDF}
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Download PDF"
+            >
+              <Download size={18} />
+            </button>
             <button
               onClick={handlePrint}
               className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
@@ -565,13 +596,7 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
 
                 {/* Footer */}
                 <div className="mt-4 text-right text-xs text-gray-400">
-                  Generated: {new Date().toLocaleDateString('en-GB', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
+                  Generated: {report.generatedDate}
                 </div>
               </div>
             )}
@@ -790,6 +815,13 @@ export default function ReportCards() {
                 // Transform report to remove teacher field and add grade descriptions
                 const transformedReport: ReportCardData = {
                   ...report,
+                  generatedDate: report.generatedDate || new Date().toLocaleDateString('en-GB', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  }),
                   subjects: report.subjects.map(s => ({
                     subjectId: s.subjectId,
                     subjectName: s.subjectName,

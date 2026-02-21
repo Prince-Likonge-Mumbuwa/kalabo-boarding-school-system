@@ -1,3 +1,4 @@
+// @/pages/teacher/TeacherResultsAnalysis.tsx - UPDATED WITH PDF-LIB
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
@@ -8,8 +9,8 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { 
   Filter, Loader2, RefreshCw, TrendingUp, TrendingDown, 
   Download, Target, Users, Award, AlertCircle, ChevronDown,
-  BarChart3, PieChart, Printer
-} from 'lucide-react';
+  BarChart3, PieChart
+} from 'lucide-react'; // Removed Printer import
 
 // ==================== IMPORT TYPES FROM SCHOOL ====================
 import { 
@@ -619,74 +620,46 @@ export default function TeacherResultsAnalysis() {
     };
   }, [results, studentGenderMap]);
 
-  // ==================== BROWSER PRINT/PDF FUNCTIONALITY ====================
-  const handlePrintPDF = async () => {
+  // ==================== PDF DOWNLOAD FUNCTION USING PDF-LIB ====================
+  const handleDownloadPDF = async () => {
     try {
       if (!results || results.length === 0) {
         alert('No data to export');
         return;
       }
 
-      // Helper function to get proper passStatus type
-      const getPassStatus = (grade: number): 'distinction' | 'merit' | 'credit' | 'satisfactory' | 'fail' => {
-        if (grade <= 2) return 'distinction';
-        if (grade <= 4) return 'merit';
-        if (grade <= 6) return 'credit';
-        if (grade <= 8) return 'satisfactory';
-        return 'fail';
-      };
+      // Filter end of term results
+      const endOfTermResults = results.filter(r => r.examType === 'endOfTerm' && r.grade > 0);
+      
+      // Split by gender
+      const boysResults = endOfTermResults.filter(r => studentGenderMap.get(r.studentId) === 'male');
+      const girlsResults = endOfTermResults.filter(r => studentGenderMap.get(r.studentId) === 'female');
 
-      // Transform to match SchoolClassPerformance type exactly
-      const pdfClassPerformance: SchoolClassPerformance[] = classPerformance.map(cls => ({
-        classId: cls.classId,
-        className: cls.className,
-        candidates: {
-          boys: cls.candidates.boys,
-          girls: cls.candidates.girls,
-          total: cls.candidates.total
-        },
-        sat: {
-          boys: cls.sat.boys,
-          girls: cls.sat.girls,
-          total: cls.sat.total
-        },
-        gradeDistribution: cls.gradeDistribution.map(g => ({
-          grade: g.grade,
-          boys: g.boys,
-          girls: g.girls,
-          total: g.total,
-          percentage: g.percentage,
-          passStatus: getPassStatus(g.grade)
-        })),
-        performance: {
-          quality: {
-            boys: cls.performance.quality.boys,
-            girls: cls.performance.quality.girls,
-            total: cls.performance.quality.total,
-            percentage: cls.performance.quality.percentage
-          },
-          quantity: {
-            boys: cls.performance.quantity.boys,
-            girls: cls.performance.quantity.girls,
-            total: cls.performance.quantity.total,
-            percentage: cls.performance.quantity.percentage
-          },
-          fail: {
-            boys: cls.performance.fail.boys,
-            girls: cls.performance.fail.girls,
-            total: cls.performance.fail.total,
-            percentage: cls.performance.fail.percentage
-          }
-        },
-        subjectPerformance: [] // Optional field
-      }));
+      // Calculate metrics for boys
+      const calculateMetrics = (resultsArray: typeof endOfTermResults) => ({
+        registered: resultsArray.length,
+        sat: resultsArray.length,
+        absent: 0, // Calculate if you have attendance data
+        dist: resultsArray.filter(r => r.grade <= 2).length,
+        merit: resultsArray.filter(r => r.grade >= 3 && r.grade <= 4).length,
+        credit: resultsArray.filter(r => r.grade >= 5 && r.grade <= 6).length,
+        pass: resultsArray.filter(r => r.grade >= 7 && r.grade <= 8).length,
+        fail: resultsArray.filter(r => r.grade === 9).length,
+        quality: resultsArray.filter(r => r.grade <= 4).length,
+        quantity: resultsArray.filter(r => r.grade <= 8).length,
+      });
 
       const pdfData = {
-        teacherName: user?.name || 'Teacher',
-        subjects: selectedSubject !== 'all' ? [selectedSubject] : assignedSubjects.map(s => s.name),
-        classes: pdfClassPerformance,
+        schoolName: 'KALABO BOARDING SECONDARY SCHOOL',
+        address: 'P.O BOX 930096',
+        className: selectedClass !== 'all' 
+          ? assignedClasses.find(c => c.id === selectedClass)?.name || 'All Classes'
+          : 'All Classes',
+        subject: selectedSubject !== 'all' ? selectedSubject : undefined,
         term: selectedTerm,
         year: selectedYear,
+        boys: calculateMetrics(boysResults),
+        girls: calculateMetrics(girlsResults),
         generatedDate: new Date().toLocaleDateString('en-GB', {
           day: '2-digit',
           month: '2-digit',
@@ -697,16 +670,31 @@ export default function TeacherResultsAnalysis() {
       };
 
       // Dynamically import the PDF generator
-      const { generateTeacherResultsPDF } = await import('@/services/pdf/teacherResultsPDF');
+      const { generateResultsAnalysisPDF } = await import('@/services/pdf/resultsAnalysisPDFLib');
       
-      // Generate the PDF document definition
-      const docDefinition = await generateTeacherResultsPDF(pdfData);
+      // Generate PDF
+      const pdfBytes = await generateResultsAnalysisPDF(pdfData);
+
+      // Download PDF
+      const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
       
-      // Dynamically import pdfMake
-      const pdfMake = (await import('pdfmake/build/pdfmake')).default;
+      // Create filename
+      const filename = [
+        'results',
+        pdfData.className.replace(/\s+/g, '-'),
+        pdfData.subject ? pdfData.subject.replace(/\s+/g, '-') : null,
+        pdfData.term.replace(/\s+/g, '-'),
+        pdfData.year
+      ].filter(Boolean).join('-') + '.pdf';
       
-      // Open in new window for printing/download
-      pdfMake.createPdf(docDefinition).open();
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
 
     } catch (error) {
       console.error('PDF Generation Error:', error);
@@ -762,7 +750,7 @@ export default function TeacherResultsAnalysis() {
           {/* Action Buttons */}
           <div className="flex items-center gap-2">
             <button
-              onClick={handlePrintPDF}
+              onClick={handleDownloadPDF}
               disabled={!hasData}
               className={`
                 inline-flex items-center justify-center
@@ -771,10 +759,10 @@ export default function TeacherResultsAnalysis() {
                 disabled:opacity-50 disabled:cursor-not-allowed
                 ${isMobile ? 'p-2.5' : 'px-4 py-2.5 gap-2'}
               `}
-              title="Print / Save as PDF"
+              title="Download Results PDF"
             >
-              <Printer size={isMobile ? 18 : 16} />
-              {!isMobile && 'Print PDF'}
+              <Download size={isMobile ? 18 : 16} />
+              {!isMobile && 'Download PDF'}
             </button>
             <button
               onClick={() => refetch()}
