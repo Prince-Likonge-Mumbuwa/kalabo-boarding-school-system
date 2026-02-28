@@ -13,6 +13,7 @@ import {
   FileText,
   Clock,
   PenTool,
+  CalendarCheck, // Add this import for attendance icon
 } from 'lucide-react';
 
 interface DashboardLayoutProps {
@@ -35,7 +36,8 @@ export function DashboardLayout({ children, activeTab = 'dashboard' }: Dashboard
   const adminMenuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard/admin' },
     { id: 'classes', label: 'Class Management', icon: BookOpen, path: '/dashboard/admin/classes' },
-    { id: 'teachers', label: 'Teacher Management', icon: Users, path: '/dashboard/admin/teachers' },
+    { id: 'teachers', label: 'Teachers', icon: Users, path: '/dashboard/admin/teachers' },
+    { id: 'attendance', label: 'Attendance Overview', icon: CalendarCheck, path: '/dashboard/admin/attendance-overview' }, // NEW
     { id: 'results', label: 'Results Analysis', icon: BarChart3, path: '/dashboard/admin/results-analysis' },
     { id: 'reports', label: 'Report Cards', icon: FileText, path: '/dashboard/admin/report-cards' },
   ];

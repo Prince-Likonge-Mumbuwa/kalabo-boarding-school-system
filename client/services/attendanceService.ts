@@ -187,6 +187,34 @@ class AttendanceService {
   }
 
   /**
+   * Get attendance records for a date range
+   */
+  async getByDateRange(startDate: string, endDate: string): Promise<AttendanceRecord[]> {
+    try {
+      const q = query(
+        collection(db, ATTENDANCE_COLLECTION),
+        where('date', '>=', startDate),
+        where('date', '<=', endDate),
+        orderBy('date', 'desc'),
+        orderBy('timestamp', 'desc')
+      );
+      
+      const querySnapshot = await getDocs(q);
+      return querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : data.timestamp,
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
+        } as AttendanceRecord;
+      });
+    } catch (error) {
+      console.error('Error fetching attendance by date range:', error);
+      return [];
+    }
+  }
+
+  /**
    * Get today's attendance for a class
    */
   async getTodaysAttendance(classId: string): Promise<AttendanceRecord[]> {
@@ -560,6 +588,104 @@ class AttendanceService {
           bestDay: '',
           worstDay: '',
         },
+      };
+    }
+  }
+
+  /**
+   * Get attendance summary for all classes on a specific date
+   */
+  async getSchoolAttendanceSummary(date: string): Promise<{
+    totalStudents: number;
+    present: number;
+    absent: number;
+    late: number;
+    excused: number;
+    rate: number;
+    byClass: Array<{
+      classId: string;
+      className: string;
+      total: number;
+      present: number;
+      absent: number;
+      late: number;
+      excused: number;
+      rate: number;
+    }>;
+  }> {
+    try {
+      const q = query(
+        collection(db, ATTENDANCE_COLLECTION),
+        where('date', '==', date)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const records = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : data.timestamp,
+        } as AttendanceRecord;
+      });
+
+      // Group by class
+      const classMap = new Map<string, {
+        classId: string;
+        className: string;
+        records: AttendanceRecord[];
+      }>();
+
+      records.forEach(record => {
+        if (!classMap.has(record.classId)) {
+          classMap.set(record.classId, {
+            classId: record.classId,
+            className: record.className,
+            records: []
+          });
+        }
+        classMap.get(record.classId)!.records.push(record);
+      });
+
+      const byClass = Array.from(classMap.values()).map(cls => {
+        const present = cls.records.filter(r => r.status === 'present').length;
+        const late = cls.records.filter(r => r.status === 'late').length;
+        const total = cls.records.length;
+
+        return {
+          classId: cls.classId,
+          className: cls.className,
+          total,
+          present,
+          absent: cls.records.filter(r => r.status === 'absent').length,
+          late,
+          excused: cls.records.filter(r => r.status === 'excused').length,
+          rate: total > 0 ? Math.round(((present + late) / total) * 100) : 0
+        };
+      });
+
+      const totalStudents = records.length;
+      const present = records.filter(r => r.status === 'present').length;
+      const late = records.filter(r => r.status === 'late').length;
+
+      return {
+        totalStudents,
+        present,
+        absent: records.filter(r => r.status === 'absent').length,
+        late,
+        excused: records.filter(r => r.status === 'excused').length,
+        rate: totalStudents > 0 ? Math.round(((present + late) / totalStudents) * 100) : 0,
+        byClass
+      };
+    } catch (error) {
+      console.error('Error fetching school attendance summary:', error);
+      return {
+        totalStudents: 0,
+        present: 0,
+        absent: 0,
+        late: 0,
+        excused: 0,
+        rate: 0,
+        byClass: []
       };
     }
   }
