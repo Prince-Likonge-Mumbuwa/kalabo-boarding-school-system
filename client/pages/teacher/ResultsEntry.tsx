@@ -18,7 +18,8 @@ import {
   Trash2,
   FileSpreadsheet,
   History,
-  RefreshCw
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useResults, useSubjectCompletion } from '@/hooks/useResults';
@@ -27,6 +28,7 @@ import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { calculateGrade, getGradeDisplay } from '@/services/resultsService';
+import { StudentResult } from '@/types/results';
 
 interface StudentResultInput {
   id: string;
@@ -412,11 +414,54 @@ const MarksPDFPreview = ({
   term, 
   year, 
   totalMarks,
-  onDownload 
+  onDownload,
+  allExamData,
+  loadingAllData
 }: any) => {
   if (!isOpen) return null;
 
-  const completedCount = students.filter((s: StudentResultInput) => s.marks && s.marks !== '').length;
+  // Create a map of saved marks for quick lookup
+  const savedMarksMap = useMemo(() => {
+    const map = new Map();
+    
+    if (allExamData) {
+      // Add marks from the current exam type
+      const currentExamData = allExamData[examType] || [];
+      currentExamData.forEach((item: any) => {
+        map.set(item.studentId, {
+          marks: item.marks,
+          isSaved: true
+        });
+      });
+    }
+    
+    return map;
+  }, [allExamData, examType]);
+
+  // Combine current input marks with saved marks
+  const displayStudents = useMemo(() => {
+    return students.map((student: StudentResultInput) => {
+      const saved = savedMarksMap.get(student.studentId);
+      
+      // Priority: 1. Current input marks (if any), 2. Saved marks, 3. Empty
+      let displayMarks = student.marks;
+      let isFromSaved = false;
+      
+      if (!displayMarks && saved) {
+        // If no current input but saved marks exist, show saved marks
+        displayMarks = saved.marks === -1 ? 'X' : saved.marks.toString();
+        isFromSaved = true;
+      }
+      
+      return {
+        ...student,
+        displayMarks,
+        isFromSaved
+      };
+    });
+  }, [students, savedMarksMap]);
+
+  const completedCount = displayStudents.filter((s: any) => s.displayMarks && s.displayMarks !== '').length;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -429,16 +474,21 @@ const MarksPDFPreview = ({
             <div>
               <h2 className="text-xl font-bold text-gray-900">Mark Schedule Preview</h2>
               <p className="text-sm text-gray-600 mt-1">
-                {classInfo?.name} • {subject} • {examType} • {term} {year}
+                {classInfo?.name} • {subject} • {examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'} • {term} {year}
               </p>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={onDownload}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                disabled={loadingAllData}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Download size={16} />
-                <span>Download PDF</span>
+                {loadingAllData ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Download size={16} />
+                )}
+                <span>{loadingAllData ? 'Loading Data...' : 'Download PDF'}</span>
               </button>
               <button
                 onClick={onClose}
@@ -471,7 +521,7 @@ const MarksPDFPreview = ({
                 </div>
                 <div>
                   <p className="text-xs text-gray-500">Exam</p>
-                  <p className="font-medium">{examType}</p>
+                  <p className="font-medium">{examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'}</p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-500">Total Marks</p>
@@ -495,6 +545,53 @@ const MarksPDFPreview = ({
                 </div>
               </div>
 
+              {/* Loading State */}
+              {loadingAllData && (
+                <div className="text-center py-8">
+                  <Loader2 className="animate-spin text-blue-600 mx-auto mb-2" size={32} />
+                  <p className="text-gray-600">Fetching all exam data...</p>
+                </div>
+              )}
+
+              {/* Available Exam Data Summary */}
+              {!loadingAllData && allExamData && (
+                <div className="mb-6 p-3 bg-blue-50 rounded-lg">
+                  <h4 className="text-sm font-semibold text-blue-800 mb-2">Available Data for Term Summary:</h4>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div className="bg-white p-2 rounded border border-blue-100">
+                      <span className="font-medium">Week 4:</span>{' '}
+                      <span className={allExamData.week4?.length ? 'text-green-600' : 'text-gray-400'}>
+                        {allExamData.week4?.length || 0} results
+                      </span>
+                    </div>
+                    <div className="bg-white p-2 rounded border border-blue-100">
+                      <span className="font-medium">Week 8:</span>{' '}
+                      <span className={allExamData.week8?.length ? 'text-green-600' : 'text-gray-400'}>
+                        {allExamData.week8?.length || 0} results
+                      </span>
+                    </div>
+                    <div className="bg-white p-2 rounded border border-blue-100">
+                      <span className="font-medium">End of Term:</span>{' '}
+                      <span className={allExamData.endOfTerm?.length ? 'text-green-600' : 'text-gray-400'}>
+                        {allExamData.endOfTerm?.length || 0} results
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Data Source Indicator */}
+              {!loadingAllData && (
+                <div className="mb-4 text-xs text-gray-500 flex items-center gap-4">
+                  <span className="flex items-center gap-1">
+                    <span className="w-3 h-3 bg-green-100 border border-green-300 rounded"></span> Saved marks
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-3 h-3 bg-white border border-gray-300 rounded"></span> Current input
+                  </span>
+                </div>
+              )}
+
               {/* Table */}
               <table className="w-full border-collapse">
                 <thead>
@@ -507,9 +604,9 @@ const MarksPDFPreview = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {students.map((student: StudentResultInput, index: number) => {
-                    const marks = student.marks;
-                    const isAbsent = marks.toLowerCase() === 'x';
+                  {displayStudents.map((student: any, index: number) => {
+                    const marks = student.displayMarks;
+                    const isAbsent = marks?.toLowerCase() === 'x';
                     const marksNum = marks && !isAbsent ? parseInt(marks) : null;
                     const percentage = marksNum !== null ? ((marksNum / totalMarks) * 100).toFixed(0) : null;
                     const grade = marksNum !== null 
@@ -517,13 +614,18 @@ const MarksPDFPreview = ({
                       : isAbsent ? -1 : null;
 
                     return (
-                      <tr key={student.id} className="hover:bg-gray-50">
+                      <tr key={student.id} className={`hover:bg-gray-50 ${student.isFromSaved ? 'bg-green-50/30' : ''}`}>
                         <td className="px-3 py-2 text-xs text-gray-500 border border-gray-300">{index + 1}</td>
-                        <td className="px-3 py-2 text-sm border border-gray-300">{student.name}</td>
+                        <td className="px-3 py-2 text-sm border border-gray-300">
+                          {student.name}
+                          {student.isFromSaved && (
+                            <span className="ml-2 text-xs text-green-600">(saved)</span>
+                          )}
+                        </td>
                         <td className="px-3 py-2 text-xs font-mono text-gray-600 border border-gray-300">{student.studentId}</td>
                         <td className="px-3 py-2 text-center border border-gray-300">
                           {marks ? (
-                            <span className={`font-medium ${isAbsent ? 'text-gray-500 italic' : ''}`}>
+                            <span className={`font-medium ${isAbsent ? 'text-gray-500 italic' : student.isFromSaved ? 'text-green-700' : ''}`}>
                               {isAbsent ? 'ABS' : marks}
                             </span>
                           ) : (
@@ -627,6 +729,29 @@ const EmptyState = ({
   return null;
 };
 
+// ==================== EDIT MODE INDICATOR ====================
+const EditModeIndicator = ({ isEditing, onCancelEdit }: { isEditing: boolean; onCancelEdit: () => void }) => {
+  if (!isEditing) return null;
+  
+  return (
+    <div className="bg-amber-50 border-l-4 border-amber-500 p-4 mb-4 flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <Edit3 size={20} className="text-amber-600" />
+        <div>
+          <p className="font-medium text-amber-800">Edit Mode Active</p>
+          <p className="text-sm text-amber-700">You are editing existing results. Changes will overwrite saved data.</p>
+        </div>
+      </div>
+      <button
+        onClick={onCancelEdit}
+        className="px-3 py-1 bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200 text-sm font-medium"
+      >
+        Cancel Edit
+      </button>
+    </div>
+  );
+};
+
 // ==================== MAIN COMPONENT ====================
 export default function ResultsEntry() {
   const { user } = useAuth();
@@ -655,6 +780,12 @@ export default function ResultsEntry() {
   
   // PDF preview state
   const [showPDFPreview, setShowPDFPreview] = useState(false);
+  const [allExamData, setAllExamData] = useState<any>(null);
+  const [loadingAllData, setLoadingAllData] = useState(false);
+
+  // Editing state
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [originalResults, setOriginalResults] = useState<Map<string, number>>(new Map());
 
   // Hooks
   const { classes, isLoading: loadingClasses } = useSchoolClasses({ isActive: true });
@@ -811,7 +942,7 @@ export default function ResultsEntry() {
 
   // Auto-save draft
   useEffect(() => {
-    if (!selectedClass || !selectedSubject || !students.length || !selectedClassData) return;
+    if (!selectedClass || !selectedSubject || !students.length || !selectedClassData || isEditMode) return;
 
     const filledCount = students.filter(s => s.marks && s.marks !== '').length;
     if (filledCount === 0) {
@@ -855,7 +986,7 @@ export default function ResultsEntry() {
     }, 2000); // Auto-save after 2 seconds of inactivity
 
     return () => clearTimeout(timer);
-  }, [students, selectedClass, selectedSubject, examType, term, year, totalMarks, selectedClassData]);
+  }, [students, selectedClass, selectedSubject, examType, term, year, totalMarks, selectedClassData, isEditMode]);
 
   // Focus management
   const focusNextInput = (currentStudentId: string) => {
@@ -866,6 +997,88 @@ export default function ResultsEntry() {
       nextInput?.focus();
     }
   };
+
+  // Fetch all exam data when preview opens
+  useEffect(() => {
+    const fetchAllExamData = async () => {
+      if (!showPDFPreview || !selectedClass || !selectedSubject || !checkExisting) return;
+      
+      setLoadingAllData(true);
+      console.log('📊 Fetching all exam data for PDF...');
+      
+      try {
+        // Fetch data for all exam types - these return CheckExistingResponse objects
+        const week4Response = await checkExisting({
+          classId: selectedClass,
+          subjectId: selectedSubject,
+          examType: 'week4',
+          term,
+          year,
+        });
+        
+        const week8Response = await checkExisting({
+          classId: selectedClass,
+          subjectId: selectedSubject,
+          examType: 'week8',
+          term,
+          year,
+        });
+        
+        const eotResponse = await checkExisting({
+          classId: selectedClass,
+          subjectId: selectedSubject,
+          examType: 'endOfTerm',
+          term,
+          year,
+        });
+        
+        console.log('✅ Fetched exam data responses:', { 
+          week4: week4Response, 
+          week8: week8Response, 
+          endOfTerm: eotResponse 
+        });
+        
+        // Extract the results array from each response
+        const week4Results = week4Response?.results || [];
+        const week8Results = week8Response?.results || [];
+        const eotResults = eotResponse?.results || [];
+        
+        console.log('✅ Extracted results arrays:', { 
+          week4: week4Results.length, 
+          week8: week8Results.length, 
+          endOfTerm: eotResults.length 
+        });
+        
+        // Transform the data to match what the PDF expects
+        const transformedData = {
+          week4: week4Results.map((item: any) => ({
+            studentId: item.studentId || item.student_id,
+            studentName: item.studentName || item.student_name,
+            marks: item.marks
+          })),
+          week8: week8Results.map((item: any) => ({
+            studentId: item.studentId || item.student_id,
+            studentName: item.studentName || item.student_name,
+            marks: item.marks
+          })),
+          endOfTerm: eotResults.map((item: any) => ({
+            studentId: item.studentId || item.student_id,
+            studentName: item.studentName || item.student_name,
+            marks: item.marks
+          })),
+        };
+        
+        setAllExamData(transformedData);
+        
+      } catch (error) {
+        console.error('❌ Error fetching exam data:', error);
+      } finally {
+        setLoadingAllData(false);
+      }
+    };
+    
+    fetchAllExamData();
+  }, [showPDFPreview, selectedClass, selectedSubject, term, year, checkExisting]);
 
   // Handlers
   const handleMarksChange = (studentId: string, marks: string) => {
@@ -883,9 +1096,98 @@ export default function ResultsEntry() {
   const handleExamTypeChange = (type: 'week4' | 'week8' | 'endOfTerm') => {
     if (isExamTypeEnabled(type)) {
       setExamType(type);
+      // Reset edit mode when changing exam type
+      setIsEditMode(false);
     }
   };
 
+  // Enhanced edit handler - loads existing results
+  const handleEditResults = async () => {
+    if (!selectedClass || !selectedSubject || !selectedClassData || !user || !currentSubjectCompletion) return;
+
+    try {
+      // Check if this exam type has existing results
+      const hasExistingResults = 
+        (examType === 'week4' && currentSubjectCompletion.week4Complete) ||
+        (examType === 'week8' && currentSubjectCompletion.week8Complete) ||
+        (examType === 'endOfTerm' && currentSubjectCompletion.endOfTermComplete);
+
+      if (!hasExistingResults) {
+        alert('No results to edit for this exam type.');
+        return;
+      }
+
+      // Load the existing marks before editing
+      const existingResponse = await checkExisting({
+        classId: selectedClass,
+        subjectId: selectedSubject,
+        examType,
+        term,
+        year,
+      });
+
+      if (existingResponse && existingResponse.results && existingResponse.results.length > 0) {
+        // Store original marks for potential cancel
+        const originalMap = new Map<string, number>();
+        existingResponse.results.forEach((r: any) => {
+          originalMap.set(r.studentId || r.student_id, r.marks);
+        });
+        setOriginalResults(originalMap);
+
+        // Pre-fill the marks with existing values
+        setStudents(prevStudents => 
+          prevStudents.map(student => {
+            const existing = existingResponse.results.find((r: any) => 
+              (r.studentId === student.studentId || r.student_id === student.studentId)
+            );
+            return {
+              ...student,
+              marks: existing ? (existing.marks === -1 ? 'X' : existing.marks.toString()) : ''
+            };
+          })
+        );
+      }
+
+      // Now perform the edit operation
+      await editResults({
+        classId: selectedClass,
+        subjectId: selectedSubject,
+        examType,
+        term,
+        year,
+      });
+
+      // Set edit mode active
+      setIsEditMode(true);
+      
+      // Refresh completion status
+      await refetchCompletion();
+      
+    } catch (error: any) {
+      console.error('Error editing results:', error);
+      alert(`Failed to unlock: ${error.message || 'Please try again'}`);
+    }
+  };
+
+  // Cancel edit mode
+  const handleCancelEdit = () => {
+    if (confirm('Cancel editing? Any unsaved changes will be lost.')) {
+      // Reload original marks
+      setStudents(prevStudents => 
+        prevStudents.map(student => {
+          const originalMark = originalResults.get(student.studentId);
+          return {
+            ...student,
+            marks: originalMark !== undefined ? (originalMark === -1 ? 'X' : originalMark.toString()) : ''
+          };
+        })
+      );
+      setIsEditMode(false);
+      setOriginalResults(new Map());
+    }
+  };
+
+  // Enhanced save handler with overwrite for edit mode
   const handleSaveResults = async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
 
@@ -916,7 +1218,7 @@ export default function ResultsEntry() {
         year,
         totalMarks,
         results,
-        overwrite: false,
+        overwrite: isEditMode, // Set to true when in edit mode
       });
 
       // Clear marks and draft on success
@@ -928,35 +1230,18 @@ export default function ResultsEntry() {
         saveDrafts(newDrafts);
       }
       
+      // Exit edit mode
+      setIsEditMode(false);
+      setOriginalResults(new Map());
+      
       // Refresh completion status
       refetchCompletion();
+      
+      alert('Results saved successfully!');
       
     } catch (error: any) {
       console.error('Error saving results:', error);
       alert(`Failed to save: ${error.message || 'Please try again'}`);
-    }
-  };
-
-  const handleEditResults = async () => {
-    if (!selectedClass || !selectedSubject || !selectedClassData || !user || !currentSubjectCompletion) return;
-
-    try {
-      await editResults({
-        classId: selectedClass,
-        subjectId: selectedSubject,
-        examType,
-        term,
-        year,
-      });
-
-      // Refresh completion status
-      refetchCompletion();
-      
-      alert('Results unlocked for editing. You can now modify marks.');
-      
-    } catch (error: any) {
-      console.error('Error editing results:', error);
-      alert(`Failed to unlock: ${error.message || 'Please try again'}`);
     }
   };
 
@@ -969,6 +1254,7 @@ export default function ResultsEntry() {
     setTotalMarks(draft.totalMarks);
     setStudents(draft.results);
     setActiveDraftId(draft.id);
+    setIsEditMode(false); // Exit edit mode when loading draft
   };
 
   const handleDeleteDraft = (draftId: string) => {
@@ -989,25 +1275,37 @@ export default function ResultsEntry() {
     try {
       const { generateMarkSchedulePDF } = await import('@/services/pdf/markSchedulePDF');
       
-      await generateMarkSchedulePDF({
+      console.log('📄 Generating PDF with data:', {
         className: selectedClassData?.name,
+        subject: selectedSubject,
+        examType,
+        term,
+        year,
+        studentCount: students.length,
+        hasAllExamData: !!allExamData
+      });
+
+      await generateMarkSchedulePDF({
+        className: selectedClassData?.name || '',
         subject: selectedSubject,
         examType,
         term,
         year,
         totalMarks,
         students: students.map(s => ({
-          ...s,
+          name: s.name,
+          studentId: s.studentId,
           marks: s.marks || ''
         })),
         teacherName: user?.name || user?.email || 'Teacher',
-        schoolName: 'KALABO BOARDING SECONDARY SCHOOL'
+        schoolName: 'KALABO BOARDING SECONDARY SCHOOL',
+        allExamData: allExamData || undefined
       });
       
       setShowPDFPreview(false);
     } catch (error) {
       console.error('PDF generation error:', error);
-      alert('Failed to generate PDF. Please try again.');
+      alert('Failed to generate PDF. Please check console for details.');
     }
   };
 
@@ -1027,6 +1325,62 @@ export default function ResultsEntry() {
       (examType === 'week8' && currentSubjectCompletion.week8Complete) ||
       (examType === 'endOfTerm' && currentSubjectCompletion.endOfTermComplete)
     : false;
+
+  // Debug function
+  const debugCheckData = async () => {
+    if (!selectedClass || !selectedSubject) {
+      alert('Select class and subject first');
+      return;
+    }
+    
+    console.log('🔍 Debug: Checking existing data...');
+    
+    try {
+      const week4Response = await checkExisting({
+        classId: selectedClass,
+        subjectId: selectedSubject,
+        examType: 'week4',
+        term,
+        year,
+      });
+      
+      const week8Response = await checkExisting({
+        classId: selectedClass,
+        subjectId: selectedSubject,
+        examType: 'week8',
+        term,
+        year,
+      });
+      
+      const eotResponse = await checkExisting({
+        classId: selectedClass,
+        subjectId: selectedSubject,
+        examType: 'endOfTerm',
+        term,
+        year,
+      });
+      
+      console.log('📊 Debug Full Responses:', {
+        week4: week4Response,
+        week8: week8Response,
+        endOfTerm: eotResponse
+      });
+      
+      console.log('📊 Debug Results Arrays:', {
+        week4: week4Response?.results || [],
+        week8: week8Response?.results || [],
+        endOfTerm: eotResponse?.results || []
+      });
+      
+      alert(`Found: 
+        Week4: ${week4Response?.results?.length || 0} results, 
+        Week8: ${week8Response?.results?.length || 0} results, 
+        EOT: ${eotResponse?.results?.length || 0} results`);
+      
+    } catch (error) {
+      console.error('Debug error:', error);
+    }
+  };
 
   // Loading states
   if (loadingClasses || loadingAssignments) {
@@ -1060,6 +1414,14 @@ export default function ResultsEntry() {
           {/* Action Buttons */}
           {selectedClass && selectedSubject && students.length > 0 && (
             <div className="flex flex-col sm:flex-row gap-2">
+              {/* Debug Button - TEMPORARY */}
+              <button
+                onClick={debugCheckData}
+                className="inline-flex items-center justify-center gap-2 bg-gray-500 text-white rounded-xl hover:bg-gray-600 px-3 py-2 text-sm"
+              >
+                Debug Data
+              </button>
+
               {/* Download Button */}
               <button
                 onClick={handleDownloadMarks}
@@ -1076,8 +1438,8 @@ export default function ResultsEntry() {
                 <span>Download Schedule</span>
               </button>
 
-              {/* Edit Button - Show only if exam is completed */}
-              {isExamCompleted && (
+              {/* Edit Button - Show if exam is completed and not in edit mode */}
+              {isExamCompleted && !isEditMode && (
                 <button
                   onClick={handleEditResults}
                   disabled={isEditing}
@@ -1100,16 +1462,17 @@ export default function ResultsEntry() {
                 </button>
               )}
 
-              {/* Save Button */}
-              {(!isExamCompleted || isEditing) && (
+              {/* Save Button - Show if not completed OR in edit mode */}
+              {(!isExamCompleted || isEditMode) && (
                 <button
                   onClick={handleSaveResults}
                   disabled={isSaving || filledCount === 0 || isCurrentExamLocked}
                   className={`
                     inline-flex items-center justify-center gap-2
-                    bg-blue-600 text-white rounded-xl hover:bg-blue-700
+                    ${isEditMode ? 'bg-amber-600' : 'bg-blue-600'} text-white rounded-xl hover:bg-opacity-90
                     font-medium transition-all active:scale-[0.98]
-                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
+                    focus:outline-none focus:ring-2 focus:ring-offset-2
+                    ${isEditMode ? 'focus:ring-amber-500' : 'focus:ring-blue-500'}
                     disabled:opacity-50 disabled:cursor-not-allowed
                     px-5 py-3 shadow-lg
                     ${isMobile ? 'w-full' : ''}
@@ -1120,15 +1483,20 @@ export default function ResultsEntry() {
                   ) : (
                     <Save size={18} />
                   )}
-                  <span>Save {filledCount > 0 ? `(${filledCount})` : ''}</span>
+                  <span>
+                    {isEditMode ? `Update ${filledCount > 0 ? `(${filledCount})` : ''}` : `Save ${filledCount > 0 ? `(${filledCount})` : ''}`}
+                  </span>
                 </button>
               )}
             </div>
           )}
         </div>
 
+        {/* Edit Mode Indicator */}
+        <EditModeIndicator isEditing={isEditMode} onCancelEdit={handleCancelEdit} />
+
         {/* ===== DRAFTS SECTION ===== */}
-        {drafts.length > 0 && (
+        {drafts.length > 0 && !isEditMode && (
           <div className="bg-white rounded-xl border border-gray-200 p-4">
             <div className="flex items-center gap-2 mb-3">
               <History size={16} className="text-gray-500" />
@@ -1162,9 +1530,10 @@ export default function ResultsEntry() {
                 onChange={e => {
                   setSelectedClass(e.target.value);
                   setSelectedSubject('');
+                  setIsEditMode(false);
                 }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
-                disabled={assignedClasses.length === 0}
+                disabled={assignedClasses.length === 0 || isEditMode}
               >
                 <option value="">Select class...</option>
                 {assignedClasses.map(cls => (
@@ -1182,9 +1551,12 @@ export default function ResultsEntry() {
               </label>
               <select
                 value={selectedSubject}
-                onChange={e => setSelectedSubject(e.target.value)}
+                onChange={e => {
+                  setSelectedSubject(e.target.value);
+                  setIsEditMode(false);
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
-                disabled={!selectedClass || availableSubjects.length === 0}
+                disabled={!selectedClass || availableSubjects.length === 0 || isEditMode}
               >
                 <option value="">
                   {!selectedClass ? 'Select class first' : 
@@ -1204,8 +1576,12 @@ export default function ResultsEntry() {
                 </label>
                 <select
                   value={term}
-                  onChange={e => setTerm(e.target.value)}
+                  onChange={e => {
+                    setTerm(e.target.value);
+                    setIsEditMode(false);
+                  }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
+                  disabled={isEditMode}
                 >
                   <option value="Term 1">T1</option>
                   <option value="Term 2">T2</option>
@@ -1219,10 +1595,14 @@ export default function ResultsEntry() {
                 <input
                   type="number"
                   value={year}
-                  onChange={e => setYear(parseInt(e.target.value) || new Date().getFullYear())}
+                  onChange={e => {
+                    setYear(parseInt(e.target.value) || new Date().getFullYear());
+                    setIsEditMode(false);
+                  }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                   min="2020"
                   max="2030"
+                  disabled={isEditMode}
                 />
               </div>
             </div>
@@ -1239,7 +1619,7 @@ export default function ResultsEntry() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                 min="1"
                 max="500"
-                disabled={isExamCompleted && !isEditing}
+                disabled={isExamCompleted && !isEditMode}
               />
             </div>
           </div>
@@ -1276,9 +1656,14 @@ export default function ResultsEntry() {
                     <span className="font-medium text-gray-900 text-sm">
                       {selectedClassData?.name} • {selectedSubject}
                     </span>
-                    {currentDraft && (
+                    {currentDraft && !isEditMode && (
                       <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
                         Draft
+                      </span>
+                    )}
+                    {isEditMode && (
+                      <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+                        Edit Mode
                       </span>
                     )}
                   </div>
@@ -1294,7 +1679,7 @@ export default function ResultsEntry() {
                         style={{ width: `${completionPercentage}%` }}
                       />
                     </div>
-                    {filledCount > 0 && !isExamCompleted && (
+                    {filledCount > 0 && !isExamCompleted && !isEditMode && (
                       <button
                         onClick={() => {
                           if (confirm('Clear all entered marks?')) {
@@ -1313,7 +1698,6 @@ export default function ResultsEntry() {
                 {isMobile ? (
                   <div className="divide-y divide-gray-100">
                     {students.map((student, index) => {
-                      // FIXED: Use enteredStudentIds instead of enteredStudents
                       const existingMark = currentSubjectCompletion?.enteredStudentIds?.[examType]?.includes(student.studentId)
                         ? currentSubjectCompletion?.savedMarks?.[student.studentId]
                         : null;
@@ -1330,7 +1714,7 @@ export default function ResultsEntry() {
                           }}
                           onEnterPress={() => focusNextInput(student.id)}
                           isMobile={true}
-                          disabled={isExamCompleted && !isEditing}
+                          disabled={isExamCompleted && !isEditMode}
                           showExistingMark={existingMark}
                         />
                       );
@@ -1350,7 +1734,6 @@ export default function ResultsEntry() {
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {students.map((student, index) => {
-                          // FIXED: Use enteredStudentIds instead of enteredStudents
                           const existingMark = currentSubjectCompletion?.enteredStudentIds?.[examType]?.includes(student.studentId)
                             ? currentSubjectCompletion?.savedMarks?.[student.studentId]
                             : null;
@@ -1367,7 +1750,7 @@ export default function ResultsEntry() {
                               }}
                               onEnterPress={() => focusNextInput(student.id)}
                               isMobile={false}
-                              disabled={isExamCompleted && !isEditing}
+                              disabled={isExamCompleted && !isEditMode}
                               showExistingMark={existingMark}
                             />
                           );
@@ -1378,7 +1761,7 @@ export default function ResultsEntry() {
                 )}
                 
                 {/* Status Messages */}
-                {!isExamCompleted && !isCurrentExamLocked && (
+                {!isExamCompleted && !isCurrentExamLocked && !isEditMode && (
                   <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 text-xs text-gray-500 flex items-center gap-4">
                     <span>⏎ Enter: next student</span>
                     <span>X: absent</span>
@@ -1387,11 +1770,20 @@ export default function ResultsEntry() {
                   </div>
                 )}
                 
-                {isExamCompleted && !isEditing && (
+                {isEditMode && (
+                  <div className="px-4 py-3 bg-amber-50 border-t border-amber-200 text-sm text-amber-700 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Edit3 size={16} />
+                      <span>✎ Editing existing results. Changes will overwrite saved data.</span>
+                    </div>
+                  </div>
+                )}
+                
+                {isExamCompleted && !isEditMode && (
                   <div className="px-4 py-3 bg-green-50 border-t border-green-200 text-sm text-green-700 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <CheckCircle size={16} />
-                      <span>✓ {examType} results are complete</span>
+                      <span>✓ {examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'} results are complete</span>
                     </div>
                     <button
                       onClick={handleEditResults}
@@ -1441,6 +1833,8 @@ export default function ResultsEntry() {
         year={year}
         totalMarks={totalMarks}
         onDownload={handleGeneratePDF}
+        allExamData={allExamData}
+        loadingAllData={loadingAllData}
       />
     </DashboardLayout>
   );

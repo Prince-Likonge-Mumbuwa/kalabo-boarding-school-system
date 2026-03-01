@@ -4,7 +4,7 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 interface MarkScheduleOptions {
   className: string;
   subject: string;
-  examType: string;
+  examType: 'week4' | 'week8' | 'endOfTerm';
   term: string;
   year: number;
   totalMarks: number;
@@ -15,6 +15,11 @@ interface MarkScheduleOptions {
   }>;
   teacherName: string;
   schoolName: string;
+  allExamData?: {
+    week4?: Array<{ studentId: string; marks: number; studentName: string }>;
+    week8?: Array<{ studentId: string; marks: number; studentName: string }>;
+    endOfTerm?: Array<{ studentId: string; marks: number; studentName: string }>;
+  };
 }
 
 export const generateMarkSchedulePDF = async ({
@@ -26,157 +31,530 @@ export const generateMarkSchedulePDF = async ({
   totalMarks,
   students,
   teacherName,
-  schoolName
+  schoolName,
+  allExamData
 }: MarkScheduleOptions): Promise<void> => {
   try {
     const pdfDoc = await PDFDocument.create();
     const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const helveticaOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
     
-    const page = pdfDoc.addPage([595.28, 841.89]); // A4
-    const { width, height } = page.getSize();
-    
-    let yPosition = height - 50;
+    const pageWidth = 595.28; // A4 width
+    const pageHeight = 841.89; // A4 height
     const margin = 50;
-    const lineHeight = 20;
+    const contentWidth = pageWidth - (margin * 2);
+    
+    let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+    let yPosition = pageHeight - margin;
 
-    // Header
-    page.drawText(schoolName, {
-      x: margin,
-      y: yPosition,
-      size: 18,
-      font: helveticaBold,
-      color: rgb(0, 0.2, 0.6),
-    });
-    yPosition -= lineHeight * 1.5;
+    // Helper function to calculate centered X position
+    const centerText = (text: string, fontSize: number) => {
+      const textWidth = helveticaBold.widthOfTextAtSize(text, fontSize);
+      return (pageWidth - textWidth) / 2;
+    };
 
-    page.drawText('MARK SCHEDULE', {
-      x: margin,
-      y: yPosition,
-      size: 16,
-      font: helveticaBold,
-      color: rgb(0, 0, 0),
-    });
-    yPosition -= lineHeight * 2;
-
-    // Info Grid
-    const infoItems = [
-      { label: 'Class:', value: className },
-      { label: 'Subject:', value: subject },
-      { label: 'Exam:', value: examType },
-      { label: 'Term/Year:', value: `${term} ${year}` },
-      { label: 'Total Marks:', value: totalMarks.toString() },
-      { label: 'Teacher:', value: teacherName },
-      { label: 'Date:', value: new Date().toLocaleDateString() },
-    ];
-
-    infoItems.forEach(item => {
-      page.drawText(item.label, {
-        x: margin,
-        y: yPosition,
-        size: 10,
+    // Helper function to add header to page
+    const addHeader = (page: typeof currentPage, pageNum: number) => {
+      const headerY = pageHeight - margin;
+      
+      // School header
+      const schoolText = schoolName.toUpperCase();
+      page.drawText(schoolText, {
+        x: centerText(schoolText, 20),
+        y: headerY,
+        size: 20,
+        font: helveticaBold,
+        color: rgb(0, 0.2, 0.4),
+      });
+      
+      const ministryText = 'MINISTRY OF EDUCATION';
+      page.drawText(ministryText, {
+        x: centerText(ministryText, 14),
+        y: headerY - 25,
+        size: 14,
         font: helveticaBold,
         color: rgb(0.3, 0.3, 0.3),
       });
-      page.drawText(item.value, {
-        x: margin + 80,
-        y: yPosition,
-        size: 10,
+
+      // Decorative line
+      page.drawLine({
+        start: { x: margin + 50, y: headerY - 40 },
+        end: { x: pageWidth - margin - 50, y: headerY - 40 },
+        thickness: 1.5,
+        color: rgb(0, 0.2, 0.4),
+      });
+
+      // MARK SCHEDULE title
+      const titleText = 'MARK SCHEDULE';
+      page.drawText(titleText, {
+        x: centerText(titleText, 18),
+        y: headerY - 60,
+        size: 18,
+        font: helveticaBold,
+        color: rgb(0, 0, 0),
+      });
+
+      // Page number
+      page.drawText(`Page ${pageNum}`, {
+        x: pageWidth - margin - 40,
+        y: margin - 15,
+        size: 8,
+        font: helveticaFont,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+    };
+
+    // Add header to first page
+    addHeader(currentPage, 1);
+    yPosition = pageHeight - margin - 85; // Adjust starting position after header
+
+    // Create info box
+    const infoBoxY = yPosition;
+    const infoBoxHeight = 70;
+    
+    // Draw info box background
+    currentPage.drawRectangle({
+      x: margin,
+      y: infoBoxY - infoBoxHeight,
+      width: contentWidth,
+      height: infoBoxHeight,
+      color: rgb(0.95, 0.97, 1),
+      borderColor: rgb(0.7, 0.7, 0.7),
+      borderWidth: 0.5,
+    });
+
+    // Format exam type for display
+    const examTypeDisplay = examType === 'week4' ? 'Week 4' : 
+                           examType === 'week8' ? 'Week 8' : 'End of Term';
+
+    // Count entered marks and calculate statistics
+    const enteredMarks = students.filter(s => s.marks && s.marks !== '' && s.marks.toLowerCase() !== 'x');
+    const absentCount = students.filter(s => s.marks.toLowerCase() === 'x').length;
+    const enteredCount = enteredMarks.length;
+    
+    // Calculate average if there are marks
+    let averageMark = 'N/A';
+    if (enteredCount > 0) {
+      const sum = enteredMarks.reduce((acc, s) => acc + parseInt(s.marks), 0);
+      const avg = (sum / enteredCount).toFixed(1);
+      averageMark = `${avg}/${totalMarks}`;
+    }
+
+    // Info grid - left column
+    let infoX = margin + 10;
+    let infoY = infoBoxY - 20;
+    
+    const drawInfoItem = (label: string, value: string, x: number, y: number) => {
+      currentPage.drawText(label, {
+        x,
+        y,
+        size: 9,
+        font: helveticaBold,
+        color: rgb(0.3, 0.3, 0.3),
+      });
+      currentPage.drawText(value, {
+        x: x + 55,
+        y,
+        size: 9,
         font: helveticaFont,
         color: rgb(0, 0, 0),
       });
-      yPosition -= lineHeight - 5;
-    });
-
-    yPosition -= lineHeight;
-
-    // Table Headers
-    page.drawLine({
-      start: { x: margin, y: yPosition + 5 },
-      end: { x: width - margin, y: yPosition + 5 },
-      thickness: 1,
-      color: rgb(0.7, 0.7, 0.7),
-    });
-
-    page.drawText('#', { x: margin, y: yPosition, size: 10, font: helveticaBold });
-    page.drawText('Student Name', { x: margin + 30, y: yPosition, size: 10, font: helveticaBold });
-    page.drawText('Student ID', { x: margin + 250, y: yPosition, size: 10, font: helveticaBold });
-    page.drawText('Marks', { x: margin + 400, y: yPosition, size: 10, font: helveticaBold });
-    page.drawText('Grade', { x: margin + 480, y: yPosition, size: 10, font: helveticaBold });
-
-    yPosition -= lineHeight;
-
-    // Calculate grade function
-    const calculateGrade = (marksNum: number | null, totalMarks: number): number | null => {
-      if (marksNum === null) return null;
-      if (marksNum === -1) return -1;
-      const percentage = (marksNum / totalMarks) * 100;
-      if (percentage >= 75) return 1;
-      if (percentage >= 70) return 2;
-      if (percentage >= 65) return 3;
-      if (percentage >= 60) return 4;
-      if (percentage >= 55) return 5;
-      if (percentage >= 50) return 6;
-      if (percentage >= 45) return 7;
-      if (percentage >= 40) return 8;
-      return 9;
     };
 
-    // Table Rows
-    students.forEach((student, index) => {
-      if (yPosition < 100) {
-        // Add new page
-        page.drawText('Continued...', { x: margin, y: 50, size: 10, font: helveticaFont });
-        // In a real implementation, you'd add a new page here
-        return;
+    // Row 1
+    drawInfoItem('Class:', className, infoX, infoY);
+    drawInfoItem('Subject:', subject, infoX + 150, infoY);
+    drawInfoItem('Exam:', examTypeDisplay, infoX + 300, infoY);
+
+    // Row 2
+    infoY -= 18;
+    drawInfoItem('Term:', `${term} ${year}`, infoX, infoY);
+    drawInfoItem('Total:', totalMarks.toString(), infoX + 150, infoY);
+    drawInfoItem('Teacher:', teacherName, infoX + 300, infoY);
+
+    // Row 3
+    infoY -= 18;
+    const today = new Date();
+    drawInfoItem('Date:', today.toLocaleDateString(), infoX, infoY);
+    drawInfoItem('Students:', students.length.toString(), infoX + 150, infoY);
+    drawInfoItem('Entered:', `${enteredCount}/${students.length}`, infoX + 300, infoY);
+
+    yPosition = infoBoxY - infoBoxHeight - 20;
+
+    // Table headers
+    const headers = [
+      { text: '#', x: margin + 5, width: 25 },
+      { text: 'Student Name', x: margin + 35, width: 180 },
+      { text: 'Student ID', x: margin + 220, width: 90 },
+      { text: 'Marks', x: margin + 315, width: 45 },
+      { text: 'Score', x: margin + 365, width: 55 },
+      { text: '%', x: margin + 425, width: 35 },
+      { text: 'Grade', x: margin + 465, width: 40 }
+    ];
+
+    // Draw header background
+    currentPage.drawRectangle({
+      x: margin,
+      y: yPosition - 5,
+      width: contentWidth,
+      height: 20,
+      color: rgb(0.2, 0.4, 0.6),
+    });
+
+    // Draw header text
+    headers.forEach(header => {
+      currentPage.drawText(header.text, {
+        x: header.x,
+        y: yPosition,
+        size: 9,
+        font: helveticaBold,
+        color: rgb(1, 1, 1),
+      });
+    });
+
+    yPosition -= 18;
+
+    // Helper function to calculate grade
+    const calculateGrade = (marksNum: number | null): { grade: string; color: any } => {
+      if (marksNum === null) return { grade: '-', color: rgb(0.5, 0.5, 0.5) };
+      if (marksNum === -1) return { grade: 'ABS', color: rgb(0.7, 0.3, 0.3) };
+      
+      const percentage = (marksNum / totalMarks) * 100;
+      
+      if (percentage >= 80) return { grade: '1', color: rgb(0, 0.6, 0) };
+      if (percentage >= 70) return { grade: '2', color: rgb(0.2, 0.7, 0.2) };
+      if (percentage >= 65) return { grade: '3', color: rgb(0.4, 0.8, 0.4) };
+      if (percentage >= 60) return { grade: '4', color: rgb(0.3, 0.6, 1) };
+      if (percentage >= 55) return { grade: '5', color: rgb(0.5, 0.5, 1) };
+      if (percentage >= 50) return { grade: '6', color: rgb(0.8, 0.8, 0.2) };
+      if (percentage >= 45) return { grade: '7', color: rgb(1, 0.6, 0.2) };
+      if (percentage >= 40) return { grade: '8', color: rgb(1, 0.4, 0.2) };
+      return { grade: '9', color: rgb(1, 0.2, 0.2) };
+    };
+
+    // Table rows
+    for (let i = 0; i < students.length; i++) {
+      const student = students[i];
+      
+      // Check if we need a new page
+      if (yPosition < margin + 60) {
+        currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+        addHeader(currentPage, pdfDoc.getPageCount());
+        yPosition = pageHeight - margin - 40;
+        
+        // Redraw headers on new page
+        currentPage.drawRectangle({
+          x: margin,
+          y: yPosition - 5,
+          width: contentWidth,
+          height: 20,
+          color: rgb(0.2, 0.4, 0.6),
+        });
+
+        headers.forEach(header => {
+          currentPage.drawText(header.text, {
+            x: header.x,
+            y: yPosition,
+            size: 9,
+            font: helveticaBold,
+            color: rgb(1, 1, 1),
+          });
+        });
+
+        yPosition -= 18;
+      }
+
+      // Alternate row background
+      if (i % 2 === 0) {
+        currentPage.drawRectangle({
+          x: margin,
+          y: yPosition - 3,
+          width: contentWidth,
+          height: 16,
+          color: rgb(0.97, 0.97, 0.97),
+        });
       }
 
       const marks = student.marks;
       const isAbsent = marks.toLowerCase() === 'x';
       const marksNum = marks && !isAbsent ? parseInt(marks) : null;
-      const grade = marksNum !== null ? calculateGrade(marksNum, totalMarks) : null;
+      const percentage = marksNum !== null ? ((marksNum / totalMarks) * 100).toFixed(0) : null;
+      const { grade, color: gradeColor } = calculateGrade(marksNum);
 
-      page.drawText(`${index + 1}`, { x: margin, y: yPosition, size: 9, font: helveticaFont });
-      
-      const name = student.name.length > 30 ? student.name.substring(0, 27) + '...' : student.name;
-      page.drawText(name, { x: margin + 30, y: yPosition, size: 9, font: helveticaFont });
-      
-      page.drawText(student.studentId, { x: margin + 250, y: yPosition, size: 9, font: helveticaFont });
-      
-      if (marks) {
-        const marksText = isAbsent ? 'ABS' : marks;
-        page.drawText(marksText, { x: margin + 400, y: yPosition, size: 9, font: helveticaFont });
+      // Draw row data
+      currentPage.drawText(`${i + 1}`, {
+        x: margin + 10,
+        y: yPosition,
+        size: 9,
+        font: helveticaFont,
+      });
+
+      // Truncate long names
+      const displayName = student.name.length > 28 ? student.name.substring(0, 25) + '...' : student.name;
+      currentPage.drawText(displayName, {
+        x: margin + 35,
+        y: yPosition,
+        size: 9,
+        font: helveticaFont,
+      });
+
+      currentPage.drawText(student.studentId, {
+        x: margin + 220,
+        y: yPosition,
+        size: 9,
+        font: helveticaFont,
+      });
+
+      // Marks with special styling for absent
+      const marksText = isAbsent ? 'ABS' : (marks || '-');
+      if (isAbsent) {
+        currentPage.drawText(marksText, {
+          x: margin + 315,
+          y: yPosition,
+          size: 9,
+          font: helveticaOblique,
+          color: rgb(0.7, 0.3, 0.3),
+        });
       } else {
-        page.drawText('—', { x: margin + 400, y: yPosition, size: 9, font: helveticaFont });
-      }
-      
-      if (grade !== null) {
-        const gradeText = grade === -1 ? 'X' : grade.toString();
-        page.drawText(gradeText, { x: margin + 480, y: yPosition, size: 9, font: helveticaFont });
-      } else {
-        page.drawText('—', { x: margin + 480, y: yPosition, size: 9, font: helveticaFont });
+        currentPage.drawText(marksText, {
+          x: margin + 315,
+          y: yPosition,
+          size: 9,
+          font: helveticaFont,
+        });
       }
 
-      yPosition -= lineHeight - 5;
-    });
+      // Score
+      const score = marksNum !== null ? `${marksNum}/${totalMarks}` : '-';
+      currentPage.drawText(score, {
+        x: margin + 365,
+        y: yPosition,
+        size: 9,
+        font: helveticaFont,
+      });
 
-    // Footer
-    const enteredCount = students.filter(s => s.marks && s.marks !== '').length;
-    page.drawText(`Total Students: ${students.length} | Entered: ${enteredCount} | Pending: ${students.length - enteredCount}`, {
+      // Percentage
+      const percentText = percentage ? `${percentage}%` : '-';
+      currentPage.drawText(percentText, {
+        x: margin + 430,
+        y: yPosition,
+        size: 9,
+        font: helveticaFont,
+      });
+
+      // Grade
+      currentPage.drawText(grade, {
+        x: margin + 475,
+        y: yPosition,
+        size: 9,
+        font: helveticaBold,
+        color: gradeColor,
+      });
+
+      yPosition -= 16;
+    }
+
+    // Summary section
+    yPosition -= 10;
+    
+    // Draw summary box
+    currentPage.drawRectangle({
       x: margin,
-      y: 50,
-      size: 9,
-      font: helveticaFont,
-      color: rgb(0.5, 0.5, 0.5),
+      y: yPosition - 30,
+      width: contentWidth,
+      height: 40,
+      color: rgb(0.95, 0.95, 0.95),
+      borderColor: rgb(0.7, 0.7, 0.7),
+      borderWidth: 0.5,
     });
 
-    // Save PDF
+    // Summary text
+    currentPage.drawText('SUMMARY STATISTICS', {
+      x: margin + 10,
+      y: yPosition - 10,
+      size: 10,
+      font: helveticaBold,
+    });
+
+    const summaryItems = [
+      `Total Students: ${students.length}`,
+      `Marks Entered: ${enteredCount}`,
+      `Absent: ${absentCount}`,
+      `Pending: ${students.length - enteredCount - absentCount}`,
+      `Average: ${averageMark}`,
+    ];
+
+    summaryItems.forEach((item, index) => {
+      currentPage.drawText(item, {
+        x: margin + 10 + (index * 110),
+        y: yPosition - 22,
+        size: 8,
+        font: helveticaFont,
+      });
+    });
+
+    // If we have all exam data, add a second page with term summary
+    if (allExamData && (allExamData.week4 || allExamData.week8 || allExamData.endOfTerm)) {
+      const summaryPage = pdfDoc.addPage([pageWidth, pageHeight]);
+      addHeader(summaryPage, pdfDoc.getPageCount());
+      
+      let summaryY = pageHeight - margin - 40;
+
+      // Title for term summary
+      const termTitle = 'TERM PERFORMANCE SUMMARY';
+      summaryPage.drawText(termTitle, {
+        x: centerText(termTitle, 14),
+        y: summaryY,
+        size: 14,
+        font: helveticaBold,
+        color: rgb(0, 0.2, 0.4),
+      });
+
+      summaryY -= 30;
+
+      // Table headers for term summary
+      const termHeaders = [
+        { text: '#', x: margin + 5, width: 25 },
+        { text: 'Student Name', x: margin + 35, width: 170 },
+        { text: 'Student ID', x: margin + 210, width: 85 },
+        { text: 'Week 4', x: margin + 300, width: 40 },
+        { text: 'Week 8', x: margin + 345, width: 40 },
+        { text: 'End Term', x: margin + 390, width: 40 },
+        { text: 'Average', x: margin + 435, width: 45 },
+        { text: 'Grade', x: margin + 485, width: 35 }
+      ];
+
+      // Draw header background
+      summaryPage.drawRectangle({
+        x: margin,
+        y: summaryY - 5,
+        width: contentWidth,
+        height: 20,
+        color: rgb(0.3, 0.5, 0.7),
+      });
+
+      termHeaders.forEach(header => {
+        summaryPage.drawText(header.text, {
+          x: header.x,
+          y: summaryY,
+          size: 8,
+          font: helveticaBold,
+          color: rgb(1, 1, 1),
+        });
+      });
+
+      summaryY -= 18;
+
+      // Create maps of marks by student for quick lookup
+      const week4Map = new Map(allExamData.week4?.map(d => [d.studentId, d.marks]) || []);
+      const week8Map = new Map(allExamData.week8?.map(d => [d.studentId, d.marks]) || []);
+      const eotMap = new Map(allExamData.endOfTerm?.map(d => [d.studentId, d.marks]) || []);
+
+      // Display each student's term performance
+      for (let i = 0; i < students.length; i++) {
+        const student = students[i];
+        
+        if (summaryY < margin + 60) {
+          // Would need to add another page, but keeping simple for now
+          break;
+        }
+
+        const week4Mark = week4Map.get(student.studentId);
+        const week8Mark = week8Map.get(student.studentId);
+        const eotMark = eotMap.get(student.studentId);
+        
+        // Calculate average of valid marks (not absent and not undefined)
+        const validMarks = [
+          week4Mark !== undefined && week4Mark !== -1 ? week4Mark : null,
+          week8Mark !== undefined && week8Mark !== -1 ? week8Mark : null,
+          eotMark !== undefined && eotMark !== -1 ? eotMark : null
+        ].filter((m): m is number => m !== null);
+        
+        const avg = validMarks.length > 0 
+          ? (validMarks.reduce((a, b) => a + b, 0) / validMarks.length).toFixed(1)
+          : '-';
+        
+        // Calculate overall grade based on average
+        const avgNum = avg !== '-' ? parseFloat(avg) : null;
+        const avgGrade = avgNum !== null ? calculateGrade(avgNum).grade : '-';
+        const avgGradeColor = avgNum !== null ? calculateGrade(avgNum).color : rgb(0.5, 0.5, 0.5);
+
+        // Alternate row background
+        if (i % 2 === 0) {
+          summaryPage.drawRectangle({
+            x: margin,
+            y: summaryY - 3,
+            width: contentWidth,
+            height: 15,
+            color: rgb(0.97, 0.97, 0.97),
+          });
+        }
+
+        summaryPage.drawText(`${i + 1}`, { x: margin + 10, y: summaryY, size: 8, font: helveticaFont });
+        
+        const displayName = student.name.length > 25 ? student.name.substring(0, 22) + '...' : student.name;
+        summaryPage.drawText(displayName, { x: margin + 35, y: summaryY, size: 8, font: helveticaFont });
+        summaryPage.drawText(student.studentId, { x: margin + 210, y: summaryY, size: 8, font: helveticaFont });
+        
+        // Draw marks with appropriate styling
+        const drawMark = (mark: number | undefined, x: number) => {
+          if (mark === undefined) {
+            summaryPage.drawText('-', { x, y: summaryY, size: 8, font: helveticaFont, color: rgb(0.7, 0.7, 0.7) });
+          } else if (mark === -1) {
+            summaryPage.drawText('ABS', { x, y: summaryY, size: 8, font: helveticaOblique, color: rgb(0.7, 0.3, 0.3) });
+          } else {
+            summaryPage.drawText(mark.toString(), { x, y: summaryY, size: 8, font: helveticaFont });
+          }
+        };
+
+        drawMark(week4Mark, margin + 300);
+        drawMark(week8Mark, margin + 345);
+        drawMark(eotMark, margin + 390);
+        
+        summaryPage.drawText(avg.toString(), { x: margin + 440, y: summaryY, size: 8, font: helveticaBold });
+        summaryPage.drawText(avgGrade, { x: margin + 495, y: summaryY, size: 8, font: helveticaBold, color: avgGradeColor });
+
+        summaryY -= 15;
+      }
+    }
+
+    // Footer on all pages
+    for (let i = 0; i < pdfDoc.getPageCount(); i++) {
+      const page = pdfDoc.getPage(i);
+      
+      // Generation info
+      page.drawText(`Generated on ${new Date().toLocaleString()}`, {
+        x: margin,
+        y: margin - 15,
+        size: 7,
+        font: helveticaFont,
+        color: rgb(0.6, 0.6, 0.6),
+      });
+
+      // Teacher signature line
+      page.drawText('Teacher\'s Signature: _________________________', {
+        x: pageWidth - margin - 200,
+        y: margin - 15,
+        size: 8,
+        font: helveticaFont,
+      });
+    }
+
+    // Save PDF - FIXED: Actually save the document to get bytes
     const pdfBytes = await pdfDoc.save();
-    const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
+    
+    // Fix for TypeScript ArrayBuffer/Uint8Array issue - Using Uint8Array (browser compatible)
+    const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+    
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `marks-${className}-${subject}-${examType}-${term}-${year}.pdf`;
+    
+    // Generate filename with actual data
+    const fileName = `${schoolName.replace(/\s+/g, '_')}_${className.replace(/\s+/g, '_')}_${subject.replace(/\s+/g, '_')}_${examType}_${term.replace(/\s+/g, '_')}_${year}.pdf`;
+    
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
