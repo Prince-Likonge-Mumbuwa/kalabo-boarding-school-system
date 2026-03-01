@@ -1,5 +1,5 @@
-// @/hooks/useResults.ts - Updated with student progress tracking
-// Version 2.1.0 - Fixed useStudentProgress to fetch raw data and aggregate in memory
+// @/hooks/useResults.ts - Updated with student progress tracking and edit functionality
+// Version 2.2.0 - Added editResults and isEditing properties
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
@@ -162,6 +162,28 @@ export const useResults = (options?: {
     },
   });
 
+  // NEW: Edit results mutation (unlock for editing)
+  const editResultsMutation = useMutation({
+    mutationFn: (data: {
+      classId: string;
+      subjectId: string;
+      examType: 'week4' | 'week8' | 'endOfTerm';
+      term: string;
+      year: number;
+    }) => resultsService.editResults(data),
+    onSuccess: (data, variables) => {
+      console.log(`✅ Unlocked results for editing:`, variables);
+      
+      // Invalidate relevant queries
+      queryClient.invalidateQueries({ queryKey: ['results'] });
+      queryClient.invalidateQueries({ queryKey: ['subjectCompletion', variables.classId, variables.term, variables.year] });
+      queryClient.invalidateQueries({ queryKey: ['studentProgress'] });
+    },
+    onError: (error) => {
+      console.error('❌ Failed to unlock results for editing:', error);
+    },
+  });
+
   const updateResultMutation = useMutation({
     mutationFn: ({ resultId, marks, totalMarks }: {
       resultId: string;
@@ -246,6 +268,10 @@ export const useResults = (options?: {
     updateResult: updateResultMutation.mutateAsync,
     isSaving: saveResultsMutation.isPending,
     isUpdating: updateResultMutation.isPending,
+    
+    // NEW: Edit results properties
+    editResults: editResultsMutation.mutateAsync,
+    isEditing: editResultsMutation.isPending,
     
     // Generate report card methods
     generateReportCard: generateReportCardMutation.mutateAsync,

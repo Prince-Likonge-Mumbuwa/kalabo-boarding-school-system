@@ -19,9 +19,18 @@ import {
   AlertCircle,
   ChevronDown,
   Filter,
-  Briefcase
+  Briefcase,
+  MoreVertical,
+  Power,
+  PowerOff,
+  RefreshCw,
+  CheckCircle,
+  XCircle
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
+
+// Teacher status type
+type TeacherStatus = 'active' | 'inactive' | 'transferred' | 'on_leave';
 
 export default function TeacherManagement() {
   const { user } = useAuth();
@@ -37,8 +46,10 @@ export default function TeacherManagement() {
     error: teachersErrorMessage,
     isAssigningTeacher,
     isRemovingTeacher,
+    isUpdatingTeacherStatus,
     assignTeacherToClass,
     removeTeacherFromClass,
+    updateTeacherStatus,
     refetchTeachers,
   } = useSchoolTeachers();
   
@@ -49,20 +60,25 @@ export default function TeacherManagement() {
   } = useSchoolClasses({ isActive: true });
   
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<TeacherStatus | 'all'>('all');
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
+  const [showStatusModal, setShowStatusModal] = useState(false);
   const [selectedTeacher, setSelectedTeacher] = useState<any>(null);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [isFormTeacher, setIsFormTeacher] = useState(false);
+  const [showActionsFor, setShowActionsFor] = useState<string | null>(null);
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
-  // Calculate stats - REDUCED TO 3 CARDS
+  // Calculate stats - WITH STATUS BREAKDOWN
   const stats = useMemo(() => ({
     totalTeachers: teachers.length,
     activeTeachers: teachers.filter(t => t.status === 'active' || !t.status).length,
+    inactiveTeachers: teachers.filter(t => t.status === 'inactive').length,
+    transferredTeachers: teachers.filter(t => t.status === 'transferred').length,
+    onLeaveTeachers: teachers.filter(t => t.status === 'on_leave').length,
     assignedTeachers: teachers.filter(t => t.assignedClassId || (t.assignedClasses && t.assignedClasses.length > 0)).length,
   }), [teachers]);
 
@@ -72,7 +88,8 @@ export default function TeacherManagement() {
       const matchesSearch = !debouncedSearch ||
         teacher.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
         teacher.email.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        (teacher.phone && teacher.phone.includes(debouncedSearch));
+        (teacher.phone && teacher.phone.includes(debouncedSearch)) ||
+        (teacher.department && teacher.department.toLowerCase().includes(debouncedSearch.toLowerCase()));
       
       const teacherStatus = teacher.status || 'active';
       const matchesStatus = statusFilter === 'all' || teacherStatus === statusFilter;
@@ -80,6 +97,37 @@ export default function TeacherManagement() {
       return matchesSearch && matchesStatus;
     });
   }, [teachers, debouncedSearch, statusFilter]);
+
+  // Handle teacher status update
+  const handleUpdateStatus = async (teacherId: string, newStatus: TeacherStatus) => {
+    if (!isUserAdmin) {
+      alert('Only administrators can update teacher status');
+      return;
+    }
+
+    const teacher = teachers.find(t => t.id === teacherId);
+    if (!teacher) return;
+
+    const statusLabels = {
+      active: 'Active',
+      inactive: 'Inactive',
+      transferred: 'Transferred',
+      on_leave: 'On Leave'
+    };
+
+    if (!confirm(`Change ${teacher.name}'s status to ${statusLabels[newStatus]}?`)) {
+      return;
+    }
+
+    try {
+      await updateTeacherStatus({ teacherId, status: newStatus });
+      alert(`Teacher status updated to ${statusLabels[newStatus]} successfully!`);
+      setShowActionsFor(null);
+    } catch (error: any) {
+      console.error('Status update error:', error);
+      alert(`Error: ${error.message || 'Failed to update teacher status'}`);
+    }
+  };
 
   // Handle teacher assignment
   const handleAssignTeacher = async () => {
@@ -158,6 +206,7 @@ export default function TeacherManagement() {
       });
       
       alert(`${teacher.name} removed from ${className} successfully!`);
+      setShowActionsFor(null);
       
     } catch (error: any) {
       console.error('Remove error:', error);
@@ -172,6 +221,22 @@ export default function TeacherManagement() {
     
     const assignedClass = classes.find(c => c.id === teacher.assignedClassId);
     return assignedClass?.name || 'Unknown Class';
+  };
+
+  // Get status badge configuration
+  const getStatusConfig = (status: string) => {
+    switch(status) {
+      case 'active':
+        return { bg: 'bg-green-100', text: 'text-green-800', icon: CheckCircle, label: 'Active' };
+      case 'inactive':
+        return { bg: 'bg-gray-100', text: 'text-gray-800', icon: PowerOff, label: 'Inactive' };
+      case 'transferred':
+        return { bg: 'bg-blue-100', text: 'text-blue-800', icon: RefreshCw, label: 'Transferred' };
+      case 'on_leave':
+        return { bg: 'bg-yellow-100', text: 'text-yellow-800', icon: XCircle, label: 'On Leave' };
+      default:
+        return { bg: 'bg-green-100', text: 'text-green-800', icon: CheckCircle, label: 'Active' };
+    }
   };
 
   // Clear all filters
@@ -237,7 +302,13 @@ export default function TeacherManagement() {
                 <p className="text-sm sm:text-base text-gray-600 mt-1 sm:mt-2 flex items-center gap-2 flex-wrap">
                   <span>{teachers.length} teacher{teachers.length !== 1 ? 's' : ''}</span>
                   <span className="text-gray-300">•</span>
-                  <span>{stats.activeTeachers} active</span>
+                  <span className="text-green-600">{stats.activeTeachers} active</span>
+                  {stats.inactiveTeachers > 0 && (
+                    <>
+                      <span className="text-gray-300">•</span>
+                      <span className="text-gray-600">{stats.inactiveTeachers} inactive</span>
+                    </>
+                  )}
                   {isFetchingTeachers && (
                     <span className="inline-flex items-center gap-1.5 text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full text-xs">
                       <Loader2 size={12} className="animate-spin" />
@@ -281,8 +352,8 @@ export default function TeacherManagement() {
             </div>
           </div>
 
-          {/* ===== STATS CARDS - 1x3 Matrix, Smaller ===== */}
-          <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6">
+          {/* ===== STATS CARDS - Enhanced with Status Breakdown ===== */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 mb-6">
             {/* Total Teachers */}
             <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
               <div className="flex items-center gap-2 sm:gap-3">
@@ -308,6 +379,36 @@ export default function TeacherManagement() {
                   <p className="text-xs sm:text-sm text-gray-600 truncate">Active</p>
                   <p className="text-lg sm:text-xl lg:text-2xl font-bold text-green-600">
                     {stats.activeTeachers}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Inactive Teachers */}
+            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="p-1.5 sm:p-2 bg-gray-50 rounded-lg">
+                  <PowerOff size={isMobile ? 14 : 16} className="text-gray-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs sm:text-sm text-gray-600 truncate">Inactive</p>
+                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-600">
+                    {stats.inactiveTeachers}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* On Leave */}
+            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="p-1.5 sm:p-2 bg-yellow-50 rounded-lg">
+                  <XCircle size={isMobile ? 14 : 16} className="text-yellow-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs sm:text-sm text-gray-600 truncate">On Leave</p>
+                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-yellow-600">
+                    {stats.onLeaveTeachers}
                   </p>
                 </div>
               </div>
@@ -377,13 +478,13 @@ export default function TeacherManagement() {
                 </div>
                 
                 {/* Status Filter */}
-                <div className="relative sm:w-44">
+                <div className="relative sm:w-48">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
                     <Filter size={18} className="text-gray-400" />
                   </div>
                   <select
                     value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
+                    onChange={(e) => setStatusFilter(e.target.value as TeacherStatus | 'all')}
                     className="w-full pl-10 pr-8 py-2.5 border border-gray-300 rounded-lg 
                              focus:ring-2 focus:ring-blue-500 focus:border-transparent
                              appearance-none bg-white cursor-pointer text-sm sm:text-base
@@ -393,6 +494,7 @@ export default function TeacherManagement() {
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
                     <option value="on_leave">On Leave</option>
+                    <option value="transferred">Transferred</option>
                   </select>
                   <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
                     <ChevronDown size={16} className="text-gray-400" />
@@ -443,14 +545,79 @@ export default function TeacherManagement() {
               {filteredTeachers.map((teacher) => {
                 const assignedClassName = getAssignedClassName(teacher.id);
                 const teacherStatus = teacher.status || 'active';
+                const StatusIcon = getStatusConfig(teacherStatus).icon;
                 
                 return (
                   <div
                     key={teacher.id}
                     className="group bg-white rounded-xl border border-gray-200 p-5 
                              shadow-sm hover:shadow-lg transition-all duration-300 
-                             hover:border-gray-300 hover:-translate-y-0.5"
+                             hover:border-gray-300 hover:-translate-y-0.5 relative"
                   >
+                    {/* Actions Dropdown - Only for Admin */}
+                    {isUserAdmin && (
+                      <div className="absolute top-4 right-4">
+                        <button
+                          onClick={() => setShowActionsFor(showActionsFor === teacher.id ? null : teacher.id)}
+                          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+                        >
+                          <MoreVertical size={16} className="text-gray-500" />
+                        </button>
+                        
+                        {/* Dropdown Menu */}
+                        {showActionsFor === teacher.id && (
+                          <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10">
+                            <button
+                              onClick={() => handleUpdateStatus(teacher.id, 'active')}
+                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                              disabled={teacherStatus === 'active'}
+                            >
+                              <CheckCircle size={14} className="text-green-600" />
+                              <span>Set Active</span>
+                              {teacherStatus === 'active' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                            </button>
+                            <button
+                              onClick={() => handleUpdateStatus(teacher.id, 'inactive')}
+                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                              disabled={teacherStatus === 'inactive'}
+                            >
+                              <PowerOff size={14} className="text-gray-600" />
+                              <span>Set Inactive</span>
+                              {teacherStatus === 'inactive' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                            </button>
+                            <button
+                              onClick={() => handleUpdateStatus(teacher.id, 'on_leave')}
+                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                              disabled={teacherStatus === 'on_leave'}
+                            >
+                              <XCircle size={14} className="text-yellow-600" />
+                              <span>Set On Leave</span>
+                              {teacherStatus === 'on_leave' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                            </button>
+                            <button
+                              onClick={() => handleUpdateStatus(teacher.id, 'transferred')}
+                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                              disabled={teacherStatus === 'transferred'}
+                            >
+                              <RefreshCw size={14} className="text-blue-600" />
+                              <span>Set Transferred</span>
+                              {teacherStatus === 'transferred' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                            </button>
+                            <div className="border-t border-gray-100 my-1"></div>
+                            {assignedClassName && (
+                              <button
+                                onClick={() => handleRemoveFromClass(teacher.id)}
+                                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 text-red-600 flex items-center gap-2"
+                              >
+                                <UserX size={14} />
+                                <span>Remove from Class</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Teacher Header */}
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center gap-3 min-w-0">
@@ -463,14 +630,9 @@ export default function TeacherManagement() {
                             {teacher.name}
                           </h3>
                           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${
-                              teacherStatus === 'active' 
-                                ? 'bg-green-100 text-green-800' 
-                                : teacherStatus === 'on_leave'
-                                ? 'bg-yellow-100 text-yellow-800'
-                                : 'bg-gray-100 text-gray-800'
-                            }`}>
-                              {teacherStatus.replace('_', ' ')}
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getStatusConfig(teacherStatus).bg} ${getStatusConfig(teacherStatus).text}`}>
+                              <StatusIcon size={10} />
+                              {getStatusConfig(teacherStatus).label}
                             </span>
                             {teacher.isFormTeacher && (
                               <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full">
@@ -502,6 +664,12 @@ export default function TeacherManagement() {
                             : 'No subjects'}
                         </span>
                       </div>
+                      {teacher.department && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Briefcase size={14} className="text-gray-400 flex-shrink-0" />
+                          <span className="text-gray-700 truncate">{teacher.department}</span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Assignment Status */}
@@ -516,27 +684,12 @@ export default function TeacherManagement() {
                                 {assignedClassName}
                               </span>
                             </div>
-                            {isUserAdmin && (
-                              <button
-                                onClick={() => handleRemoveFromClass(teacher.id)}
-                                disabled={isRemovingTeacher}
-                                className="p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg 
-                                         transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                title="Remove from class"
-                              >
-                                {isRemovingTeacher ? (
-                                  <Loader2 size={14} className="animate-spin" />
-                                ) : (
-                                  <UserX size={14} />
-                                )}
-                              </button>
-                            )}
                           </div>
                         </div>
                       ) : (
                         <div className="flex items-center justify-between">
                           <span className="text-sm text-gray-500">Not assigned</span>
-                          {isUserAdmin && (
+                          {isUserAdmin && teacherStatus === 'active' && (
                             <button
                               onClick={() => {
                                 setSelectedTeacher(teacher);
@@ -595,7 +748,7 @@ export default function TeacherManagement() {
         </div>
       </DashboardLayout>
 
-      {/* ===== ASSIGNMENT MODAL - Refined ===== */}
+      {/* ===== ASSIGNMENT MODAL ===== */}
       {showAssignmentModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={() => setShowAssignmentModal(false)} />

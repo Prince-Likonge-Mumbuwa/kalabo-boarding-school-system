@@ -17,7 +17,7 @@ import {
   Eye,
   AlertCircle,
   ChevronDown,
-  X
+  X,
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
 import { Class } from '@/types/school';
@@ -28,6 +28,26 @@ import { CSVImportModal } from '@/components/CSVImportModal';
 import { IndividualLearnerModal } from '@/components/IndividualLearnerModal';
 import { LearnersListView } from '@/components/LearnersListView';
 import { TeachersListView } from '@/components/TeachersListView';
+import { SuccessModal } from '@/components/SuccessModal';
+import { EditLearnerModal } from '@/components/EditLearnerModal';
+import { PDFDownloadModal } from '@/components/PDFDownloadModal';
+
+// Type assertion for classes with stats
+type ClassWithStats = Class & {
+  learnerStats?: {
+    classPrefix?: string;
+    nextStudentIndex?: number;
+    total?: number;
+    byGender?: { boys: number; girls: number };
+  };
+  genderStats?: {
+    boys: number;
+    girls: number;
+    unspecified: number;
+    boysPercentage: number;
+    girlsPercentage: number;
+  };
+};
 
 export default function ClassManagement() {
   const { user } = useAuth();
@@ -46,10 +66,26 @@ export default function ClassManagement() {
   const [showIndividualLearnerModal, setShowIndividualLearnerModal] = useState(false);
   const [showLearnersListModal, setShowLearnersListModal] = useState(false);
   const [showTeachersListModal, setShowTeachersListModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showEditLearnerModal, setShowEditLearnerModal] = useState(false);
+  const [showPDFModal, setShowPDFModal] = useState(false);
   
   // State for selected items
-  const [selectedClass, setSelectedClass] = useState<Class | null>(null);
+  const [selectedClass, setSelectedClass] = useState<ClassWithStats | null>(null);
+  const [selectedLearner, setSelectedLearner] = useState<any>(null);
   const [csvImportType, setCSVImportType] = useState<'learners' | 'classes'>('classes');
+  
+  // State for success modal data
+  const [successData, setSuccessData] = useState<{
+    title: string;
+    message: string;
+    studentId?: string;
+    studentName?: string;
+    className?: string;
+    actionType: 'add' | 'import' | 'update' | 'edit';
+    importedCount?: number;
+    studentIds?: string[];
+  } | null>(null);
 
   // Build filters object
   const filters = useMemo(() => {
@@ -75,17 +111,24 @@ export default function ClassManagement() {
     isImportingClasses,
     createClass,
     bulkImportClasses,
-    refetch: refetchClasses
+    refetch: refetchClasses,
+    previewNextStudentId
   } = useSchoolClasses(filters);
+
+  // Cast classes to include stats
+  const classesWithStats = classes as ClassWithStats[];
 
   const {
     learners: classLearners,
     isLoading: learnersLoading,
     isAddingLearner,
     isImportingLearners,
-    addLearner,
+    // Temporarily comment out until hook is updated
+    // isUpdatingLearner,
+    addEnhancedLearner,
     bulkImportLearners,
     removeLearner,
+    // updateLearner,
     refetch: refetchLearners
   } = useSchoolLearners(selectedClass?.id);
 
@@ -99,27 +142,27 @@ export default function ClassManagement() {
 
   // Filter classes client-side for search
   const filteredClasses = useMemo(() => {
-    if (!debouncedSearch) return classes;
-    return classes.filter(cls => 
+    if (!debouncedSearch) return classesWithStats;
+    return classesWithStats.filter(cls => 
       cls.name.toLowerCase().includes(debouncedSearch.toLowerCase())
     );
-  }, [classes, debouncedSearch]);
+  }, [classesWithStats, debouncedSearch]);
 
   // Calculate total learners
   const totalLearners = useMemo(() => {
-    return classes.reduce((sum, cls) => sum + cls.students, 0);
-  }, [classes]);
+    return classesWithStats.reduce((sum, cls) => sum + cls.students, 0);
+  }, [classesWithStats]);
 
   // Handle viewing class learners
   const handleViewClassLearners = (classId: string) => {
-    const selected = classes.find(c => c.id === classId) || null;
+    const selected = classesWithStats.find(c => c.id === classId) || null;
     setSelectedClass(selected);
     setShowLearnersListModal(true);
   };
 
   // Handle viewing class teachers
   const handleViewClassTeachers = (classId: string) => {
-    const selected = classes.find(c => c.id === classId) || null;
+    const selected = classesWithStats.find(c => c.id === classId) || null;
     setSelectedClass(selected);
     setShowTeachersListModal(true);
   };
@@ -134,7 +177,14 @@ export default function ClassManagement() {
 
       await createClass(data);
       setYearFilter(data.year);
-      alert(`${data.name} has been created successfully!`);
+      
+      setSuccessData({
+        title: 'Class Created Successfully!',
+        message: `${data.name} has been created for the year ${data.year}.`,
+        actionType: 'add',
+        className: data.name
+      });
+      setShowSuccessModal(true);
       setShowCreateModal(false);
       
     } catch (error: any) {
@@ -153,13 +203,32 @@ export default function ClassManagement() {
 
       if (csvImportType === 'classes') {
         const result = await bulkImportClasses(data);
-        alert(`Successfully imported ${result.success} classes. ${result.failed > 0 ? `Failed: ${result.failed}` : ''}`);
+        setSuccessData({
+          title: 'Classes Imported Successfully!',
+          message: `Successfully imported ${result.success} classes.`,
+          actionType: 'import',
+          importedCount: result.success,
+          studentIds: []
+        });
+        setShowSuccessModal(true);
         setShowCSVImportModal(false);
         setYearFilter(null);
         
       } else if (csvImportType === 'learners' && selectedClass) {
-        const result = await bulkImportLearners({ classId: selectedClass.id, learnersData: data });
-        alert(`Successfully imported ${result.success} learners into ${selectedClass.name}. ${result.failed > 0 ? `Failed: ${result.failed}` : ''}`);
+        const result = await bulkImportLearners({ 
+          classId: selectedClass.id, 
+          learnersData: data 
+        });
+        
+        setSuccessData({
+          title: 'Learners Imported Successfully!',
+          message: `Successfully imported ${result.success} learners into ${selectedClass.name}.`,
+          actionType: 'import',
+          importedCount: result.success,
+          className: selectedClass.name,
+          studentIds: result.studentIds || []
+        });
+        setShowSuccessModal(true);
         setShowCSVImportModal(false);
       }
     } catch (error: any) {
@@ -168,33 +237,71 @@ export default function ClassManagement() {
     }
   };
 
-  // Handle individual learner addition - FIXED with gender field
+  // Handle individual learner addition - FIXED return type
   const handleAddIndividualLearner = async (data: { 
-    name: string; 
-    age: number; 
-    gender: 'male' | 'female';  // Gender field added to match modal
-    parentPhone: string;
-  }) => {
-    if (!selectedClass) return;
+    fullName: string;
+    address: string;
+    dateOfFirstEntry: string;
+    gender: 'male' | 'female';
+    guardian: string;
+    sponsor: string;
+    guardianPhone: string;
+    birthYear: number;
+  }): Promise<{ studentId: string }> => {
+    if (!selectedClass) throw new Error('No class selected');
     
     try {
       if (!isUserAdmin) {
-        alert('Only administrators can add learners.');
-        return;
+        throw new Error('Only administrators can add learners.');
       }
 
-      await addLearner({
+      const result = await addEnhancedLearner({
         ...data,
         classId: selectedClass.id
       });
       
-      alert(`${data.name} has been added to ${selectedClass.name} successfully!`);
+      setSuccessData({
+        title: 'Learner Added Successfully!',
+        message: `${data.fullName} has been added to ${selectedClass.name}.`,
+        studentId: result.studentId,
+        studentName: data.fullName,
+        className: selectedClass.name,
+        actionType: 'add'
+      });
+      setShowSuccessModal(true);
       setShowIndividualLearnerModal(false);
       
+      return result;
     } catch (error: any) {
       console.error('Add learner error:', error);
-      alert(`Error: ${error.message || 'Failed to add learner'}`);
+      throw error;
     }
+  };
+
+  // Handle learner update - Temporarily disabled
+  const handleUpdateLearner = async (learnerId: string, data: any) => {
+    alert('Edit functionality is being updated. Please try again later.');
+    // Comment out until hook is updated
+    /*
+    try {
+      await updateLearner({ learnerId, updates: data });
+      
+      setSuccessData({
+        title: 'Learner Updated Successfully!',
+        message: `${data.fullName || 'Learner'} information has been updated.`,
+        actionType: 'edit',
+        studentName: data.fullName
+      });
+      setShowSuccessModal(true);
+      setShowEditLearnerModal(false);
+      setSelectedLearner(null);
+      
+      await refetchLearners();
+    } catch (error: any) {
+      console.error('Update learner error:', error);
+      alert(`Error: ${error.message || 'Failed to update learner'}`);
+    }
+    */
   };
 
   // Handle learner removal
@@ -202,7 +309,7 @@ export default function ClassManagement() {
     if (!selectedClass) return;
     
     const learner = classLearners.find(l => l.id === learnerId);
-    const learnerName = learner?.name || 'this learner';
+    const learnerName = learner?.fullName || learner?.name || 'this learner';
     
     if (!confirm(`Remove ${learnerName} from ${selectedClass.name}?`)) {
       return;
@@ -210,10 +317,47 @@ export default function ClassManagement() {
 
     try {
       await removeLearner({ learnerId, classId: selectedClass.id });
-      alert('Learner removed successfully!');
+      
+      setSuccessData({
+        title: 'Learner Removed',
+        message: `${learnerName} has been removed from ${selectedClass.name}.`,
+        actionType: 'update'
+      });
+      setShowSuccessModal(true);
     } catch (error: any) {
       console.error('Remove learner error:', error);
       alert(`Error: ${error.message || 'Failed to remove learner'}`);
+    }
+  };
+
+  // Handle edit learner click
+  const handleEditLearner = (learner: any) => {
+    setSelectedLearner(learner);
+    setShowEditLearnerModal(true);
+  };
+
+  // Handle PDF download
+  const handleDownloadPDF = async (format: 'simple' | 'detailed' | 'summary', includeStats: boolean) => {
+    if (!selectedClass) return;
+    
+    try {
+      // Dynamic import of PDF generation
+      const { generateClassListPDF } = await import('@/utils/pdfGenerator');
+      
+      await generateClassListPDF({
+        classId: selectedClass.id,
+        className: selectedClass.name,
+        learners: classLearners,
+        format,
+        includeStats,
+        schoolName: 'Your School Name',
+        academicYear: selectedClass.year.toString()
+      });
+      
+      setShowPDFModal(false);
+    } catch (error) {
+      console.error('PDF generation error:', error);
+      alert('Failed to generate PDF. Please try again.');
     }
   };
 
@@ -226,6 +370,13 @@ export default function ClassManagement() {
     setSearchTerm('');
     setYearFilter(null);
     setShowMobileFilters(false);
+  };
+
+  // Preview next student ID
+  const getNextStudentIdPreview = (cls: ClassWithStats) => {
+    if (!cls.learnerStats?.classPrefix) return null;
+    const nextIndex = cls.learnerStats.nextStudentIndex || 1;
+    return `${cls.learnerStats.classPrefix}_${nextIndex.toString().padStart(3, '0')}`;
   };
 
   // Error state
@@ -313,7 +464,7 @@ export default function ClassManagement() {
                   Class Management
                 </h1>
                 <p className="text-sm sm:text-base text-gray-600 mt-1 sm:mt-2 flex items-center gap-2 flex-wrap">
-                  <span>{classes.length} class{classes.length !== 1 ? 'es' : ''}</span>
+                  <span>{classesWithStats.length} class{classesWithStats.length !== 1 ? 'es' : ''}</span>
                   <span className="text-gray-300">•</span>
                   <span>{totalLearners} total learner{totalLearners !== 1 ? 's' : ''}</span>
                   {classesFetching && (
@@ -521,11 +672,16 @@ export default function ClassManagement() {
                     <p className="text-sm text-gray-600 mt-1">
                       Year {cls.year}
                     </p>
+                    {cls.learnerStats?.classPrefix && (
+                      <p className="text-xs font-mono text-gray-500 mt-1">
+                        ID Prefix: {cls.learnerStats.classPrefix}
+                      </p>
+                    )}
                   </div>
 
                   {/* Stats */}
                   <div className="mb-4 p-3 bg-gray-50/80 rounded-lg border border-gray-100">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <Users size={16} className="text-gray-500" />
                         <span className="text-sm text-gray-700">Learners</span>
@@ -534,6 +690,21 @@ export default function ClassManagement() {
                         {cls.students}
                       </span>
                     </div>
+                    
+                    {/* Gender Stats */}
+                    {cls.genderStats && (
+                      <div className="flex justify-between text-xs text-gray-600">
+                        <span>Boys: {cls.genderStats.boys}</span>
+                        <span>Girls: {cls.genderStats.girls}</span>
+                      </div>
+                    )}
+                    
+                    {/* Next Student ID Preview */}
+                    {cls.learnerStats?.classPrefix && (
+                      <div className="mt-2 text-xs font-mono bg-blue-50 text-blue-700 p-1 rounded">
+                        Next ID: {getNextStudentIdPreview(cls)}
+                      </div>
+                    )}
                   </div>
 
                   {/* Actions */}
@@ -610,7 +781,7 @@ export default function ClassManagement() {
           {/* ===== BOTTOM METADATA ===== */}
           {filteredClasses.length > 0 && (
             <div className="mt-6 text-xs sm:text-sm text-gray-500 text-center sm:text-left">
-              Showing {filteredClasses.length} of {classes.length} classes
+              Showing {filteredClasses.length} of {classesWithStats.length} classes
               {searchTerm && ` matching "${searchTerm}"`}
               {yearFilter && ` in year ${yearFilter}`}
             </div>
@@ -644,6 +815,9 @@ export default function ClassManagement() {
           onClose={() => setShowIndividualLearnerModal(false)}
           onSubmit={handleAddIndividualLearner}
           className={selectedClass.name}
+          classId={selectedClass.id}
+          classPrefix={selectedClass.learnerStats?.classPrefix}
+          nextStudentIndex={selectedClass.learnerStats?.nextStudentIndex}
           isLoading={isAddingLearner}
         />
       )}
@@ -658,7 +832,12 @@ export default function ClassManagement() {
             setShowLearnersListModal(false);
             setShowIndividualLearnerModal(true);
           }}
+          // onEditLearner={handleEditLearner} // Temporarily disabled
           onRemoveLearner={handleRemoveLearner}
+          onDownloadPDF={() => {
+            setShowLearnersListModal(false);
+            setShowPDFModal(true);
+          }}
           onClose={() => setShowLearnersListModal(false)}
         />
       )}
@@ -672,6 +851,43 @@ export default function ClassManagement() {
           onClose={() => setShowTeachersListModal(false)}
         />
       )}
+
+      {selectedClass && showEditLearnerModal && selectedLearner && (
+        <EditLearnerModal
+          isOpen={showEditLearnerModal}
+          onClose={() => {
+            setShowEditLearnerModal(false);
+            setSelectedLearner(null);
+          }}
+          onSubmit={(data) => handleUpdateLearner(selectedLearner.id, data)}
+          learner={selectedLearner}
+          className={selectedClass.name}
+          isLoading={false} // Temporarily set to false
+        />
+      )}
+
+      {selectedClass && showPDFModal && (
+        <PDFDownloadModal
+          isOpen={showPDFModal}
+          onClose={() => setShowPDFModal(false)}
+          onDownload={handleDownloadPDF}
+          className={selectedClass.name}
+          learnerCount={classLearners.length}
+        />
+      )}
+
+      <SuccessModal
+        isOpen={showSuccessModal}
+        onClose={() => setShowSuccessModal(false)}
+        title={successData?.title || 'Success!'}
+        message={successData?.message || 'Operation completed successfully.'}
+        studentId={successData?.studentId}
+        studentName={successData?.studentName}
+        className={successData?.className}
+        actionType={successData?.actionType || 'add'}
+        importedCount={successData?.importedCount}
+        studentIds={successData?.studentIds}
+      />
     </>
   );
 }

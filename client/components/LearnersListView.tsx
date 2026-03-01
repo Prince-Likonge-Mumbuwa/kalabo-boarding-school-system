@@ -15,7 +15,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Hash,
-  ChevronRight
+  ChevronRight,
+  Download
 } from 'lucide-react';
 import { Learner } from '@/types/school';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -27,7 +28,9 @@ interface LearnersListViewProps {
   learners: Learner[];
   isLoading: boolean;
   onAddLearner: () => void;
-  onRemoveLearner: (learnerId: string) => void;
+  onEditLearner?: (learner: Learner) => void;
+  onRemoveLearner: (learnerId: string) => Promise<void>;
+  onDownloadPDF?: () => void;
   onClose: () => void;
 }
 
@@ -73,7 +76,9 @@ export const LearnersListView = ({
   learners,
   isLoading,
   onAddLearner,
+  onEditLearner,
   onRemoveLearner,
+  onDownloadPDF,
   onClose
 }: LearnersListViewProps) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -97,9 +102,9 @@ export const LearnersListView = ({
   const filteredLearners = useMemo(() => {
     return learners.filter(learner => {
       const matchesSearch = !debouncedSearch ||
-        learner.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+        (learner.fullName || learner.name || '').toLowerCase().includes(debouncedSearch.toLowerCase()) ||
         learner.studentId.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        learner.parentPhone.includes(debouncedSearch);
+        (learner.guardianPhone || learner.parentPhone || '').includes(debouncedSearch);
       
       const matchesGender = genderFilter === 'all' || learner.gender === genderFilter;
       
@@ -173,6 +178,18 @@ export const LearnersListView = ({
               
               {/* Action Buttons */}
               <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+                {/* Download PDF Button */}
+                {onDownloadPDF && (
+                  <button
+                    onClick={onDownloadPDF}
+                    className="inline-flex items-center justify-center p-2 sm:px-4 sm:py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                    title="Download PDF"
+                  >
+                    <Download size={18} className="sm:mr-2" />
+                    <span className="hidden sm:inline">Download PDF</span>
+                  </button>
+                )}
+                
                 <button
                   onClick={onAddLearner}
                   className="inline-flex items-center justify-center p-2 sm:px-4 sm:py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
@@ -329,7 +346,7 @@ export const LearnersListView = ({
                               </div>
                               <div className="min-w-0 flex-1">
                                 <p className="font-medium text-gray-900 text-sm truncate">
-                                  {learner.name}
+                                  {learner.fullName || learner.name || 'N/A'}
                                 </p>
                                 <p className="text-xs text-gray-500">
                                   ID: {learner.studentId}
@@ -361,7 +378,7 @@ export const LearnersListView = ({
                               <div className="flex items-center gap-2">
                                 <Phone size={14} className="text-gray-400" />
                                 <span className="text-sm text-gray-700">
-                                  {learner.parentPhone}
+                                  {learner.guardianPhone || learner.parentPhone || 'N/A'}
                                 </span>
                               </div>
                               <div className="flex items-center gap-2">
@@ -372,7 +389,7 @@ export const LearnersListView = ({
                               </div>
                               <button
                                 onClick={() => {
-                                  if (confirm(`Remove ${learner.name} from this class?`)) {
+                                  if (confirm(`Remove ${learner.fullName || learner.name} from this class?`)) {
                                     onRemoveLearner(learner.id);
                                   }
                                 }}
@@ -411,7 +428,7 @@ export const LearnersListView = ({
                           </div>
                           <div className="min-w-0">
                             <p className="font-medium text-gray-900 text-sm truncate">
-                              {learner.name}
+                              {learner.fullName || learner.name || 'N/A'}
                             </p>
                             <p className="text-xs text-gray-500 truncate">
                               ID: {learner.studentId}
@@ -433,15 +450,24 @@ export const LearnersListView = ({
                         <div className="col-span-3 flex items-center gap-2 min-w-0">
                           <Phone size={14} className="text-gray-400 flex-shrink-0" />
                           <span className="text-sm text-gray-700 truncate">
-                            {learner.parentPhone}
+                            {learner.guardianPhone || learner.parentPhone || 'N/A'}
                           </span>
                         </div>
 
                         {/* Actions */}
-                        <div className="col-span-1 flex items-center justify-end">
+                        <div className="col-span-1 flex items-center justify-end gap-1">
+                          {onEditLearner && (
+                            <button
+                              onClick={() => onEditLearner(learner)}
+                              className="p-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Edit learner"
+                            >
+                              <UserPlus size={16} />
+                            </button>
+                          )}
                           <button
                             onClick={() => {
-                              if (confirm(`Remove ${learner.name} from this class?`)) {
+                              if (confirm(`Remove ${learner.fullName || learner.name} from this class?`)) {
                                 onRemoveLearner(learner.id);
                               }
                             }}

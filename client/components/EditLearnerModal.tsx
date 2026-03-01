@@ -1,4 +1,4 @@
-// @/components/IndividualLearnerModal.tsx
+// @/components/EditLearnerModal.tsx
 import { useState, useEffect } from 'react';
 import {
   X,
@@ -10,48 +10,28 @@ import {
   Users,
   MapPin,
   Calendar,
-  Building2,
   HandHeart,
-  Copy,
-  Check
+  Save
 } from 'lucide-react';
+import { Learner } from '@/types/school';
 
-interface IndividualLearnerModalProps {
+interface EditLearnerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (data: {
-    fullName: string;
-    address: string;
-    dateOfFirstEntry: string;
-    gender: 'male' | 'female';
-    guardian: string;
-    sponsor: string;
-    guardianPhone: string;
-    birthYear: number;
-    preferredName?: string;
-    alternativeGuardian?: string;
-    alternativeGuardianPhone?: string;
-    previousSchool?: string;
-    medicalNotes?: string;
-    allergies?: string[];
-  }) => Promise<{ studentId: string }>;
+  onSubmit: (data: any) => Promise<void>;
+  learner: Learner;
   className: string;
-  classId: string;
-  classPrefix?: string;
-  nextStudentIndex?: number;
   isLoading?: boolean;
 }
 
-export const IndividualLearnerModal = ({
+export const EditLearnerModal = ({
   isOpen,
   onClose,
   onSubmit,
+  learner,
   className,
-  classId,
-  classPrefix,
-  nextStudentIndex = 1,
   isLoading = false
-}: IndividualLearnerModalProps) => {
+}: EditLearnerModalProps) => {
   const currentYear = new Date().getFullYear();
   const [formData, setFormData] = useState({
     fullName: '',
@@ -72,93 +52,58 @@ export const IndividualLearnerModal = ({
   
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [copied, setCopied] = useState(false);
 
-  // Preview student ID
-  const previewStudentId = classPrefix 
-    ? `${classPrefix}_${nextStudentIndex.toString().padStart(3, '0')}`
-    : null;
-
-  // Reset form when modal opens/closes
+  // Load learner data when modal opens
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && learner) {
       setFormData({
-        fullName: '',
-        preferredName: '',
-        address: '',
-        dateOfFirstEntry: '',
-        gender: '',
-        guardian: '',
-        guardianPhone: '',
-        alternativeGuardian: '',
-        alternativeGuardianPhone: '',
-        sponsor: '',
-        birthYear: '',
-        previousSchool: '',
-        medicalNotes: '',
-        allergies: ''
+        fullName: learner.fullName || learner.name || '',
+        preferredName: learner.preferredName || '',
+        address: learner.address || '',
+        dateOfFirstEntry: learner.dateOfFirstEntry || '',
+        gender: learner.gender || '',
+        guardian: learner.guardian || '',
+        guardianPhone: learner.guardianPhone || learner.parentPhone || '',
+        alternativeGuardian: learner.alternativeGuardian || '',
+        alternativeGuardianPhone: learner.alternativeGuardianPhone || '',
+        sponsor: learner.sponsor || '',
+        birthYear: learner.birthYear || '',
+        previousSchool: learner.previousSchool || '',
+        medicalNotes: learner.medicalNotes || '',
+        allergies: learner.allergies ? learner.allergies.join(', ') : ''
       });
-      setErrors({});
-      setShowAdvanced(false);
-      setCopied(false);
     }
-  }, [isOpen]);
+  }, [isOpen, learner]);
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
 
-    // Full Name validation
     if (!formData.fullName.trim()) {
       newErrors.fullName = 'Full name is required';
-    } else if (formData.fullName.trim().length < 2) {
-      newErrors.fullName = 'Name must be at least 2 characters';
     }
 
-    // Address validation
     if (!formData.address.trim()) {
       newErrors.address = 'Address is required';
     }
 
-    // Date of First Entry validation
-    if (!formData.dateOfFirstEntry) {
-      newErrors.dateOfFirstEntry = 'Date of first entry is required';
-    } else {
-      const entryDate = new Date(formData.dateOfFirstEntry);
-      const today = new Date();
-      if (entryDate > today) {
-        newErrors.dateOfFirstEntry = 'Date cannot be in the future';
-      }
-    }
-
-    // Gender validation
     if (!formData.gender) {
       newErrors.gender = 'Please select gender';
     }
 
-    // Guardian validation
     if (!formData.guardian.trim()) {
       newErrors.guardian = 'Guardian name is required';
     }
 
-    // Sponsor validation
     if (!formData.sponsor.trim()) {
       newErrors.sponsor = 'Sponsor name is required';
     }
 
-    // Guardian Phone validation
     if (!formData.guardianPhone) {
       newErrors.guardianPhone = 'Guardian phone number is required';
     } else if (!/^\d{10,15}$/.test(formData.guardianPhone.replace(/\D/g, ''))) {
       newErrors.guardianPhone = 'Enter a valid phone number (10-15 digits)';
     }
 
-    // Alternative Guardian Phone validation (if provided)
-    if (formData.alternativeGuardianPhone && 
-        !/^\d{10,15}$/.test(formData.alternativeGuardianPhone.replace(/\D/g, ''))) {
-      newErrors.alternativeGuardianPhone = 'Enter a valid phone number (10-15 digits)';
-    }
-
-    // Birth Year validation
     if (!formData.birthYear) {
       newErrors.birthYear = 'Birth year is required';
     } else if (formData.birthYear < 1990 || formData.birthYear > currentYear) {
@@ -177,16 +122,14 @@ export const IndividualLearnerModal = ({
     }
 
     try {
-      // Parse allergies (comma-separated string to array)
       const allergiesArray = formData.allergies
         ? formData.allergies.split(',').map(a => a.trim()).filter(a => a)
         : [];
 
-      const result = await onSubmit({
+      await onSubmit({
         fullName: formData.fullName.trim(),
         preferredName: formData.preferredName.trim() || undefined,
         address: formData.address.trim(),
-        dateOfFirstEntry: formData.dateOfFirstEntry,
         gender: formData.gender as 'male' | 'female',
         guardian: formData.guardian.trim(),
         guardianPhone: formData.guardianPhone,
@@ -198,32 +141,9 @@ export const IndividualLearnerModal = ({
         medicalNotes: formData.medicalNotes.trim() || undefined,
         allergies: allergiesArray
       });
-      
-      // Show success message with student ID
-      console.log(`✅ Learner added with ID: ${result.studentId}`);
-      
-      // Reset form
-      setFormData({
-        fullName: '',
-        preferredName: '',
-        address: '',
-        dateOfFirstEntry: '',
-        gender: '',
-        guardian: '',
-        guardianPhone: '',
-        alternativeGuardian: '',
-        alternativeGuardianPhone: '',
-        sponsor: '',
-        birthYear: '',
-        previousSchool: '',
-        medicalNotes: '',
-        allergies: ''
-      });
-      setErrors({});
-      onClose();
     } catch (error) {
-      console.error('Error adding learner:', error);
-      setErrors({ submit: 'Failed to add learner. Please try again.' });
+      console.error('Error updating learner:', error);
+      setErrors({ submit: 'Failed to update learner. Please try again.' });
     }
   };
 
@@ -239,14 +159,6 @@ export const IndividualLearnerModal = ({
     }
   };
 
-  const copyStudentIdPreview = () => {
-    if (previewStudentId) {
-      navigator.clipboard.writeText(previewStudentId);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
   if (!isOpen) return null;
 
   return (
@@ -259,8 +171,13 @@ export const IndividualLearnerModal = ({
           <div className="p-6 border-b border-gray-200 sticky top-0 bg-white rounded-t-2xl z-10">
             <div className="flex items-center justify-between mb-2">
               <div>
-                <h2 className="text-xl font-bold text-gray-900">Add New Learner</h2>
+                <h2 className="text-xl font-bold text-gray-900">Edit Learner</h2>
                 <p className="text-sm text-gray-600 mt-1">Class: {className}</p>
+                {learner.studentId && (
+                  <p className="text-xs font-mono text-gray-500 mt-1">
+                    Student ID: {learner.studentId}
+                  </p>
+                )}
               </div>
               <button
                 onClick={onClose}
@@ -270,29 +187,6 @@ export const IndividualLearnerModal = ({
                 <X size={20} />
               </button>
             </div>
-            
-            {/* Student ID Preview */}
-            {previewStudentId && (
-              <div className="mt-2 p-3 bg-blue-50 rounded-lg border border-blue-100">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-blue-700 font-medium">Next Student ID:</p>
-                    <p className="text-lg font-mono font-bold text-blue-800">{previewStudentId}</p>
-                  </div>
-                  <button
-                    onClick={copyStudentIdPreview}
-                    className="p-2 bg-white rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors"
-                    title="Copy ID"
-                  >
-                    {copied ? (
-                      <Check size={16} className="text-green-600" />
-                    ) : (
-                      <Copy size={16} className="text-blue-600" />
-                    )}
-                  </button>
-                </div>
-              </div>
-            )}
             
             {errors.submit && (
               <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-start gap-2 mt-4">
@@ -304,12 +198,11 @@ export const IndividualLearnerModal = ({
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[60vh] overflow-y-auto">
-            
-            {/* Required Fields Section */}
+            {/* Required Fields */}
             <div className="space-y-5">
               <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                 <span className="w-1 h-4 bg-blue-600 rounded-full"></span>
-                Required Information
+                Basic Information
               </h3>
 
               {/* Full Name */}
@@ -322,7 +215,6 @@ export const IndividualLearnerModal = ({
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g., John Banda"
                   value={formData.fullName}
                   onChange={(e) => setFormData(prev => ({ ...prev, fullName: e.target.value }))}
                   className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
@@ -342,7 +234,6 @@ export const IndividualLearnerModal = ({
                   </div>
                 </label>
                 <textarea
-                  placeholder="e.g., Plot 123, Libala, Lusaka"
                   value={formData.address}
                   onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
                   rows={2}
@@ -354,27 +245,8 @@ export const IndividualLearnerModal = ({
                 {errors.address && <p className="mt-1 text-sm text-red-600">{errors.address}</p>}
               </div>
 
-              {/* Date of First Entry & Birth Year Row */}
+              {/* Birth Year & Gender */}
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <div className="flex items-center gap-2">
-                      <Calendar size={16} className="text-gray-400" />
-                      First School Entry *
-                    </div>
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.dateOfFirstEntry}
-                    onChange={(e) => setFormData(prev => ({ ...prev, dateOfFirstEntry: e.target.value }))}
-                    className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                      errors.dateOfFirstEntry ? 'border-red-300' : 'border-gray-300'
-                    }`}
-                    disabled={isLoading}
-                  />
-                  {errors.dateOfFirstEntry && <p className="mt-1 text-sm text-red-600">{errors.dateOfFirstEntry}</p>}
-                </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     <div className="flex items-center gap-2">
@@ -386,7 +258,6 @@ export const IndividualLearnerModal = ({
                     type="number"
                     min="1990"
                     max={currentYear}
-                    placeholder={`e.g., ${currentYear - 10}`}
                     value={formData.birthYear}
                     onChange={(e) => handleBirthYearChange(e.target.value)}
                     className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
@@ -396,54 +267,31 @@ export const IndividualLearnerModal = ({
                   />
                   {errors.birthYear && <p className="mt-1 text-sm text-red-600">{errors.birthYear}</p>}
                 </div>
-              </div>
 
-              {/* Gender */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <div className="flex items-center gap-2">
-                    <Users size={16} className="text-gray-400" />
-                    Gender *
-                  </div>
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, gender: 'male' }))}
-                    className={`
-                      px-4 py-2.5 border rounded-lg font-medium transition-all
-                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
-                      ${formData.gender === 'male'
-                        ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                      }
-                      ${errors.gender ? 'border-red-300' : ''}
-                    `}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <div className="flex items-center gap-2">
+                      <Users size={16} className="text-gray-400" />
+                      Gender *
+                    </div>
+                  </label>
+                  <select
+                    value={formData.gender}
+                    onChange={(e) => setFormData(prev => ({ ...prev, gender: e.target.value as 'male' | 'female' }))}
+                    className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      errors.gender ? 'border-red-300' : 'border-gray-300'
+                    }`}
                     disabled={isLoading}
                   >
-                    Male
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, gender: 'female' }))}
-                    className={`
-                      px-4 py-2.5 border rounded-lg font-medium transition-all
-                      focus:outline-none focus:ring-2 focus:ring-pink-500 focus:ring-offset-2
-                      ${formData.gender === 'female'
-                        ? 'bg-pink-600 text-white border-pink-600 hover:bg-pink-700'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                      }
-                      ${errors.gender ? 'border-red-300' : ''}
-                    `}
-                    disabled={isLoading}
-                  >
-                    Female
-                  </button>
+                    <option value="">Select Gender</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                  </select>
+                  {errors.gender && <p className="mt-1 text-sm text-red-600">{errors.gender}</p>}
                 </div>
-                {errors.gender && <p className="mt-1 text-sm text-red-600">{errors.gender}</p>}
               </div>
 
-              {/* Guardian & Sponsor Row */}
+              {/* Guardian & Sponsor */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -454,7 +302,6 @@ export const IndividualLearnerModal = ({
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g., Mary Banda"
                     value={formData.guardian}
                     onChange={(e) => setFormData(prev => ({ ...prev, guardian: e.target.value }))}
                     className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
@@ -474,7 +321,6 @@ export const IndividualLearnerModal = ({
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g., Govt. Bursary"
                     value={formData.sponsor}
                     onChange={(e) => setFormData(prev => ({ ...prev, sponsor: e.target.value }))}
                     className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
@@ -500,7 +346,6 @@ export const IndividualLearnerModal = ({
                   </span>
                   <input
                     type="tel"
-                    placeholder="097 123 4567"
                     value={formData.guardianPhone}
                     onChange={(e) => handlePhoneChange(e.target.value, 'guardianPhone')}
                     className={`w-full pl-12 pr-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
@@ -512,9 +357,6 @@ export const IndividualLearnerModal = ({
                 {errors.guardianPhone && (
                   <p className="mt-1 text-sm text-red-600">{errors.guardianPhone}</p>
                 )}
-                <p className="mt-1 text-xs text-gray-500">
-                  Enter 10 digits after +26 (e.g., 971234567)
-                </p>
               </div>
             </div>
 
@@ -529,7 +371,7 @@ export const IndividualLearnerModal = ({
               </button>
             </div>
 
-            {/* Advanced Fields Section */}
+            {/* Advanced Fields */}
             {showAdvanced && (
               <div className="space-y-5 pt-2 border-t border-gray-100">
                 <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
@@ -544,7 +386,6 @@ export const IndividualLearnerModal = ({
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g., Johnny"
                     value={formData.preferredName}
                     onChange={(e) => setFormData(prev => ({ ...prev, preferredName: e.target.value }))}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -560,7 +401,6 @@ export const IndividualLearnerModal = ({
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g., Peter Banda"
                       value={formData.alternativeGuardian}
                       onChange={(e) => setFormData(prev => ({ ...prev, alternativeGuardian: e.target.value }))}
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -569,7 +409,7 @@ export const IndividualLearnerModal = ({
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Alternative Guardian Phone
+                      Alternative Phone
                     </label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">
@@ -577,16 +417,12 @@ export const IndividualLearnerModal = ({
                       </span>
                       <input
                         type="tel"
-                        placeholder="097 123 4567"
                         value={formData.alternativeGuardianPhone}
                         onChange={(e) => handlePhoneChange(e.target.value, 'alternativeGuardianPhone')}
                         className="w-full pl-12 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         disabled={isLoading}
                       />
                     </div>
-                    {errors.alternativeGuardianPhone && (
-                      <p className="mt-1 text-sm text-red-600">{errors.alternativeGuardianPhone}</p>
-                    )}
                   </div>
                 </div>
 
@@ -597,7 +433,6 @@ export const IndividualLearnerModal = ({
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g., Libala Primary"
                     value={formData.previousSchool}
                     onChange={(e) => setFormData(prev => ({ ...prev, previousSchool: e.target.value }))}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -611,7 +446,6 @@ export const IndividualLearnerModal = ({
                     Medical Notes
                   </label>
                   <textarea
-                    placeholder="e.g., Allergies, medical conditions, etc."
                     value={formData.medicalNotes}
                     onChange={(e) => setFormData(prev => ({ ...prev, medicalNotes: e.target.value }))}
                     rows={2}
@@ -627,7 +461,6 @@ export const IndividualLearnerModal = ({
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g., Peanuts, Dust, Penicillin"
                     value={formData.allergies}
                     onChange={(e) => setFormData(prev => ({ ...prev, allergies: e.target.value }))}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -652,15 +485,18 @@ export const IndividualLearnerModal = ({
               <button
                 onClick={handleSubmit}
                 disabled={isLoading}
-                className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 flex items-center justify-center transition-colors"
+                className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
               >
                 {isLoading ? (
                   <>
-                    <Loader2 className="animate-spin mr-2" size={18} />
-                    Adding...
+                    <Loader2 className="animate-spin" size={18} />
+                    Saving...
                   </>
                 ) : (
-                  'Add Learner'
+                  <>
+                    <Save size={18} />
+                    Save Changes
+                  </>
                 )}
               </button>
             </div>

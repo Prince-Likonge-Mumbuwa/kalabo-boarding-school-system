@@ -1,8 +1,14 @@
-// @/hooks/useSchoolClasses.ts - ENHANCED WITH SUBJECT NORMALIZATION
+// @/hooks/useSchoolClasses.ts - UPDATED FOR ENHANCED LEARNER SYSTEM
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { classService, parseClassName } from '@/services/schoolService';
-import { Class, ClassCSVImportData } from '@/types/school';
-import { normalizeSubjectName } from '@/services/resultsService'; // IMPORT normalization utility
+import { 
+  classService, 
+  learnerService, // Import learnerService directly
+  parseClassName, 
+  generateClassPrefix, 
+  generateSequentialStudentId 
+} from '@/services/schoolService';
+import { Class, ClassCSVImportData, Learner } from '@/types/school';
+import { normalizeSubjectName } from '@/services/resultsService';
 
 interface ClassFilters {
   year?: number;
@@ -17,7 +23,7 @@ interface CreateClassData {
   year: number;
 }
 
-// ENHANCED: Class interface now includes teacherAssignments field
+// ENHANCED: Class interface now includes learner statistics
 export interface EnhancedClass extends Class {
   teacherAssignments?: Array<{
     id: string;
@@ -26,10 +32,36 @@ export interface EnhancedClass extends Class {
     teacherId: string;
     teacherName: string;
   }>;
+  // New fields for enhanced learner system
+  learnerStats?: {
+    total: number;
+    byGender: {
+      boys: number;
+      girls: number;
+    };
+    bySponsor?: Record<string, number>;
+    nextStudentIndex?: number; // Next available student index for ID generation
+    classPrefix?: string; // Class prefix for student IDs (e.g., "G10B")
+  };
 }
 
 export const useSchoolClasses = (filters?: ClassFilters) => {
   const queryClient = useQueryClient();
+
+  // Helper function to get next student index for a class
+  const getNextStudentIndex = async (classId: string): Promise<number> => {
+    try {
+      const learners = await learnerService.getLearnersByClass(classId);
+      
+      if (learners.length === 0) return 1;
+      
+      const maxIndex = Math.max(...learners.map(l => l.studentIndex || 0));
+      return maxIndex + 1;
+    } catch (error) {
+      console.error('Error getting next student index:', error);
+      return 1;
+    }
+  };
 
   // Query: Get classes with filters
   const classesQuery = useQuery({
@@ -37,8 +69,7 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     queryFn: async () => {
       const classes = await classService.getClasses(filters);
       
-      // ENHANCED: For each class, fetch its teacher assignments
-      // This ensures we have normalized subject IDs available
+      // ENHANCED: For each class, fetch teacher assignments and calculate learner stats
       const enhancedClasses = await Promise.all(
         classes.map(async (cls: Class) => {
           try {
@@ -51,14 +82,43 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
               subjectId: normalizeSubjectName(assignment.subject || '')
             }));
             
+            // Calculate class prefix for student IDs
+            const classPrefix = generateClassPrefix(cls.type, cls.level, cls.section);
+            
+            // Get the next available student index (for UI preview)
+            const nextIndex = await getNextStudentIndex(cls.id);
+            
             return {
               ...cls,
-              teacherAssignments: normalizedAssignments
+              teacherAssignments: normalizedAssignments,
+              learnerStats: {
+                total: cls.students || 0,
+                byGender: {
+                  boys: cls.genderStats?.boys || 0,
+                  girls: cls.genderStats?.girls || 0,
+                },
+                nextStudentIndex: nextIndex,
+                classPrefix: classPrefix,
+              }
             } as EnhancedClass;
           } catch (error) {
-            // If assignments fetch fails, return class without assignments
-            console.warn(`Could not fetch assignments for class ${cls.id}:`, error);
-            return cls as EnhancedClass;
+            // If assignments fetch fails, return class without enhancements
+            console.warn(`Could not fetch enhanced data for class ${cls.id}:`, error);
+            
+            // Still calculate basic stats
+            const classPrefix = generateClassPrefix(cls.type, cls.level, cls.section);
+            
+            return {
+              ...cls,
+              learnerStats: {
+                total: cls.students || 0,
+                byGender: {
+                  boys: cls.genderStats?.boys || 0,
+                  girls: cls.genderStats?.girls || 0,
+                },
+                classPrefix: classPrefix,
+              }
+            } as EnhancedClass;
           }
         })
       );
@@ -95,6 +155,12 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
       const previousClasses = queryClient.getQueryData(['classes', filters]);
 
       const parsed = parseClassName(newClass.name);
+      const classPrefix = generateClassPrefix(
+        parsed.type ?? 'grade', 
+        parsed.level, 
+        parsed.section
+      );
+      
       const optimisticClass: EnhancedClass = {
         id: `temp-${Date.now()}`,
         name: newClass.name.trim(),
@@ -105,7 +171,13 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
         isActive: true,
         students: 0,
         teachers: [],
-        teacherAssignments: [], // Initialize empty assignments
+        teacherAssignments: [],
+        learnerStats: {
+          total: 0,
+          byGender: { boys: 0, girls: 0 },
+          nextStudentIndex: 1,
+          classPrefix: classPrefix,
+        },
         createdAt: new Date(),
       };
 
@@ -121,8 +193,8 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
       }
       console.error('Failed to create class:', error);
     },
-    onSuccess: (newClass) => {
-      console.log('Class created successfully:', newClass);
+    onSuccess: (newClassId, variables) => {
+      console.log('Class created successfully with ID:', newClassId);
     },
     onSettled: () => {
       queryClient.invalidateQueries({ 
@@ -178,9 +250,29 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
       const previousClasses = queryClient.getQueryData(['classes', filters]);
 
       queryClient.setQueryData(['classes', filters], (old: EnhancedClass[] = []) => {
-        return old.map(cls => 
-          cls.id === classId ? { ...cls, ...updates } : cls
-        );
+        return old.map(cls => {
+          if (cls.id === classId) {
+            // Recalculate class prefix if type, level, or section changed
+            let classPrefix = cls.learnerStats?.classPrefix;
+            if (updates.type || updates.level || updates.section) {
+              classPrefix = generateClassPrefix(
+                updates.type || cls.type,
+                updates.level || cls.level,
+                updates.section || cls.section
+              );
+            }
+            
+            return { 
+              ...cls, 
+              ...updates,
+              learnerStats: {
+                ...cls.learnerStats,
+                classPrefix: classPrefix || cls.learnerStats?.classPrefix,
+              }
+            };
+          }
+          return cls;
+        });
       });
 
       return { previousClasses };
@@ -225,6 +317,67 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     },
   });
 
+  // Mutation: Refresh learner stats for a class
+  const refreshLearnerStatsMutation = useMutation({
+    mutationFn: async (classId: string) => {
+      // Get class details
+      const classData = await classService.getClassById(classId);
+      if (!classData) throw new Error('Class not found');
+      
+      // Get learners for this class using imported learnerService
+      const learners = await learnerService.getLearnersByClass(classId);
+      
+      // Calculate stats
+      const boys = learners.filter(l => l.gender === 'male').length;
+      const girls = learners.filter(l => l.gender === 'female').length;
+      const maxIndex = learners.length > 0 
+        ? Math.max(...learners.map(l => l.studentIndex || 0)) 
+        : 0;
+      
+      const classPrefix = generateClassPrefix(
+        classData.type, 
+        classData.level, 
+        classData.section
+      );
+      
+      return {
+        classId,
+        learnerStats: {
+          total: learners.length,
+          byGender: { boys, girls },
+          nextStudentIndex: maxIndex + 1,
+          classPrefix: classPrefix,
+        }
+      };
+    },
+    onSuccess: ({ classId, learnerStats }) => {
+      queryClient.setQueryData(['classes', filters], (old: EnhancedClass[] = []) => {
+        return old.map(cls => 
+          cls.id === classId 
+            ? { ...cls, learnerStats, students: learnerStats.total } 
+            : cls
+        );
+      });
+    },
+  });
+
+  // New utility function: Generate a preview of next student ID
+  const previewNextStudentId = (classId: string): string | null => {
+    const classData = classesQuery.data?.find(c => c.id === classId);
+    if (!classData?.learnerStats?.classPrefix) return null;
+    
+    const nextIndex = classData.learnerStats.nextStudentIndex || 1;
+    const indexStr = nextIndex.toString().padStart(3, '0');
+    return `${classData.learnerStats.classPrefix}_${indexStr}`;
+  };
+
+  // New utility function: Get class by student ID prefix
+  const getClassByPrefix = (prefix: string): EnhancedClass | undefined => {
+    return classesQuery.data?.find(cls => 
+      cls.learnerStats?.classPrefix === prefix
+    );
+  };
+
   // If teacherId filter is provided, filter the results
   const filteredClasses = filters?.teacherId 
     ? (classesQuery.data || []).filter(cls => 
@@ -234,7 +387,7 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     : (classesQuery.data || []);
 
   return {
-    // Data - return enhanced classes with normalized assignments
+    // Data - return enhanced classes with normalized assignments and learner stats
     classes: filteredClasses as EnhancedClass[],
     
     // Query states
@@ -248,18 +401,26 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     isImportingClasses: bulkImportClassesMutation.isPending,
     isUpdatingClass: updateClassMutation.isPending,
     isRefreshingAssignments: refreshAssignmentsMutation.isPending,
+    isRefreshingLearnerStats: refreshLearnerStatsMutation.isPending,
     
     // Mutations
     createClass: createClassMutation.mutateAsync,
     bulkImportClasses: bulkImportClassesMutation.mutateAsync,
     updateClass: updateClassMutation.mutateAsync,
     refreshAssignments: refreshAssignmentsMutation.mutateAsync,
+    refreshLearnerStats: refreshLearnerStatsMutation.mutateAsync,
     
     // Refetch
     refetch: classesQuery.refetch,
     
-    // Helper
+    // New utility functions
+    previewNextStudentId,
+    getClassByPrefix,
+    
+    // Helpers
     parseClassName,
-    normalizeSubjectName, // EXPOSE normalization utility
+    normalizeSubjectName,
+    generateClassPrefix,
+    generateSequentialStudentId, // Expose ID generator for use in components
   };
 };

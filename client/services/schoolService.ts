@@ -1,4 +1,4 @@
-// @/services/schoolService.ts - ENHANCED WITH GENDER SUPPORT
+// @/services/schoolService.ts - COMPREHENSIVE UPDATE
 import {
   collection,
   query,
@@ -84,7 +84,66 @@ const parseClassName = (name: string): { type: 'grade' | 'form'; level: number; 
 };
 
 /**
- * Generate unique student ID
+ * Generate class prefix based on class type and level
+ * Grade 10B → G10B
+ * Form 3A → F3A
+ */
+export const generateClassPrefix = (classType: 'grade' | 'form', level: number, section: string): string => {
+  const typePrefix = classType === 'grade' ? 'G' : 'F';
+  return `${typePrefix}${level}${section}`.toUpperCase();
+};
+
+/**
+ * Generate sequential student ID for a class
+ * Format: [PREFIX]_[3-DIGIT SEQUENTIAL]
+ * Example: G10B_001, G10B_002
+ */
+export const generateSequentialStudentId = async (
+  classId: string,
+  classType: 'grade' | 'form',
+  level: number,
+  section: string
+): Promise<{ studentId: string; nextIndex: number }> => {
+  try {
+    // Get the current highest index for this class
+    const learnersRef = collection(db, 'learners');
+    const q = query(
+      learnersRef,
+      where('classId', '==', classId),
+      orderBy('studentIndex', 'desc'),
+      limit(1)
+    );
+    
+    const snapshot = await getDocs(q);
+    let nextIndex = 1;
+    
+    if (!snapshot.empty) {
+      const lastLearner = snapshot.docs[0].data();
+      nextIndex = (lastLearner.studentIndex || 0) + 1;
+    }
+    
+    // Generate prefix
+    const prefix = generateClassPrefix(classType, level, section);
+    
+    // Format index with leading zeros (3 digits)
+    const indexStr = nextIndex.toString().padStart(3, '0');
+    const studentId = `${prefix}_${indexStr}`;
+    
+    return { studentId, nextIndex };
+  } catch (error) {
+    console.error('Error generating sequential student ID:', error);
+    // Fallback to timestamp-based ID if sequential generation fails
+    const timestamp = Date.now().toString().slice(-6);
+    const random = Math.random().toString(36).substring(2, 5).toUpperCase();
+    return { 
+      studentId: `TMP${timestamp}${random}`,
+      nextIndex: 0 
+    };
+  }
+};
+
+/**
+ * Legacy generate unique student ID (kept for backward compatibility)
  */
 const generateStudentId = (): string => {
   const timestamp = Date.now().toString().slice(-6);
@@ -109,6 +168,14 @@ const calculateGenderStats = (learners: Learner[]): GenderStats => {
     boysPercentage: total > 0 ? Math.round((boys / total) * 100) : 0,
     girlsPercentage: total > 0 ? Math.round((girls / total) * 100) : 0,
   };
+};
+
+/**
+ * Calculate age from birth year
+ */
+const calculateAge = (birthYear: number): number => {
+  const currentYear = new Date().getFullYear();
+  return currentYear - birthYear;
 };
 
 // ==================== CLASS SERVICE ====================
@@ -508,11 +575,11 @@ const classService = {
   },
 };
 
-// ==================== LEARNER SERVICE WITH GENDER SUPPORT ====================
+// ==================== LEARNER SERVICE WITH ENHANCED FIELDS ====================
 
 const learnerService = {
   /**
-   * Get all learners for a specific class
+   * Get all learners for a specific class with enhanced fields
    */
   getLearnersByClass: async (classId: string): Promise<Learner[]> => {
     try {
@@ -521,7 +588,7 @@ const learnerService = {
         learnersRef,
         where('classId', '==', classId),
         where('status', '==', 'active'),
-        orderBy('name', 'asc')
+        orderBy('studentIndex', 'asc')
       );
       
       const snapshot = await getDocs(q);
@@ -529,17 +596,52 @@ const learnerService = {
         const data = doc.data() as DocumentData;
         return {
           id: doc.id,
-          name: data.name || '',
-          age: data.age || 0,
-          gender: data.gender,
-          parentPhone: data.parentPhone || '',
+          
+          // Core Identification
           studentId: data.studentId || '',
+          studentIndex: data.studentIndex || 0,
+          classPrefix: data.classPrefix || '',
+          
+          // Personal Information
+          fullName: data.fullName || data.name || '',
+          birthYear: data.birthYear || 0,
+          age: data.age || calculateAge(data.birthYear || 0),
+          gender: data.gender,
+          
+          // Address
+          address: data.address || '',
+          
+          // Guardian Information
+          guardian: data.guardian || '',
+          guardianPhone: data.guardianPhone || data.parentPhone || '',
+          alternativeGuardian: data.alternativeGuardian,
+          alternativeGuardianPhone: data.alternativeGuardianPhone,
+          
+          // Sponsor
+          sponsor: data.sponsor || '',
+          
+          // Academic Information
           classId: data.classId || '',
           className: data.className || '',
-          status: data.status || 'active',
+          classType: data.classType,
+          classLevel: data.classLevel,
+          classSection: data.classSection,
+          dateOfFirstEntry: data.dateOfFirstEntry || '',
           enrollmentDate: toDate(data.enrollmentDate) || new Date(),
+          previousSchool: data.previousSchool,
+          
+          // Health
+          medicalNotes: data.medicalNotes,
+          allergies: data.allergies || [],
+          
+          // System Fields
+          status: data.status || 'active',
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
+          
+          // For backward compatibility
+          name: data.fullName || data.name || '',
+          parentPhone: data.guardianPhone || data.parentPhone || '',
         } as Learner;
       });
     } catch (error) {
@@ -557,7 +659,7 @@ const learnerService = {
       const q = query(
         learnersRef,
         where('status', '==', 'active'),
-        orderBy('name', 'asc')
+        orderBy('fullName', 'asc')
       );
       
       const snapshot = await getDocs(q);
@@ -565,17 +667,36 @@ const learnerService = {
         const data = doc.data() as DocumentData;
         return {
           id: doc.id,
-          name: data.name || '',
-          age: data.age || 0,
-          gender: data.gender,
-          parentPhone: data.parentPhone || '',
           studentId: data.studentId || '',
+          studentIndex: data.studentIndex || 0,
+          classPrefix: data.classPrefix || '',
+          fullName: data.fullName || data.name || '',
+          birthYear: data.birthYear || 0,
+          age: data.age || calculateAge(data.birthYear || 0),
+          gender: data.gender,
+          address: data.address || '',
+          guardian: data.guardian || '',
+          guardianPhone: data.guardianPhone || data.parentPhone || '',
+          alternativeGuardian: data.alternativeGuardian,
+          alternativeGuardianPhone: data.alternativeGuardianPhone,
+          sponsor: data.sponsor || '',
           classId: data.classId || '',
           className: data.className || '',
-          status: data.status || 'active',
+          classType: data.classType,
+          classLevel: data.classLevel,
+          classSection: data.classSection,
+          dateOfFirstEntry: data.dateOfFirstEntry || '',
           enrollmentDate: toDate(data.enrollmentDate) || new Date(),
+          previousSchool: data.previousSchool,
+          medicalNotes: data.medicalNotes,
+          allergies: data.allergies || [],
+          status: data.status || 'active',
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
+          
+          // Backward compatibility
+          name: data.fullName || data.name || '',
+          parentPhone: data.guardianPhone || data.parentPhone || '',
         } as Learner;
       });
     } catch (error) {
@@ -585,7 +706,7 @@ const learnerService = {
   },
 
   /**
-   * Search learners in a class
+   * Search learners in a class with enhanced fields
    */
   searchLearnersInClass: async (classId: string, searchTerm: string): Promise<Learner[]> => {
     try {
@@ -593,9 +714,11 @@ const learnerService = {
       
       const searchLower = searchTerm.toLowerCase();
       return learners.filter(learner =>
-        learner.name.toLowerCase().includes(searchLower) ||
+        learner.fullName.toLowerCase().includes(searchLower) ||
         learner.studentId.toLowerCase().includes(searchLower) ||
-        learner.parentPhone.includes(searchTerm)
+        learner.guardianPhone.includes(searchTerm) ||
+        learner.guardian.toLowerCase().includes(searchLower) ||
+        learner.sponsor.toLowerCase().includes(searchLower)
       );
     } catch (error) {
       console.error('Error searching learners:', error);
@@ -604,44 +727,162 @@ const learnerService = {
   },
 
   /**
-   * Add a single learner to a class with gender
+   * Get filtered learners with multiple criteria
+   */
+  getFilteredLearners: async (filters: {
+    classId?: string;
+    searchTerm?: string;
+    gender?: 'male' | 'female';
+    sponsor?: string;
+    birthYearFrom?: number;
+    birthYearTo?: number;
+    status?: string;
+  }): Promise<Learner[]> => {
+    try {
+      let learners: Learner[] = [];
+      
+      if (filters.classId) {
+        learners = await learnerService.getLearnersByClass(filters.classId);
+      } else {
+        learners = await learnerService.getAllLearners();
+      }
+      
+      // Apply filters
+      return learners.filter(learner => {
+        // Gender filter
+        if (filters.gender && learner.gender !== filters.gender) {
+          return false;
+        }
+        
+        // Sponsor filter (case-insensitive partial match)
+        if (filters.sponsor && !learner.sponsor.toLowerCase().includes(filters.sponsor.toLowerCase())) {
+          return false;
+        }
+        
+        // Birth year range
+        if (filters.birthYearFrom && learner.birthYear < filters.birthYearFrom) {
+          return false;
+        }
+        if (filters.birthYearTo && learner.birthYear > filters.birthYearTo) {
+          return false;
+        }
+        
+        // Status filter
+        if (filters.status && learner.status !== filters.status) {
+          return false;
+        }
+        
+        // Search term (applied after other filters for performance)
+        if (filters.searchTerm) {
+          const searchLower = filters.searchTerm.toLowerCase();
+          return (
+            learner.fullName.toLowerCase().includes(searchLower) ||
+            learner.studentId.toLowerCase().includes(searchLower) ||
+            learner.guardian.toLowerCase().includes(searchLower) ||
+            learner.guardianPhone.includes(filters.searchTerm!) ||
+            learner.sponsor.toLowerCase().includes(searchLower)
+          );
+        }
+        
+        return true;
+      });
+    } catch (error) {
+      console.error('Error filtering learners:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Add a single learner to a class with all enhanced fields
    */
   addLearner: async (data: {
-    name: string;
-    age: number;
+    fullName: string;
+    address: string;
+    dateOfFirstEntry: string;
     gender: 'male' | 'female';
-    parentPhone: string;
+    guardian: string;
+    sponsor: string;
+    guardianPhone: string;
+    birthYear: number;
     classId: string;
-  }): Promise<string> => {
+    preferredName?: string;
+    alternativeGuardian?: string;
+    alternativeGuardianPhone?: string;
+    previousSchool?: string;
+    medicalNotes?: string;
+    allergies?: string[];
+  }): Promise<{ learnerId: string; studentId: string }> => {
     const batch = writeBatch(db);
     
     try {
-      // Validate gender
-      if (!data.gender) {
-        throw new Error('Gender is required');
+      // Get class details for ID generation
+      const classDoc = await getDoc(doc(db, 'classes', data.classId));
+      if (!classDoc.exists()) {
+        throw new Error('Class not found');
       }
       
-      // Generate unique student ID
-      const studentId = generateStudentId();
+      const classData = classDoc.data() as DocumentData;
       
-      // Get class name
-      const classDoc = await getDoc(doc(db, 'classes', data.classId));
-      const className = classDoc.exists() ? classDoc.data().name : '';
+      // Generate sequential student ID
+      const { studentId, nextIndex } = await generateSequentialStudentId(
+        data.classId,
+        classData.type,
+        classData.level,
+        classData.section
+      );
       
-      // Create learner document
+      // Calculate age from birth year
+      const age = calculateAge(data.birthYear);
+      
+      // Create learner document with all fields
       const learnerRef = doc(collection(db, 'learners'));
       batch.set(learnerRef, {
-        name: data.name,
-        age: data.age,
-        gender: data.gender,
-        parentPhone: data.parentPhone,
+        // Core Identification
         studentId,
+        studentIndex: nextIndex,
+        classPrefix: generateClassPrefix(classData.type, classData.level, classData.section),
+        
+        // Personal Information
+        fullName: data.fullName.trim(),
+        birthYear: data.birthYear,
+        age,
+        gender: data.gender,
+        preferredName: data.preferredName || null,
+        
+        // Address
+        address: data.address.trim(),
+        
+        // Guardian Information
+        guardian: data.guardian.trim(),
+        guardianPhone: data.guardianPhone,
+        alternativeGuardian: data.alternativeGuardian || null,
+        alternativeGuardianPhone: data.alternativeGuardianPhone || null,
+        
+        // Sponsor
+        sponsor: data.sponsor.trim(),
+        
+        // Academic Information
         classId: data.classId,
-        className,
-        status: 'active',
+        className: classData.name,
+        classType: classData.type,
+        classLevel: classData.level,
+        classSection: classData.section,
+        dateOfFirstEntry: data.dateOfFirstEntry,
         enrollmentDate: serverTimestamp(),
+        previousSchool: data.previousSchool || null,
+        
+        // Health
+        medicalNotes: data.medicalNotes || null,
+        allergies: data.allergies || [],
+        
+        // System Fields
+        status: 'active',
         createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
+        
+        // Backward compatibility fields
+        name: data.fullName.trim(),
+        parentPhone: data.guardianPhone,
       });
       
       // Update class student count
@@ -653,8 +894,12 @@ const learnerService = {
       
       await batch.commit();
       
-      console.log(`✅ Added learner ${data.name} (${data.gender}) to class ${className}`);
-      return learnerRef.id;
+      console.log(`✅ Added learner ${data.fullName} with ID ${studentId} to class ${classData.name}`);
+      
+      return { 
+        learnerId: learnerRef.id, 
+        studentId 
+      };
     } catch (error) {
       console.error('Error adding learner:', error);
       throw error;
@@ -662,56 +907,128 @@ const learnerService = {
   },
 
   /**
-   * Bulk import learners from CSV data with gender
+   * Bulk import learners from CSV data with all enhanced fields
    */
-  bulkImportLearners: async (classId: string, learnersData: CSVLearnerData[]): Promise<{ success: number; failed: number; errors: string[] }> => {
+  bulkImportLearners: async (
+    classId: string, 
+    learnersData: CSVLearnerData[]
+  ): Promise<{ success: number; failed: number; errors: string[]; studentIds: string[] }> => {
     const batch = writeBatch(db);
     let success = 0;
     let failed = 0;
     const errors: string[] = [];
+    const generatedStudentIds: string[] = [];
     
     try {
-      // Get class name
+      // Get class details
       const classDoc = await getDoc(doc(db, 'classes', classId));
-      const className = classDoc.exists() ? classDoc.data().name : '';
+      if (!classDoc.exists()) {
+        throw new Error('Class not found');
+      }
+      
+      const classData = classDoc.data() as DocumentData;
+      
+      // Get current highest index to start from
+      const learnersRef = collection(db, 'learners');
+      const q = query(
+        learnersRef,
+        where('classId', '==', classId),
+        orderBy('studentIndex', 'desc'),
+        limit(1)
+      );
+      const snapshot = await getDocs(q);
+      let nextIndex = snapshot.empty ? 1 : (snapshot.docs[0].data().studentIndex || 0) + 1;
+      
+      const classPrefix = generateClassPrefix(classData.type, classData.level, classData.section);
       
       for (const [index, learner] of learnersData.entries()) {
         try {
-          // Validate required fields including gender
-          if (!learner.name) {
-            throw new Error('Name is required');
-          }
-          if (!learner.age) {
-            throw new Error('Age is required');
-          }
-          if (!learner.gender) {
-            throw new Error('Gender is required (must be "male" or "female")');
-          }
-          if (!learner.parentPhone) {
-            throw new Error('Parent phone is required');
+          // Validate required fields
+          const requiredFields = [
+            'fullName', 'gender', 'birthYear', 'address', 
+            'guardian', 'guardianPhone', 'sponsor', 'dateOfFirstEntry'
+          ];
+          
+          for (const field of requiredFields) {
+            if (!learner[field as keyof CSVLearnerData]) {
+              throw new Error(`Missing required field: ${field}`);
+            }
           }
           
-          // Validate gender value
+          // Validate gender
           if (learner.gender !== 'male' && learner.gender !== 'female') {
             throw new Error(`Invalid gender "${learner.gender}". Must be "male" or "female"`);
           }
           
-          const studentId = generateStudentId();
-          const learnerRef = doc(collection(db, 'learners'));
+          // Validate birthYear
+          const currentYear = new Date().getFullYear();
+          if (learner.birthYear < 1990 || learner.birthYear > currentYear) {
+            throw new Error(`Invalid birth year ${learner.birthYear}. Must be between 1990 and ${currentYear}`);
+          }
           
+          // Generate sequential ID
+          const studentId = `${classPrefix}_${nextIndex.toString().padStart(3, '0')}`;
+          generatedStudentIds.push(studentId);
+          
+          // Calculate age
+          const age = calculateAge(learner.birthYear);
+          
+          // Parse allergies (comma-separated string to array)
+          const allergies = learner.allergies 
+            ? learner.allergies.split(',').map(a => a.trim()).filter(a => a)
+            : [];
+          
+          const learnerRef = doc(collection(db, 'learners'));
           batch.set(learnerRef, {
-            name: learner.name,
-            age: Number(learner.age),
-            gender: learner.gender,
-            parentPhone: learner.parentPhone,
+            // Core Identification
             studentId,
+            studentIndex: nextIndex,
+            classPrefix,
+            
+            // Personal Information
+            fullName: learner.fullName.trim(),
+            birthYear: learner.birthYear,
+            age,
+            gender: learner.gender,
+            preferredName: learner.preferredName || null,
+            
+            // Address
+            address: learner.address.trim(),
+            
+            // Guardian Information
+            guardian: learner.guardian.trim(),
+            guardianPhone: learner.guardianPhone,
+            alternativeGuardian: learner.alternativeGuardian || null,
+            alternativeGuardianPhone: learner.alternativeGuardianPhone || null,
+            
+            // Sponsor
+            sponsor: learner.sponsor.trim(),
+            
+            // Academic Information
             classId,
-            className,
-            status: 'active',
+            className: classData.name,
+            classType: classData.type,
+            classLevel: classData.level,
+            classSection: classData.section,
+            dateOfFirstEntry: learner.dateOfFirstEntry,
             enrollmentDate: serverTimestamp(),
+            previousSchool: learner.previousSchool || null,
+            
+            // Health
+            medicalNotes: learner.medicalNotes || null,
+            allergies,
+            
+            // System Fields
+            status: 'active',
             createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
+            updatedAt: serverTimestamp(),
+            
+            // Backward compatibility
+            name: learner.fullName.trim(),
+            parentPhone: learner.guardianPhone,
           });
+          
+          nextIndex++;
           success++;
         } catch (error) {
           console.error(`Error processing learner at row ${index + 2}:`, learner, error);
@@ -731,7 +1048,9 @@ const learnerService = {
       
       await batch.commit();
       console.log(`✅ Bulk import completed: ${success} succeeded, ${failed} failed`);
-      return { success, failed, errors };
+      console.log('Generated student IDs:', generatedStudentIds);
+      
+      return { success, failed, errors, studentIds: generatedStudentIds };
     } catch (error) {
       console.error('Error in bulk import:', error);
       throw error;
@@ -739,21 +1058,48 @@ const learnerService = {
   },
 
   /**
-   * Transfer a learner from one class to another
+   * Transfer a learner from one class to another (updates student ID)
    */
-  transferLearner: async (learnerId: string, fromClassId: string, toClassId: string): Promise<void> => {
+  transferLearner: async (learnerId: string, fromClassId: string, toClassId: string): Promise<string> => {
     const batch = writeBatch(db);
     
     try {
-      // Get target class name
-      const toClassDoc = await getDoc(doc(db, 'classes', toClassId));
-      const toClassName = toClassDoc.exists() ? toClassDoc.data().name : '';
-      
-      // Update learner document
+      // Get source learner
       const learnerRef = doc(db, 'learners', learnerId);
+      const learnerDoc = await getDoc(learnerRef);
+      
+      if (!learnerDoc.exists()) {
+        throw new Error('Learner not found');
+      }
+      
+      const learnerData = learnerDoc.data() as DocumentData;
+      
+      // Get target class details
+      const toClassDoc = await getDoc(doc(db, 'classes', toClassId));
+      if (!toClassDoc.exists()) {
+        throw new Error('Target class not found');
+      }
+      
+      const toClassData = toClassDoc.data() as DocumentData;
+      
+      // Generate new student ID for new class
+      const { studentId: newStudentId, nextIndex } = await generateSequentialStudentId(
+        toClassId,
+        toClassData.type,
+        toClassData.level,
+        toClassData.section
+      );
+      
+      // Update learner document with new class and ID
       batch.update(learnerRef, {
         classId: toClassId,
-        className: toClassName,
+        className: toClassData.name,
+        classType: toClassData.type,
+        classLevel: toClassData.level,
+        classSection: toClassData.section,
+        studentId: newStudentId,
+        studentIndex: nextIndex,
+        classPrefix: generateClassPrefix(toClassData.type, toClassData.level, toClassData.section),
         status: 'active',
         transferredAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -774,7 +1120,9 @@ const learnerService = {
       });
       
       await batch.commit();
-      console.log(`✅ Transferred learner ${learnerId} to class ${toClassName}`);
+      console.log(`✅ Transferred learner ${learnerId} to class ${toClassData.name} with new ID ${newStudentId}`);
+      
+      return newStudentId;
     } catch (error) {
       console.error('Error transferring learner:', error);
       throw error;
@@ -812,6 +1160,38 @@ const learnerService = {
   },
 
   /**
+   * Get learners by sponsor
+   */
+  getLearnersBySponsor: async (sponsorName: string): Promise<Learner[]> => {
+    try {
+      const learnersRef = collection(db, 'learners');
+      const q = query(
+        learnersRef,
+        where('sponsor', '>=', sponsorName),
+        where('sponsor', '<=', sponsorName + '\uf8ff'),
+        where('status', '==', 'active'),
+        orderBy('sponsor'),
+        orderBy('fullName')
+      );
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => {
+        const data = doc.data() as DocumentData;
+        return {
+          id: doc.id,
+          ...data,
+          createdAt: toDate(data.createdAt),
+          updatedAt: toDate(data.updatedAt),
+          enrollmentDate: toDate(data.enrollmentDate),
+        } as Learner;
+      });
+    } catch (error) {
+      console.error('Error fetching learners by sponsor:', error);
+      throw error;
+    }
+  },
+
+  /**
    * Update learner gender (for fixing existing records)
    */
   updateLearnerGender: async (learnerId: string, gender: 'male' | 'female'): Promise<void> => {
@@ -824,6 +1204,53 @@ const learnerService = {
       console.log(`✅ Updated gender for learner ${learnerId} to ${gender}`);
     } catch (error) {
       console.error('Error updating learner gender:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Update a learner's information (NEW METHOD)
+   */
+  updateLearner: async (learnerId: string, updates: Partial<Learner>): Promise<void> => {
+    try {
+      const learnerRef = doc(db, 'learners', learnerId);
+      
+      // Remove undefined fields
+      const cleanUpdates = Object.entries(updates).reduce((acc, [key, value]) => {
+        if (value !== undefined) {
+          acc[key] = value;
+        }
+        return acc;
+      }, {} as Record<string, any>);
+      
+      // Add updated timestamp
+      cleanUpdates.updatedAt = serverTimestamp();
+      
+      // If birthYear is updated, recalculate age
+      if (updates.birthYear) {
+        cleanUpdates.age = calculateAge(updates.birthYear);
+      }
+      
+      // If fullName is updated, also update the backward compatibility name field
+      if (updates.fullName) {
+        cleanUpdates.name = updates.fullName;
+      }
+      
+      // If guardianPhone is updated, also update the backward compatibility parentPhone field
+      if (updates.guardianPhone) {
+        cleanUpdates.parentPhone = updates.guardianPhone;
+      }
+      
+      // If allergies array is updated, ensure it's properly formatted
+      if (updates.allergies) {
+        cleanUpdates.allergies = updates.allergies;
+      }
+      
+      await updateDoc(learnerRef, cleanUpdates);
+      
+      console.log(`✅ Updated learner ${learnerId}`);
+    } catch (error) {
+      console.error('Error updating learner:', error);
       throw error;
     }
   },
@@ -887,18 +1314,45 @@ const learnerService = {
         const data = doc.data() as DocumentData;
         return {
           id: doc.id,
-          name: data.name || '',
-          age: data.age || 0,
-          parentPhone: data.parentPhone || '',
-          studentId: data.studentId || '',
-          classId: data.classId || '',
-          className: data.className || '',
-          status: data.status || 'active',
+          ...data,
         } as Learner;
       });
     } catch (error) {
       console.error('Error fetching learners missing gender:', error);
       return [];
+    }
+  },
+
+  /**
+   * Get a learner by student ID
+   */
+  getLearnerByStudentId: async (studentId: string): Promise<Learner | null> => {
+    try {
+      const learnersRef = collection(db, 'learners');
+      const q = query(
+        learnersRef,
+        where('studentId', '==', studentId),
+        limit(1)
+      );
+      
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) {
+        return null;
+      }
+      
+      const doc = snapshot.docs[0];
+      const data = doc.data() as DocumentData;
+      
+      return {
+        id: doc.id,
+        ...data,
+        createdAt: toDate(data.createdAt),
+        updatedAt: toDate(data.updatedAt),
+        enrollmentDate: toDate(data.enrollmentDate),
+      } as Learner;
+    } catch (error) {
+      console.error('Error fetching learner by student ID:', error);
+      throw error;
     }
   },
 };
@@ -1206,6 +1660,26 @@ const teacherService = {
       throw error;
     }
   },
+  // Add this to the teacherService object in schoolService.ts
+
+/**
+ * Update teacher status (active, inactive, on_leave, transferred)
+ */
+updateTeacherStatus: async (teacherId: string, status: 'active' | 'inactive' | 'on_leave' | 'transferred'): Promise<void> => {
+  try {
+    const teacherRef = doc(db, 'users', teacherId);
+    
+    await updateDoc(teacherRef, {
+      status,
+      updatedAt: serverTimestamp()
+    });
+    
+    console.log(`✅ Updated teacher ${teacherId} status to ${status}`);
+  } catch (error) {
+    console.error('Error updating teacher status:', error);
+    throw error;
+  }
+},
 
   /**
    * Remove a teacher from a class
@@ -1285,7 +1759,7 @@ const teacherService = {
   },
 };
 
-// ==================== RESULTS ANALYSIS SERVICE (NEW) ====================
+// ==================== RESULTS ANALYSIS SERVICE ====================
 
 const resultsAnalysisService = {
   /**
@@ -1520,6 +1994,7 @@ const resultsAnalysisService = {
 };
 
 // ==================== EXPORT ALL SERVICES ====================
+// Note: generateSequentialStudentId and generateClassPrefix are already exported with 'export const' above
 export {
   classService,
   learnerService,
@@ -1529,5 +2004,6 @@ export {
   parseClassName,
   generateStudentId,
   calculateGenderStats,
+  calculateAge,
   toDate,
 };

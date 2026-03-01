@@ -1,4 +1,4 @@
-// @/pages/admin/ReportCards.tsx - OPTIMIZED TABULAR FORMAT with Mobile Support and PDF Download
+// @/pages/admin/ReportCards.tsx
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -73,7 +73,7 @@ export interface ReportCardData {
   className: string;
   classId: string;
   form: string;
-  grade: number;
+  grade: number; // Overall grade
   position: string;
   gender: string;
   totalMarks: number;
@@ -297,7 +297,7 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
     try {
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
       const pdfBytes = await generateReportCardPDF(report);
-      const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
+      const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -573,6 +573,17 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
                         {report.percentage}%
                       </td>
                     </tr>
+                    <tr className="bg-gray-50">
+                      <td colSpan={3} className="px-3 py-2 text-right text-xs font-semibold text-gray-700 border border-gray-300">
+                        Overall Grade:
+                      </td>
+                      <td colSpan={3} className="px-3 py-2 text-left text-xs font-bold border border-gray-300">
+                        <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${getGradeColor(report.grade)}`}>
+                          {getGradeDisplay(report.grade)}
+                        </span>
+                        <span className="ml-2 text-gray-700">{getGradeDescription(report.grade)}</span>
+                      </td>
+                    </tr>
                   </tfoot>
                 </table>
 
@@ -815,6 +826,7 @@ export default function ReportCards() {
                 // Transform report to remove teacher field and add grade descriptions
                 const transformedReport: ReportCardData = {
                   ...report,
+                  grade: student.overallGrade, // Add the overall grade from student progress
                   generatedDate: report.generatedDate || new Date().toLocaleDateString('en-GB', {
                     day: '2-digit',
                     month: '2-digit',
@@ -854,7 +866,7 @@ export default function ReportCards() {
     };
 
     generateAllReports();
-  }, [students, selectedTerm, selectedYear, generateReportCard]);
+  }, [students, selectedTerm, selectedYear, generateReportCard, reportCache, loadingReports]);
 
   // Transform data
   const transformedStudents = useMemo((): StudentProgress[] => {

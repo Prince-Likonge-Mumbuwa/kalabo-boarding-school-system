@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { teacherService } from '@/services/schoolService';
-import { Teacher } from '@/types/school';
+import { Teacher, TeacherStatusUpdate } from '@/types/school';
 
 export const useSchoolTeachers = (classId?: string) => {
   const queryClient = useQueryClient();
@@ -169,11 +169,57 @@ export const useSchoolTeachers = (classId?: string) => {
     },
   });
 
+  // NEW: Mutation: Update teacher status
+  const updateTeacherStatusMutation = useMutation({
+    mutationFn: async ({ teacherId, status }: TeacherStatusUpdate) => {
+      console.log('Updating teacher status:', { teacherId, status });
+      // You'll need to add this method to your teacherService
+      return teacherService.updateTeacherStatus(teacherId, status);
+    },
+    onMutate: async ({ teacherId, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['teachers'] });
+
+      const previousTeachers = queryClient.getQueryData(['teachers']);
+
+      // Optimistically update
+      queryClient.setQueryData(['teachers'], (old: Teacher[] = []) => {
+        return old.map(teacher => 
+          teacher.id === teacherId 
+            ? { ...teacher, status } 
+            : teacher
+        );
+      });
+
+      return { previousTeachers };
+    },
+    onError: (error, variables, context) => {
+      if (context?.previousTeachers) {
+        queryClient.setQueryData(['teachers'], context.previousTeachers);
+      }
+      console.error('Failed to update teacher status:', error);
+    },
+    onSuccess: (data, variables) => {
+      console.log(`Teacher status updated to ${variables.status} successfully:`, data);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ 
+        queryKey: ['teachers'],
+        refetchType: 'active'
+      });
+      queryClient.invalidateQueries({ 
+        queryKey: ['dashboardStats'],
+        refetchType: 'active'
+      });
+    },
+  });
+
   // Helper: Get available teachers (not assigned to any class OR can teach multiple classes)
   const getAvailableTeachers = (): Teacher[] => {
     const allTeachers = teachersQuery.data || [];
-    // For now, return all active teachers since a teacher can teach multiple classes
-    return allTeachers.filter(teacher => teacher.status === 'active' || !teacher.status);
+    // Return all active teachers (including those with status 'active' or undefined)
+    return allTeachers.filter(teacher => 
+      teacher.status === 'active' || !teacher.status
+    );
   };
 
   // Helper: Get form teacher for class
@@ -199,10 +245,12 @@ export const useSchoolTeachers = (classId?: string) => {
     // Mutation states
     isAssigningTeacher: assignTeacherMutation.isPending,
     isRemovingTeacher: removeTeacherMutation.isPending,
+    isUpdatingTeacherStatus: updateTeacherStatusMutation.isPending, // NEW
     
     // Mutations
     assignTeacherToClass: assignTeacherMutation.mutateAsync,
     removeTeacherFromClass: removeTeacherMutation.mutateAsync,
+    updateTeacherStatus: updateTeacherStatusMutation.mutateAsync, // NEW
     
     // Refetch
     refetchTeachers: teachersQuery.refetch,
