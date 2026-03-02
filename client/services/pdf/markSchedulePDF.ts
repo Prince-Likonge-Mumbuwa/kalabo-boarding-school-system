@@ -1,4 +1,5 @@
-// @/services/pdf/markSchedulePDF.ts
+// @/services/pdf/markSchedulePDF.ts - UPDATED WITH IMPROVED MARKS HANDLING
+
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
 interface MarkScheduleOptions {
@@ -35,6 +36,21 @@ export const generateMarkSchedulePDF = async ({
   allExamData
 }: MarkScheduleOptions): Promise<void> => {
   try {
+    console.log('📄 PDF Generator - Starting with data:', {
+      className,
+      subject,
+      examType,
+      term,
+      year,
+      totalMarks,
+      studentCount: students.length,
+      studentsWithMarks: students.filter(s => s.marks && s.marks !== '').length,
+      sampleStudent: students[0] ? {
+        name: students[0].name,
+        marks: students[0].marks
+      } : null
+    });
+
     const pdfDoc = await PDFDocument.create();
     const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -136,7 +152,10 @@ export const generateMarkSchedulePDF = async ({
     // Calculate average if there are marks
     let averageMark = 'N/A';
     if (enteredCount > 0) {
-      const sum = enteredMarks.reduce((acc, s) => acc + parseInt(s.marks), 0);
+      const sum = enteredMarks.reduce((acc, s) => {
+        const mark = parseInt(s.marks);
+        return acc + (isNaN(mark) ? 0 : mark);
+      }, 0);
       const avg = (sum / enteredCount).toFixed(1);
       averageMark = `${avg}/${totalMarks}`;
     }
@@ -217,7 +236,7 @@ export const generateMarkSchedulePDF = async ({
 
     // Helper function to calculate grade
     const calculateGrade = (marksNum: number | null): { grade: string; color: any } => {
-      if (marksNum === null) return { grade: '-', color: rgb(0.5, 0.5, 0.5) };
+      if (marksNum === null || isNaN(marksNum)) return { grade: '-', color: rgb(0.5, 0.5, 0.5) };
       if (marksNum === -1) return { grade: 'ABS', color: rgb(0.7, 0.3, 0.3) };
       
       const percentage = (marksNum / totalMarks) * 100;
@@ -276,10 +295,19 @@ export const generateMarkSchedulePDF = async ({
         });
       }
 
-      const marks = student.marks;
-      const isAbsent = marks.toLowerCase() === 'x';
-      const marksNum = marks && !isAbsent ? parseInt(marks) : null;
-      const percentage = marksNum !== null ? ((marksNum / totalMarks) * 100).toFixed(0) : null;
+      // Get marks - ensure we handle empty strings correctly
+      const marksValue = student.marks || '';
+      const marksStr = marksValue.toString().trim();
+      const isAbsent = marksStr.toLowerCase() === 'x';
+      
+      // Parse marks number if not absent and not empty
+      let marksNum: number | null = null;
+      if (!isAbsent && marksStr !== '') {
+        marksNum = parseInt(marksStr);
+        if (isNaN(marksNum)) marksNum = null;
+      }
+      
+      const percentage = marksNum !== null && !isNaN(marksNum) ? ((marksNum / totalMarks) * 100).toFixed(0) : null;
       const { grade, color: gradeColor } = calculateGrade(marksNum);
 
       // Draw row data
@@ -306,27 +334,37 @@ export const generateMarkSchedulePDF = async ({
         font: helveticaFont,
       });
 
-      // Marks with special styling for absent
-      const marksText = isAbsent ? 'ABS' : (marks || '-');
+      // IMPROVED: Marks display with better handling of empty values
       if (isAbsent) {
-        currentPage.drawText(marksText, {
+        // Student is absent
+        currentPage.drawText('ABS', {
           x: margin + 315,
           y: yPosition,
           size: 9,
           font: helveticaOblique,
           color: rgb(0.7, 0.3, 0.3),
         });
-      } else {
-        currentPage.drawText(marksText, {
+      } else if (marksStr !== '') {
+        // Student has a mark
+        currentPage.drawText(marksStr, {
           x: margin + 315,
           y: yPosition,
           size: 9,
           font: helveticaFont,
         });
+      } else {
+        // No mark entered - show dash
+        currentPage.drawText('-', {
+          x: margin + 315,
+          y: yPosition,
+          size: 9,
+          font: helveticaFont,
+          color: rgb(0.7, 0.7, 0.7),
+        });
       }
 
       // Score
-      const score = marksNum !== null ? `${marksNum}/${totalMarks}` : '-';
+      const score = marksNum !== null && !isNaN(marksNum) ? `${marksNum}/${totalMarks}` : '-';
       currentPage.drawText(score, {
         x: margin + 365,
         y: yPosition,
@@ -396,6 +434,8 @@ export const generateMarkSchedulePDF = async ({
 
     // If we have all exam data, add a second page with term summary
     if (allExamData && (allExamData.week4 || allExamData.week8 || allExamData.endOfTerm)) {
+      console.log('📊 Adding term summary page with all exam data');
+      
       const summaryPage = pdfDoc.addPage([pageWidth, pageHeight]);
       addHeader(summaryPage, pdfDoc.getPageCount());
       
@@ -457,6 +497,7 @@ export const generateMarkSchedulePDF = async ({
         
         if (summaryY < margin + 60) {
           // Would need to add another page, but keeping simple for now
+          console.log('⚠️ Term summary truncated - too many students for one page');
           break;
         }
 
@@ -541,11 +582,13 @@ export const generateMarkSchedulePDF = async ({
       });
     }
 
-    // Save PDF - FIXED: Actually save the document to get bytes
+    // Save PDF
     const pdfBytes = await pdfDoc.save();
     
-    // Fix for TypeScript ArrayBuffer/Uint8Array issue - Using Uint8Array (browser compatible)
-    const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+    console.log('✅ PDF generated successfully, size:', pdfBytes.length, 'bytes');
+    
+    // Create blob and download
+    const blob = new Blob([pdfBytes], { type: 'application/pdf' });
     
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -561,7 +604,7 @@ export const generateMarkSchedulePDF = async ({
     window.URL.revokeObjectURL(url);
 
   } catch (error) {
-    console.error('Error generating PDF:', error);
+    console.error('❌ Error generating PDF:', error);
     throw error;
   }
 };

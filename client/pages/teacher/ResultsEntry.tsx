@@ -1,4 +1,5 @@
-// @/pages/teacher/ResultsEntry.tsx
+// @/pages/teacher/ResultsEntry.tsx - UPDATED WITH FIXED TEACHER AND ENTERED COUNT
+
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
@@ -1271,19 +1272,69 @@ export default function ResultsEntry() {
     setShowPDFPreview(true);
   };
 
+  // FIXED: Generate PDF with proper marks data and teacher info
   const handleGeneratePDF = async () => {
     try {
       const { generateMarkSchedulePDF } = await import('@/services/pdf/markSchedulePDF');
       
-      console.log('📄 Generating PDF with data:', {
+      // Get teacher name from user object with proper fallback
+      const teacherDisplayName = user?.name || user?.email || 'Teacher';
+      
+      // Calculate accurate statistics for logging
+      const studentsWithMarks = students.filter(s => s.marks && s.marks !== '').length;
+      const absentStudents = students.filter(s => s.marks.toLowerCase() === 'x').length;
+      const pendingStudents = students.length - studentsWithMarks - absentStudents;
+      
+      console.log('📊 PDF Statistics:', {
+        totalStudents: students.length,
+        studentsWithMarks,
+        absentStudents,
+        pendingStudents,
+        teacherName: teacherDisplayName
+      });
+
+      // IMPORTANT: Create a fresh array with properly formatted marks for the PDF
+      const studentsForPDF = students.map(student => {
+        let marksValue = student.marks || '';
+        
+        // If marks is empty, check if there's saved data for this exam type
+        if (marksValue === '' && allExamData && allExamData[examType]) {
+          const savedMark = allExamData[examType].find(
+            (item: any) => item.studentId === student.studentId
+          );
+          if (savedMark) {
+            // Convert -1 to 'X' for absent, otherwise use the mark as string
+            marksValue = savedMark.marks === -1 ? 'X' : savedMark.marks.toString();
+          }
+        }
+        
+        return {
+          name: student.name,
+          studentId: student.studentId,
+          marks: marksValue // This will be a string like "75", "X", or ""
+        };
+      });
+
+      console.log('📄 Generating PDF with marks data:', {
         className: selectedClassData?.name,
         subject: selectedSubject,
         examType,
         term,
         year,
-        studentCount: students.length,
-        hasAllExamData: !!allExamData
+        totalMarks,
+        teacherName: teacherDisplayName,
+        totalStudents: studentsForPDF.length,
+        marksEntered: studentsForPDF.filter(s => s.marks !== '').length,
+        marksSample: studentsForPDF.slice(0, 3).map(s => ({
+          name: s.name.substring(0, 15),
+          marks: s.marks || '(empty)'
+        }))
       });
+
+      // Log a warning if no marks are entered
+      if (studentsForPDF.filter(s => s.marks !== '').length === 0) {
+        console.warn('⚠️ No marks entered for any student. PDF will be empty.');
+      }
 
       await generateMarkSchedulePDF({
         className: selectedClassData?.name || '',
@@ -1292,12 +1343,8 @@ export default function ResultsEntry() {
         term,
         year,
         totalMarks,
-        students: students.map(s => ({
-          name: s.name,
-          studentId: s.studentId,
-          marks: s.marks || ''
-        })),
-        teacherName: user?.name || user?.email || 'Teacher',
+        students: studentsForPDF,
+        teacherName: teacherDisplayName,
         schoolName: 'KALABO BOARDING SECONDARY SCHOOL',
         allExamData: allExamData || undefined
       });

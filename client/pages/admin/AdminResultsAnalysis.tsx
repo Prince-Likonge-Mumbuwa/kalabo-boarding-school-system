@@ -1,6 +1,7 @@
-// @/pages/admin/AdminResultsAnalysis.tsx - UPDATED WITH PDF-LIB (PER SUBJECT TABLES)
+// @/pages/admin/AdminResultsAnalysis.tsx - FULLY CORRECTED VERSION
+
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
@@ -11,8 +12,6 @@ import {
   TrendingUp,
   TrendingDown,
   Download,
-  BarChart3,
-  PieChart,
   ChevronDown,
   ChevronUp,
   RefreshCw,
@@ -28,6 +27,8 @@ import {
   Eye,
   FileText
 } from 'lucide-react';
+import { StudentResult } from '@/services/resultsService';
+import { Learner } from '@/types/school';
 
 // ==================== TYPES ====================
 interface GradeDistribution {
@@ -91,6 +92,36 @@ interface SubjectPerformance {
   qualityRate: number;
   quantityRate: number;
   failRate: number;
+}
+
+// Types for PDF data (matches pdf-lib expected structure)
+interface SubjectMetrics {
+  registered: number;
+  sat: number;
+  absent: number;
+  dist: number; // grades 1-2
+  merit: number; // grades 3-4
+  credit: number; // grades 5-6
+  pass: number; // grades 7-8
+  fail: number; // grade 9
+  quality: number; // grades 1-4
+  quantity: number; // grades 1-8
+}
+
+interface SubjectData {
+  name: string;
+  boys: SubjectMetrics;
+  girls: SubjectMetrics;
+}
+
+interface AdminResultsData {
+  schoolName: string;
+  address: string;
+  className: string;
+  term: string;
+  year: number;
+  subjects: SubjectData[];
+  generatedDate: string;
 }
 
 // ==================== NOTIFICATION COMPONENT ====================
@@ -230,111 +261,6 @@ const GradeBadge = ({ grade, size = 'md', showLabel = false }: { grade: number; 
   );
 };
 
-// ==================== CLASS COMPARISON CHART ====================
-const ClassComparisonChart = ({ data }: { data: ClassPerformance[] }) => {
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <h3 className="text-lg font-bold text-gray-900 mb-4">Class Performance Comparison</h3>
-      
-      <div className="space-y-4">
-        {data.map((cls) => (
-          <div key={cls.classId} className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">{cls.className}</span>
-              <span className="text-xs text-gray-500">{cls.candidates.total} students</span>
-            </div>
-            
-            {/* Stacked Bar */}
-            <div className="flex h-8 rounded-lg overflow-hidden">
-              {/* Quality Pass (1-6) */}
-              <div 
-                className="bg-emerald-500 flex items-center justify-center text-xs text-white font-medium"
-                style={{ width: `${cls.performance.quality.percentage}%` }}
-              >
-                {cls.performance.quality.percentage > 8 && `${cls.performance.quality.percentage}%`}
-              </div>
-              
-              {/* Quantity Only (7-8) */}
-              <div 
-                className="bg-orange-400 flex items-center justify-center text-xs text-white font-medium"
-                style={{ width: `${cls.performance.quantity.percentage - cls.performance.quality.percentage}%` }}
-              >
-                {cls.performance.quantity.percentage - cls.performance.quality.percentage > 8 && 
-                  `${cls.performance.quantity.percentage - cls.performance.quality.percentage}%`}
-              </div>
-              
-              {/* Fail (9) */}
-              <div 
-                className="bg-rose-500 flex items-center justify-center text-xs text-white font-medium"
-                style={{ width: `${cls.performance.fail.percentage}%` }}
-              >
-                {cls.performance.fail.percentage > 5 && `${cls.performance.fail.percentage}%`}
-              </div>
-            </div>
-            
-            {/* Legend for this row */}
-            <div className="flex items-center gap-4 text-xs">
-              <div className="flex items-center gap-1">
-                <span className="w-2 h-2 bg-emerald-500 rounded"></span>
-                <span>Quality: {cls.performance.quality.percentage}%</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="w-2 h-2 bg-orange-400 rounded"></span>
-                <span>Pass: {cls.performance.quantity.percentage - cls.performance.quality.percentage}%</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="w-2 h-2 bg-rose-500 rounded"></span>
-                <span>Fail: {cls.performance.fail.percentage}%</span>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-// ==================== SUBJECT PERFORMANCE CHART ====================
-const SubjectPerformanceChart = ({ data }: { data: SubjectPerformance[] }) => {
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <h3 className="text-lg font-bold text-gray-900 mb-4">Subject Performance Matrix</h3>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {data.slice(0, 6).map((subject) => (
-          <div key={subject.subject} className="border border-gray-100 rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <span className="font-semibold text-gray-900">{subject.subject}</span>
-                <span className="text-xs text-gray-500 ml-2">({subject.teacher})</span>
-              </div>
-              <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">
-                {subject.classCount} classes
-              </span>
-            </div>
-            
-            {/* Three metrics in a row */}
-            <div className="grid grid-cols-3 gap-2 mt-3">
-              <div className="text-center p-2 bg-emerald-50 rounded-lg">
-                <div className="text-xs text-gray-600">Quality</div>
-                <div className="text-lg font-bold text-emerald-600">{subject.qualityRate}%</div>
-              </div>
-              <div className="text-center p-2 bg-blue-50 rounded-lg">
-                <div className="text-xs text-gray-600">Quantity</div>
-                <div className="text-lg font-bold text-blue-600">{subject.quantityRate}%</div>
-              </div>
-              <div className="text-center p-2 bg-rose-50 rounded-lg">
-                <div className="text-xs text-gray-600">Fail</div>
-                <div className="text-lg font-bold text-rose-600">{subject.failRate}%</div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
 // ==================== SKELETON COMPONENTS ====================
 const MetricSkeleton = () => (
   <div className="bg-white rounded-2xl border border-gray-200 p-6 animate-pulse">
@@ -348,19 +274,6 @@ const MetricSkeleton = () => (
       </div>
     </div>
     <div className="h-2 bg-gray-200 rounded w-32 mt-4"></div>
-  </div>
-);
-
-const ChartSkeleton = () => (
-  <div className="bg-white rounded-2xl border border-gray-200 p-6 animate-pulse">
-    <div className="flex items-center justify-between mb-6">
-      <div>
-        <div className="h-5 bg-gray-200 rounded w-48 mb-2"></div>
-        <div className="h-3 bg-gray-100 rounded w-64"></div>
-      </div>
-      <div className="h-9 bg-gray-200 rounded w-28"></div>
-    </div>
-    <div className="h-80 bg-gray-100 rounded-xl"></div>
   </div>
 );
 
@@ -384,6 +297,7 @@ export default function AdminResultsAnalysis() {
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
 
   // Get classes for filter
   const { classes, isLoading: classesLoading } = useSchoolClasses({ isActive: true });
@@ -404,61 +318,227 @@ export default function AdminResultsAnalysis() {
     year: selectedYear,
   });
 
-  // Create a map of studentId -> gender for quick lookup
-  const studentGenderMap = useMemo(() => {
-    const map = new Map<string, 'M' | 'F'>();
-    learners.forEach(learner => {
-      if (learner.gender) {
-        map.set(learner.studentId, learner.gender === 'male' ? 'M' : 'F');
-      }
-    });
-    return map;
-  }, [learners]);
-
-  // Notification helper
-  const showNotification = (
+  // ==================== HELPER FUNCTIONS ====================
+  
+  const showNotification = useCallback((
     type: 'success' | 'error' | 'info' | 'warning',
     message: string,
     description?: string
   ) => {
     const id = Math.random().toString(36).substring(7);
     setNotifications(prev => [...prev, { id, type, message, description }]);
-  };
+  }, []);
 
-  const removeNotification = (id: string) => {
+  const removeNotification = useCallback((id: string) => {
     setNotifications(prev => prev.filter(n => n.id !== id));
-  };
+  }, []);
+
+  // ==================== FILTER VALID RESULTS (MUST BE BEFORE USAGE) ====================
+  
+  // Filter valid end of term results
+  const validEndOfTermResults = useMemo(() => {
+    return results.filter((r: StudentResult) => 
+      r.examType === 'endOfTerm' && 
+      r.grade > 0 && 
+      r.grade <= 9 &&
+      r.percentage >= 0
+    );
+  }, [results]);
+
+  // ==================== CORRECTED STUDENT DATA MAPPING ====================
+  
+  // Map both document IDs and custom student IDs to gender
+  const studentDataMap = useMemo(() => {
+    const docIdToGender = new Map<string, 'M' | 'F'>();
+    const customIdToGender = new Map<string, 'M' | 'F'>();
+    const docIdToCustomId = new Map<string, string>();
+    const customIdToDocId = new Map<string, string>();
+    
+    console.log('Building studentDataMap from', learners.length, 'learners');
+    
+    learners.forEach((learner: Learner) => {
+      // Document ID (Firestore internal ID)
+      if (learner.id) {
+        if (learner.gender) {
+          docIdToGender.set(learner.id, learner.gender === 'male' ? 'M' : 'F');
+        }
+        
+        // Map to custom ID if available
+        if (learner.studentId) {
+          docIdToCustomId.set(learner.id, learner.studentId);
+        }
+      }
+      
+      // Custom ID (display ID like "G10B_001")
+      if (learner.studentId) {
+        if (learner.gender) {
+          customIdToGender.set(learner.studentId, learner.gender === 'male' ? 'M' : 'F');
+        }
+        
+        // Map to document ID
+        if (learner.id) {
+          customIdToDocId.set(learner.studentId, learner.id);
+        }
+      }
+    });
+    
+    console.log('studentDataMap built:', {
+      docIdToGender: docIdToGender.size,
+      customIdToGender: customIdToGender.size,
+      docIdToCustomId: docIdToCustomId.size,
+      customIdToDocId: customIdToDocId.size
+    });
+    
+    return { docIdToGender, customIdToGender, docIdToCustomId, customIdToDocId };
+  }, [learners]);
+
+  // Helper function to get gender from a student ID (could be document ID or custom ID)
+  const getStudentGender = useCallback((studentId: string): 'M' | 'F' | undefined => {
+    // Method 1: Try as document ID
+    let gender = studentDataMap.docIdToGender.get(studentId);
+    
+    // Method 2: Try as custom ID
+    if (!gender) {
+      gender = studentDataMap.customIdToGender.get(studentId);
+    }
+    
+    // Method 3: Try to find learner by direct comparison (fallback)
+    if (!gender) {
+      const learner = learners.find(l => 
+        l.id === studentId || 
+        l.studentId === studentId
+      );
+      if (learner?.gender) {
+        gender = learner.gender === 'male' ? 'M' : 'F';
+      }
+    }
+    
+    return gender;
+  }, [learners, studentDataMap]);
+
+  // Debug function to check mappings
+  const checkMappings = useCallback(() => {
+    console.log('===== CHECKING STUDENT MAPPINGS =====');
+    console.log('Total learners:', learners.length);
+    console.log('Total results:', results.length);
+    console.log('Valid end of term results:', validEndOfTermResults.length);
+    
+    // Take first 5 results and try to find their gender
+    const sampleResults = validEndOfTermResults.slice(0, 5);
+    
+    sampleResults.forEach((result, index) => {
+      console.log(`\nResult ${index + 1}:`);
+      console.log('  Student ID in result:', result.studentId);
+      console.log('  Student name:', result.studentName);
+      
+      // Try to find by document ID
+      const gender1 = studentDataMap.docIdToGender.get(result.studentId);
+      console.log('  Gender by docId:', gender1 || 'Not found');
+      
+      // Try to find by custom ID
+      const gender2 = studentDataMap.customIdToGender.get(result.studentId);
+      console.log('  Gender by customId:', gender2 || 'Not found');
+      
+      // Get final gender using helper
+      const finalGender = getStudentGender(result.studentId);
+      console.log('  Final gender:', finalGender || 'Not found');
+      
+      // Try to find learner directly
+      const learner = learners.find(l => 
+        l.id === result.studentId || 
+        l.studentId === result.studentId
+      );
+      
+      if (learner) {
+        console.log('  Found learner:', {
+          id: learner.id,
+          studentId: learner.studentId,
+          name: learner.fullName,
+          gender: learner.gender
+        });
+      } else {
+        console.log('  No matching learner found in learners array');
+      }
+    });
+    
+    console.log('\nMap sizes:');
+    console.log('  docIdToGender:', studentDataMap.docIdToGender.size);
+    console.log('  customIdToGender:', studentDataMap.customIdToGender.size);
+    console.log('  Total learners with gender:', learners.filter(l => l.gender).length);
+  }, [learners, results, validEndOfTermResults, studentDataMap, getStudentGender]);
+
+  // Run debug on mount if showDebug is true
+  useEffect(() => {
+    if (showDebug && results.length > 0 && learners.length > 0) {
+      checkMappings();
+    }
+  }, [showDebug, results, learners, checkMappings]);
+
+  // Group results by subject for quick access
+  const subjectGroups = useMemo(() => {
+    const groups = new Map<string, StudentResult[]>();
+    validEndOfTermResults.forEach((result: StudentResult) => {
+      const key = result.subjectId || 'Unknown';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(result);
+    });
+    return groups;
+  }, [validEndOfTermResults]);
+
+  // Get subject name map from teacher assignments when a specific class is selected
+  const subjectNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (selectedClass !== 'all') {
+      const classData = classes.find(c => c.id === selectedClass);
+      classData?.teacherAssignments?.forEach(assignment => {
+        map.set(assignment.subjectId, assignment.subject);
+      });
+    }
+    return map;
+  }, [classes, selectedClass]);
 
   // Calculate grade distribution with gender breakdown
   const gradeDistribution = useMemo((): GradeDistribution[] => {
-    if (!results || results.length === 0) return [];
+    if (validEndOfTermResults.length === 0) return [];
 
-    const endOfTermResults = results.filter(r => 
-      r.examType === 'endOfTerm' && r.grade > 0
-    );
-
-    if (endOfTermResults.length === 0) return [];
-
-    const gradeMap = new Map<number, { boys: number; girls: number }>();
+    const gradeMap = new Map<number, { boys: number; girls: number; unknown: number }>();
     
     // Initialize grades 1-9
     for (let i = 1; i <= 9; i++) {
-      gradeMap.set(i, { boys: 0, girls: 0 });
+      gradeMap.set(i, { boys: 0, girls: 0, unknown: 0 });
     }
 
-    // Count boys and girls per grade using the studentGenderMap
-    endOfTermResults.forEach(result => {
-      const current = gradeMap.get(result.grade) || { boys: 0, girls: 0 };
-      const gender = studentGenderMap.get(result.studentId);
+    let matchedCount = 0;
+    let unmatchedCount = 0;
+
+    // Count boys and girls per grade
+    validEndOfTermResults.forEach((result: StudentResult) => {
+      const current = gradeMap.get(result.grade) || { boys: 0, girls: 0, unknown: 0 };
+      const gender = getStudentGender(result.studentId);
       
       if (gender === 'M') {
         gradeMap.set(result.grade, { ...current, boys: current.boys + 1 });
+        matchedCount++;
       } else if (gender === 'F') {
         gradeMap.set(result.grade, { ...current, girls: current.girls + 1 });
+        matchedCount++;
+      } else {
+        gradeMap.set(result.grade, { ...current, unknown: current.unknown + 1 });
+        unmatchedCount++;
       }
     });
 
-    const total = endOfTermResults.length;
+    // Log matching rate if there are unmatched students
+    if (unmatchedCount > 0) {
+      console.log('Grade distribution matching:', { 
+        matchedCount, 
+        unmatchedCount, 
+        total: validEndOfTermResults.length,
+        matchRate: Math.round((matchedCount / validEndOfTermResults.length) * 100) + '%'
+      });
+    }
+
+    const total = validEndOfTermResults.length;
 
     const getPassStatus = (grade: number): 'distinction' | 'merit' | 'credit' | 'satisfactory' | 'fail' => {
       if (grade <= 2) return 'distinction';
@@ -473,16 +553,16 @@ export default function AdminResultsAnalysis() {
         grade,
         boys: counts.boys,
         girls: counts.girls,
-        total: counts.boys + counts.girls,
-        percentage: total > 0 ? Math.round(((counts.boys + counts.girls) / total) * 100) : 0,
+        total: counts.boys + counts.girls + counts.unknown,
+        percentage: total > 0 ? Math.round(((counts.boys + counts.girls + counts.unknown) / total) * 100) : 0,
         passStatus: getPassStatus(grade)
       }))
       .filter(g => g.total > 0);
-  }, [results, studentGenderMap]);
+  }, [validEndOfTermResults, getStudentGender]);
 
   // Calculate school-wide metrics
   const schoolMetrics = useMemo(() => {
-    if (!analytics || !results) {
+    if (!analytics || validEndOfTermResults.length === 0) {
       return {
         totalStudents: 0,
         totalAssessments: 0,
@@ -495,15 +575,14 @@ export default function AdminResultsAnalysis() {
       };
     }
 
-    const endOfTermResults = results.filter(r => r.examType === 'endOfTerm');
-    const totalAssessments = endOfTermResults.length;
+    const totalAssessments = validEndOfTermResults.length;
     
-    const distinctionCount = endOfTermResults.filter(r => r.grade <= 2).length;
-    const passCount = endOfTermResults.filter(r => r.grade <= 6).length;
-    const failCount = endOfTermResults.filter(r => r.grade >= 7).length;
+    const distinctionCount = validEndOfTermResults.filter(r => r.grade <= 2).length;
+    const passCount = validEndOfTermResults.filter(r => r.grade <= 6).length;
+    const failCount = validEndOfTermResults.filter(r => r.grade >= 7).length;
     
-    const uniqueStudents = new Set(endOfTermResults.map(r => r.studentId)).size;
-    const uniqueSubjects = new Set(endOfTermResults.map(r => r.subjectId)).size;
+    const uniqueStudents = new Set(validEndOfTermResults.map(r => r.studentId)).size;
+    const uniqueSubjects = new Set(validEndOfTermResults.map(r => r.subjectId)).size;
 
     return {
       totalStudents: uniqueStudents,
@@ -515,16 +594,16 @@ export default function AdminResultsAnalysis() {
       classesCount: classes?.length || 0,
       subjectsCount: uniqueSubjects
     };
-  }, [analytics, results, classes]);
+  }, [analytics, validEndOfTermResults, classes]);
 
   // Calculate class-level performance
   const classPerformance = useMemo((): ClassPerformance[] => {
-    if (!results || results.length === 0 || !classes) return [];
+    if (validEndOfTermResults.length === 0 || !classes) return [];
 
     // Group results by class
-    const classMap = new Map<string, typeof results>();
+    const classMap = new Map<string, StudentResult[]>();
     
-    results.forEach(result => {
+    validEndOfTermResults.forEach((result: StudentResult) => {
       if (!classMap.has(result.classId)) {
         classMap.set(result.classId, []);
       }
@@ -532,21 +611,22 @@ export default function AdminResultsAnalysis() {
     });
 
     return Array.from(classMap.entries()).map(([classId, classResults]) => {
-      const endOfTermResults = classResults.filter(r => r.examType === 'endOfTerm' && r.grade > 0);
-      const total = endOfTermResults.length;
+      const total = classResults.length;
 
       // Grade distribution for this class
-      const gradeMap = new Map<number, { boys: number; girls: number }>();
-      for (let i = 1; i <= 9; i++) gradeMap.set(i, { boys: 0, girls: 0 });
+      const gradeMap = new Map<number, { boys: number; girls: number; unknown: number }>();
+      for (let i = 1; i <= 9; i++) gradeMap.set(i, { boys: 0, girls: 0, unknown: 0 });
       
-      endOfTermResults.forEach(result => {
+      classResults.forEach((result: StudentResult) => {
         const current = gradeMap.get(result.grade)!;
-        const gender = studentGenderMap.get(result.studentId);
+        const gender = getStudentGender(result.studentId);
         
         if (gender === 'M') {
           gradeMap.set(result.grade, { ...current, boys: current.boys + 1 });
         } else if (gender === 'F') {
           gradeMap.set(result.grade, { ...current, girls: current.girls + 1 });
+        } else {
+          gradeMap.set(result.grade, { ...current, unknown: current.unknown + 1 });
         }
       });
 
@@ -563,66 +643,41 @@ export default function AdminResultsAnalysis() {
             grade,
             boys: counts.boys,
             girls: counts.girls,
-            total: counts.boys + counts.girls,
-            percentage: total > 0 ? Math.round(((counts.boys + counts.girls) / total) * 100) : 0,
+            total: counts.boys + counts.girls + counts.unknown,
+            percentage: total > 0 ? Math.round(((counts.boys + counts.girls + counts.unknown) / total) * 100) : 0,
             passStatus
           };
         })
         .filter(g => g.total > 0);
 
       // Performance metrics with gender breakdown
-      const qualityBoys = endOfTermResults.filter(r => 
-        r.grade <= 6 && studentGenderMap.get(r.studentId) === 'M'
+      const qualityBoys = classResults.filter(r => 
+        r.grade <= 6 && getStudentGender(r.studentId) === 'M'
       ).length;
       
-      const qualityGirls = endOfTermResults.filter(r => 
-        r.grade <= 6 && studentGenderMap.get(r.studentId) === 'F'
+      const qualityGirls = classResults.filter(r => 
+        r.grade <= 6 && getStudentGender(r.studentId) === 'F'
       ).length;
       
-      const quantityBoys = endOfTermResults.filter(r => 
-        r.grade <= 8 && studentGenderMap.get(r.studentId) === 'M'
+      const quantityBoys = classResults.filter(r => 
+        r.grade <= 8 && getStudentGender(r.studentId) === 'M'
       ).length;
       
-      const quantityGirls = endOfTermResults.filter(r => 
-        r.grade <= 8 && studentGenderMap.get(r.studentId) === 'F'
+      const quantityGirls = classResults.filter(r => 
+        r.grade <= 8 && getStudentGender(r.studentId) === 'F'
       ).length;
       
-      const failBoys = endOfTermResults.filter(r => 
-        r.grade === 9 && studentGenderMap.get(r.studentId) === 'M'
+      const failBoys = classResults.filter(r => 
+        r.grade === 9 && getStudentGender(r.studentId) === 'M'
       ).length;
       
-      const failGirls = endOfTermResults.filter(r => 
-        r.grade === 9 && studentGenderMap.get(r.studentId) === 'F'
+      const failGirls = classResults.filter(r => 
+        r.grade === 9 && getStudentGender(r.studentId) === 'F'
       ).length;
 
-      const qualityCount = endOfTermResults.filter(r => r.grade <= 6).length;
-      const quantityCount = endOfTermResults.filter(r => r.grade <= 8).length;
-      const failCount = endOfTermResults.filter(r => r.grade === 9).length;
-
-      // Subject performance for this class
-      const subjectMap = new Map<string, { teacher: string; grades: number[] }>();
-      endOfTermResults.forEach(r => {
-        const subjectKey = r.subjectId || 'Unknown';
-        if (!subjectMap.has(subjectKey)) {
-          subjectMap.set(subjectKey, { teacher: r.teacherName || 'Unknown', grades: [] });
-        }
-        subjectMap.get(subjectKey)!.grades.push(r.grade);
-      });
-
-      const subjectPerformance = Array.from(subjectMap.entries()).map(([subject, data]) => {
-        const total = data.grades.length;
-        const quality = data.grades.filter(g => g <= 6).length;
-        const quantity = data.grades.filter(g => g <= 8).length;
-        const fail = data.grades.filter(g => g === 9).length;
-
-        return {
-          subject,
-          teacher: data.teacher,
-          quality: Math.round((quality / total) * 100),
-          quantity: Math.round((quantity / total) * 100),
-          fail: Math.round((fail / total) * 100)
-        };
-      });
+      const qualityCount = classResults.filter(r => r.grade <= 6).length;
+      const quantityCount = classResults.filter(r => r.grade <= 8).length;
+      const failCount = classResults.filter(r => r.grade === 9).length;
 
       const className = classes.find(c => c.id === classId)?.name || classId;
 
@@ -632,12 +687,12 @@ export default function AdminResultsAnalysis() {
         candidates: {
           boys: qualityBoys + quantityBoys + failBoys,
           girls: qualityGirls + quantityGirls + failGirls,
-          total: endOfTermResults.length
+          total: classResults.length
         },
         sat: {
-          boys: endOfTermResults.filter(r => studentGenderMap.get(r.studentId) === 'M').length,
-          girls: endOfTermResults.filter(r => studentGenderMap.get(r.studentId) === 'F').length,
-          total: endOfTermResults.length
+          boys: classResults.filter(r => getStudentGender(r.studentId) === 'M').length,
+          girls: classResults.filter(r => getStudentGender(r.studentId) === 'F').length,
+          total: classResults.length
         },
         gradeDistribution,
         performance: {
@@ -659,15 +714,14 @@ export default function AdminResultsAnalysis() {
             total: failCount,
             percentage: total > 0 ? Math.round((failCount / total) * 100) : 0
           }
-        },
-        subjectPerformance
+        }
       };
     });
-  }, [results, classes, studentGenderMap]);
+  }, [validEndOfTermResults, classes, getStudentGender]);
 
   // Calculate subject performance across school
   const subjectPerformance = useMemo((): SubjectPerformance[] => {
-    if (!results || results.length === 0) return [];
+    if (validEndOfTermResults.length === 0) return [];
 
     const subjectMap = new Map<string, {
       teacher: string;
@@ -676,7 +730,7 @@ export default function AdminResultsAnalysis() {
       grades: number[];
     }>();
 
-    results.filter(r => r.examType === 'endOfTerm' && r.grade > 0).forEach(result => {
+    validEndOfTermResults.forEach((result: StudentResult) => {
       const subjectKey = result.subjectId || 'Unknown';
       if (!subjectMap.has(subjectKey)) {
         subjectMap.set(subjectKey, {
@@ -710,16 +764,16 @@ export default function AdminResultsAnalysis() {
         failRate: Math.round((fail / total) * 100)
       };
     }).sort((a, b) => a.failRate - b.failRate);
-  }, [results]);
+  }, [validEndOfTermResults]);
 
-  // ==================== PDF DOWNLOAD FUNCTION USING PDF-LIB (PER SUBJECT) ====================
+  // ==================== PDF DOWNLOAD FUNCTION ====================
   const handleDownloadPDF = async () => {
     try {
-      if (!results || results.length === 0) {
+      if (validEndOfTermResults.length === 0) {
         showNotification(
           'warning',
           'No data to export',
-          'There are no results available for the selected filters.'
+          'There are no valid end of term results for the selected filters.'
         );
         return;
       }
@@ -732,36 +786,76 @@ export default function AdminResultsAnalysis() {
         'Please wait while we prepare your download.'
       );
 
-      // Filter end of term results
-      const endOfTermResults = results.filter(r => r.examType === 'endOfTerm' && r.grade > 0);
-      
-      // Group results by subject
-      const subjectGroups = new Map<string, typeof endOfTermResults>();
-      
-      endOfTermResults.forEach(result => {
-        const subjectKey = result.subjectId || 'Unknown';
-        if (!subjectGroups.has(subjectKey)) {
-          subjectGroups.set(subjectKey, []);
+      // Calculate metrics for a group of results
+      const calculateMetrics = (resultsArray: StudentResult[]): SubjectMetrics => {
+        const total = resultsArray.length;
+        
+        // Grade distribution using PDF legend ranges
+        const dist = resultsArray.filter(r => r.grade <= 2).length;      // DIST (1-2)
+        const merit = resultsArray.filter(r => r.grade >= 3 && r.grade <= 4).length; // MERIT (3-4)
+        const credit = resultsArray.filter(r => r.grade >= 5 && r.grade <= 6).length; // CREDIT (5-6)
+        const pass = resultsArray.filter(r => r.grade >= 7 && r.grade <= 8).length;   // PASS (7-8)
+        const fail = resultsArray.filter(r => r.grade === 9).length;     // FAIL (9)
+        
+        // Quality and quantity passes as per PDF legend
+        const quality = resultsArray.filter(r => r.grade <= 4).length;   // QLTY (1-4)
+        const quantity = resultsArray.filter(r => r.grade <= 8).length;  // QTY (1-8)
+
+        return {
+          registered: total,
+          sat: total,
+          absent: 0,
+          dist,
+          merit,
+          credit,
+          pass,
+          fail,
+          quality,
+          quantity
+        };
+      };
+
+      // Build subject data array
+      const subjects: SubjectData[] = [];
+
+      for (const [subjectId, subjectResults] of subjectGroups.entries()) {
+        // Get display name
+        const displayName = subjectNameMap.get(subjectId) || 
+                            subjectResults[0]?.subjectName || 
+                            subjectId;
+        
+        // Split by gender using the helper function
+        const boysResults: StudentResult[] = [];
+        const girlsResults: StudentResult[] = [];
+        const unknownResults: StudentResult[] = [];
+        
+        subjectResults.forEach(result => {
+          const gender = getStudentGender(result.studentId);
+          
+          if (gender === 'M') {
+            boysResults.push(result);
+          } else if (gender === 'F') {
+            girlsResults.push(result);
+          } else {
+            unknownResults.push(result);
+          }
+        });
+
+        // Include subjects with results
+        if (boysResults.length > 0 || girlsResults.length > 0 || unknownResults.length > 0) {
+          subjects.push({
+            name: displayName,
+            boys: calculateMetrics([...boysResults, ...unknownResults]), // Put unknown in boys as fallback
+            girls: calculateMetrics(girlsResults)
+          });
         }
-        subjectGroups.get(subjectKey)!.push(result);
-      });
+      }
 
-      // Calculate metrics for boys and girls per subject
-      const calculateMetrics = (resultsArray: typeof endOfTermResults) => ({
-        registered: resultsArray.length,
-        sat: resultsArray.length,
-        absent: 0,
-        dist: resultsArray.filter(r => r.grade <= 2).length,
-        merit: resultsArray.filter(r => r.grade >= 3 && r.grade <= 4).length,
-        credit: resultsArray.filter(r => r.grade >= 5 && r.grade <= 6).length,
-        pass: resultsArray.filter(r => r.grade >= 7 && r.grade <= 8).length,
-        fail: resultsArray.filter(r => r.grade === 9).length,
-        quality: resultsArray.filter(r => r.grade <= 4).length,
-        quantity: resultsArray.filter(r => r.grade <= 8).length,
-      });
+      // Sort subjects alphabetically
+      subjects.sort((a, b) => a.name.localeCompare(b.name));
 
-      // Generate PDF data with multiple subjects
-      const pdfData = {
+      // Prepare PDF data
+      const pdfData: AdminResultsData = {
         schoolName: 'KALABO BOARDING SECONDARY SCHOOL',
         address: 'P.O BOX 930096',
         className: selectedClass !== 'all' 
@@ -769,16 +863,7 @@ export default function AdminResultsAnalysis() {
           : 'All Classes',
         term: selectedTerm,
         year: selectedYear,
-        subjects: Array.from(subjectGroups.entries()).map(([subjectName, subjectResults]) => {
-          const boysResults = subjectResults.filter(r => studentGenderMap.get(r.studentId) === 'M');
-          const girlsResults = subjectResults.filter(r => studentGenderMap.get(r.studentId) === 'F');
-          
-          return {
-            name: subjectName,
-            boys: calculateMetrics(boysResults),
-            girls: calculateMetrics(girlsResults)
-          };
-        }),
+        subjects,
         generatedDate: new Date().toLocaleDateString('en-GB', {
           day: '2-digit',
           month: '2-digit',
@@ -788,20 +873,22 @@ export default function AdminResultsAnalysis() {
         })
       };
 
-      // Dynamically import the PDF generator
-      const { generateResultsAnalysisPDF } = await import('@/services/pdf/resultsAnalysisPDFLib');
-      
       // Generate PDF
+      const { generateResultsAnalysisPDF } = await import('@/services/pdf/resultsAnalysisPDFLib');
       const pdfBytes = await generateResultsAnalysisPDF(pdfData);
 
-      // Create blob directly from Uint8Array (TypeScript-safe)
-const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });      
-      // Create download link
+      // FIXED: Convert Uint8Array to Blob using ArrayBuffer approach
+      // This is the most reliable method across all browsers
+      const arrayBuffer = pdfBytes.buffer.slice(
+        pdfBytes.byteOffset,
+        pdfBytes.byteOffset + pdfBytes.byteLength
+      );
+      const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
+
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       
-      // Create filename
       const filename = [
         'school-results',
         pdfData.className.replace(/\s+/g, '-'),
@@ -818,7 +905,7 @@ const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
       showNotification(
         'success',
         'PDF Downloaded',
-        'Your results analysis has been downloaded successfully.'
+        `Successfully generated PDF with ${subjects.length} subjects.`
       );
 
     } catch (error) {
@@ -826,7 +913,7 @@ const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
       showNotification(
         'error',
         'PDF Generation Failed',
-        'An error occurred while generating the PDF.'
+        error instanceof Error ? error.message : 'An error occurred while generating the PDF.'
       );
     } finally {
       setIsDownloading(false);
@@ -861,8 +948,7 @@ const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
     );
   };
 
-  // Years for filter (2026 onwards)
-  const currentYear = new Date().getFullYear();
+  // Years for filter
   const years = [2026, 2027, 2028, 2029, 2030];
 
   // Loading states
@@ -924,7 +1010,7 @@ const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
             <div className="flex items-center gap-2">
               <button
                 onClick={handleDownloadPDF}
-                disabled={results.length === 0 || isFetching || isDownloading}
+                disabled={validEndOfTermResults.length === 0 || isFetching || isDownloading}
                 className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isDownloading ? (
@@ -944,6 +1030,19 @@ const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
                 title="Refresh"
               >
                 <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
+              </button>
+
+              {/* Debug toggle button */}
+              <button
+                onClick={() => setShowDebug(!showDebug)}
+                className={`p-2.5 border rounded-xl transition-colors ${
+                  showDebug 
+                    ? 'bg-blue-100 border-blue-300 text-blue-700' 
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+                title="Toggle Debug"
+              >
+                <Eye size={18} />
               </button>
             </div>
           </div>
@@ -1102,8 +1201,8 @@ const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
           </div>
         </div>
 
-        {/* Main Content */}
-        {results.length === 0 ? (
+        {/* Main Content - Tables Only */}
+        {validEndOfTermResults.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center">
             <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 rounded-full mb-4">
               <FileText className="text-gray-400" size={32} />
@@ -1118,210 +1217,219 @@ const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
         ) : (
           <div className="space-y-8">
             
-            {/* Grade Distribution Chart */}
-            <div className="bg-white rounded-2xl border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <div className="p-2 bg-blue-50 rounded-lg">
-                      <BarChart3 size={18} className="text-blue-600" />
-                    </div>
-                    <h3 className="text-lg font-bold text-gray-900">
-                      School Grade Distribution
-                    </h3>
-                  </div>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Overall performance across all grades (1-9) with gender breakdown
-                  </p>
-                </div>
-                
-                {/* Legend */}
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-1">
-                    <span className="w-3 h-3 bg-blue-500 rounded"></span>
-                    <span className="text-xs">Boys</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="w-3 h-3 bg-rose-500 rounded"></span>
-                    <span className="text-xs">Girls</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Bar Chart */}
-              <div className="h-80 relative">
-                {/* Y-axis labels */}
-                <div className="absolute left-0 top-0 bottom-0 w-12 flex flex-col justify-between text-xs text-gray-500">
-                  <span>{Math.max(...gradeDistribution.map(g => g.total))}</span>
-                  <span>{Math.round(Math.max(...gradeDistribution.map(g => g.total)) * 0.75)}</span>
-                  <span>{Math.round(Math.max(...gradeDistribution.map(g => g.total)) * 0.5)}</span>
-                  <span>{Math.round(Math.max(...gradeDistribution.map(g => g.total)) * 0.25)}</span>
-                  <span>0</span>
-                </div>
-
-                {/* Bars container */}
-                <div className="absolute left-16 right-0 top-0 bottom-0">
-                  <div className="flex items-end justify-around h-full">
-                    {gradeDistribution.map((grade) => (
-                      <div key={grade.grade} className="flex flex-col items-center w-16">
-                        {/* Bars */}
-                        <div className="flex gap-1 w-full justify-center mb-2">
-                          {/* Boys Bar */}
-                          {grade.boys > 0 && (
-                            <div className="flex flex-col items-center group">
-                              <div className="relative">
-                                <div 
-                                  className="w-6 bg-blue-500 rounded-t transition-all duration-500 hover:bg-blue-600"
-                                  style={{ height: `${(grade.boys / Math.max(...gradeDistribution.map(g => g.total))) * 200}px`, minHeight: '4px' }}
-                                />
-                                <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap">
-                                  Boys: {grade.boys}
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Girls Bar */}
-                          {grade.girls > 0 && (
-                            <div className="flex flex-col items-center group">
-                              <div className="relative">
-                                <div 
-                                  className="w-6 bg-rose-500 rounded-t transition-all duration-500 hover:bg-rose-600"
-                                  style={{ height: `${(grade.girls / Math.max(...gradeDistribution.map(g => g.total))) * 200}px`, minHeight: '4px' }}
-                                />
-                                <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap">
-                                  Girls: {grade.girls}
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Grade Label */}
-                        <GradeBadge grade={grade.grade} size="sm" />
-                        
-                        {/* Percentage */}
-                        <span className="text-xs text-gray-500 mt-1">
-                          {grade.percentage}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Grid lines */}
-                  <div className="absolute inset-0 pointer-events-none">
-                    {[0, 25, 50, 75, 100].map((val, i) => (
-                      <div 
-                        key={i}
-                        className="absolute left-0 right-0 border-t border-gray-100"
-                        style={{ bottom: `${val}%` }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Chart Footer */}
-              <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between">
-                <div className="flex items-center gap-6">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-700">Total Students:</span>
-                    <span className="text-lg font-bold text-gray-900">
-                      {gradeDistribution.reduce((sum, g) => sum + g.total, 0)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-700">Boys:</span>
-                    <span className="text-lg font-bold text-blue-600">
-                      {gradeDistribution.reduce((sum, g) => sum + g.boys, 0)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-700">Girls:</span>
-                    <span className="text-lg font-bold text-rose-600">
-                      {gradeDistribution.reduce((sum, g) => sum + g.girls, 0)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Class Comparison Chart */}
-            {classPerformance.length > 0 && (
-              <ClassComparisonChart data={classPerformance} />
-            )}
-
-            {/* Subject Performance */}
-            {subjectPerformance.length > 0 && (
-              <SubjectPerformanceChart data={subjectPerformance} />
-            )}
-
-            {/* Quick Stats Table */}
+            {/* Grade Distribution TABLE */}
             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
               <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
-                <h3 className="font-semibold text-gray-900">Class Performance Summary</h3>
-                <p className="text-sm text-gray-500 mt-0.5">Quick overview of all classes</p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-gray-900">Grade Distribution</h3>
+                    <p className="text-sm text-gray-500 mt-0.5">Overall performance across all grades with gender breakdown</p>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 bg-blue-500 rounded-full"></span>
+                      <span>Boys: {gradeDistribution.reduce((sum, g) => sum + g.boys, 0)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 bg-rose-500 rounded-full"></span>
+                      <span>Girls: {gradeDistribution.reduce((sum, g) => sum + g.girls, 0)}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Class</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Students</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Boys/Girls</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Quality</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Quantity</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Fail</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Top Grade</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Grade</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Boys</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Girls</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Total</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Percentage</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {classPerformance.slice(0, 5).map((cls) => {
-                      const topGrade = cls.gradeDistribution.length > 0 
-                        ? cls.gradeDistribution.reduce((min, g) => g.grade < min.grade ? g : min).grade
-                        : 9;
-                      
-                      return (
-                        <tr key={cls.classId} className="hover:bg-gray-50/50 transition-colors">
-                          <td className="px-6 py-4 text-sm font-medium text-gray-900">{cls.className}</td>
-                          <td className="px-6 py-4 text-sm text-gray-700">{cls.candidates.total}</td>
-                          <td className="px-6 py-4 text-sm">
-                            <span className="text-blue-600 font-medium">{cls.candidates.boys}</span>
-                            <span className="text-gray-400 mx-1">/</span>
-                            <span className="text-rose-600 font-medium">{cls.candidates.girls}</span>
+                    {gradeDistribution.map((grade) => (
+                      <tr key={grade.grade} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="px-6 py-4">
+                          <GradeBadge grade={grade.grade} size="sm" showLabel={false} />
+                        </td>
+                        <td className="px-6 py-4 text-sm capitalize text-gray-700">
+                          {grade.passStatus}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-medium text-blue-600">
+                          {grade.boys}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-medium text-rose-600">
+                          {grade.girls}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-semibold text-gray-900">
+                          {grade.total}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-700">{grade.percentage}%</span>
+                            <div className="w-16 h-2 bg-gray-100 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-blue-500 rounded-full"
+                                style={{ width: `${grade.percentage}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50 border-t border-gray-200">
+                    <tr>
+                      <td colSpan={2} className="px-6 py-3 text-sm font-semibold text-gray-900">Total Students</td>
+                      <td className="px-6 py-3 text-sm font-semibold text-blue-600">
+                        {gradeDistribution.reduce((sum, g) => sum + g.boys, 0)}
+                      </td>
+                      <td className="px-6 py-3 text-sm font-semibold text-rose-600">
+                        {gradeDistribution.reduce((sum, g) => sum + g.girls, 0)}
+                      </td>
+                      <td className="px-6 py-3 text-sm font-semibold text-gray-900">
+                        {gradeDistribution.reduce((sum, g) => sum + g.total, 0)}
+                      </td>
+                      <td className="px-6 py-3"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            {/* Class Performance Summary Table */}
+            {classPerformance.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+                  <h3 className="font-semibold text-gray-900">Class Performance Summary</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">Quick overview of all classes</p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Class</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Students</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Boys/Girls</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Quality</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Quantity</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Fail</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Top Grade</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {classPerformance.map((cls) => {
+                        const topGrade = cls.gradeDistribution.length > 0 
+                          ? cls.gradeDistribution.reduce((min, g) => g.grade < min.grade ? g : min).grade
+                          : 9;
+                        
+                        return (
+                          <tr key={cls.classId} className="hover:bg-gray-50/50 transition-colors">
+                            <td className="px-6 py-4 text-sm font-medium text-gray-900">{cls.className}</td>
+                            <td className="px-6 py-4 text-sm text-gray-700">{cls.candidates.total}</td>
+                            <td className="px-6 py-4 text-sm">
+                              <span className="text-blue-600 font-medium">{cls.candidates.boys}</span>
+                              <span className="text-gray-400 mx-1">/</span>
+                              <span className="text-rose-600 font-medium">{cls.candidates.girls}</span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`text-sm font-semibold ${
+                                cls.performance.quality.percentage >= 70 ? 'text-green-600' :
+                                cls.performance.quality.percentage >= 50 ? 'text-amber-600' : 'text-rose-600'
+                              }`}>
+                                {cls.performance.quality.percentage}%
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="text-sm font-semibold text-blue-600">
+                                {cls.performance.quantity.percentage}%
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`text-sm font-semibold ${
+                                cls.performance.fail.percentage <= 5 ? 'text-green-600' :
+                                cls.performance.fail.percentage <= 10 ? 'text-amber-600' : 'text-rose-600'
+                              }`}>
+                                {cls.performance.fail.percentage}%
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <GradeBadge grade={topGrade} size="sm" />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Subject Performance Table */}
+            {subjectPerformance.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+                  <h3 className="font-semibold text-gray-900">Subject Performance</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">Performance metrics by subject</p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Subject</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Teacher</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Classes</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Students</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Avg Grade</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Quality</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Quantity</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Fail</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {subjectPerformance.map((subject) => (
+                        <tr key={subject.subject} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="px-6 py-4 text-sm font-medium text-gray-900">{subject.subject}</td>
+                          <td className="px-6 py-4 text-sm text-gray-700">{subject.teacher}</td>
+                          <td className="px-6 py-4 text-sm text-gray-700">{subject.classCount}</td>
+                          <td className="px-6 py-4 text-sm text-gray-700">{subject.studentCount}</td>
+                          <td className="px-6 py-4">
+                            <GradeBadge grade={Math.round(subject.averageGrade)} size="sm" />
                           </td>
                           <td className="px-6 py-4">
                             <span className={`text-sm font-semibold ${
-                              cls.performance.quality.percentage >= 70 ? 'text-green-600' :
-                              cls.performance.quality.percentage >= 50 ? 'text-amber-600' : 'text-rose-600'
+                              subject.qualityRate >= 70 ? 'text-green-600' :
+                              subject.qualityRate >= 50 ? 'text-amber-600' : 'text-rose-600'
                             }`}>
-                              {cls.performance.quality.percentage}%
+                              {subject.qualityRate}%
                             </span>
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-sm font-semibold text-blue-600">
-                              {cls.performance.quantity.percentage}%
+                              {subject.quantityRate}%
                             </span>
                           </td>
                           <td className="px-6 py-4">
                             <span className={`text-sm font-semibold ${
-                              cls.performance.fail.percentage <= 5 ? 'text-green-600' :
-                              cls.performance.fail.percentage <= 10 ? 'text-amber-600' : 'text-rose-600'
+                              subject.failRate <= 5 ? 'text-green-600' :
+                              subject.failRate <= 10 ? 'text-amber-600' : 'text-rose-600'
                             }`}>
-                              {cls.performance.fail.percentage}%
+                              {subject.failRate}%
                             </span>
                           </td>
-                          <td className="px-6 py-4">
-                            <GradeBadge grade={topGrade} size="sm" />
-                          </td>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -1329,7 +1437,7 @@ const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
         <div className="mt-8 pt-6 border-t border-gray-200">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <p className="text-xs sm:text-sm text-gray-500">
-              {results.length > 0 ? (
+              {validEndOfTermResults.length > 0 ? (
                 <>
                   <span className="font-medium">Data source:</span> End of Term Results • 
                   <span className="font-medium ml-1">Last updated:</span> Just now •

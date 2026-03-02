@@ -1,6 +1,7 @@
-// @/pages/teacher/TeacherResultsAnalysis.tsx - UPDATED WITH PDF-LIB
+// @/pages/teacher/TeacherResultsAnalysis.tsx - UPDATED WITH FIXES
+
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
 import { useAuth } from '@/hooks/useAuth';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
@@ -9,15 +10,10 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { 
   Filter, Loader2, RefreshCw, TrendingUp, TrendingDown, 
   Download, Target, Users, Award, AlertCircle, ChevronDown,
-  BarChart3, PieChart
-} from 'lucide-react'; // Removed Printer import
-
-// ==================== IMPORT TYPES FROM SCHOOL ====================
-import { 
-  GradeDistribution as SchoolGradeDistribution,
-  ClassPerformance as SchoolClassPerformance,
-  SubjectPerformance as SchoolSubjectPerformance
-} from '@/types/school';
+  BarChart3, PieChart, Eye
+} from 'lucide-react';
+import { StudentResult } from '@/services/resultsService';
+import { Learner } from '@/types/school';
 
 // ==================== LOCAL TYPES ====================
 interface LocalGradeDistribution {
@@ -63,6 +59,33 @@ interface LocalClassPerformance {
       percentage: number;
     };
   };
+}
+
+// Types for PDF data - MUST MATCH the imported type exactly
+interface SubjectMetrics {
+  registered: number;
+  sat: number;
+  absent: number;
+  dist: number; // grades 1-2
+  merit: number; // grades 3-4
+  credit: number; // grades 5-6
+  pass: number; // grades 7-8
+  fail: number; // grade 9
+  quality: number; // grades 1-4
+  quantity: number; // grades 1-8
+}
+
+// This must match the TeacherResultsData from pdfService
+interface TeacherPDFData {
+  schoolName: string;
+  address: string;
+  className: string;
+  subject: string;  // Made required to match imported type
+  term: string;
+  year: number;
+  boys: SubjectMetrics;
+  girls: SubjectMetrics;
+  generatedDate: string;
 }
 
 // ==================== CLEAN SQUARE STAT CARD FOR MOBILE ====================
@@ -359,6 +382,8 @@ export default function TeacherResultsAnalysis() {
   const isMobile = useMediaQuery('(max-width: 768px)');
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [chartViewMode, setChartViewMode] = useState<'detailed' | 'simple'>('detailed');
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
   
   const [selectedClass, setSelectedClass] = useState<string>('all');
   const [selectedSubject, setSelectedSubject] = useState<string>('all');
@@ -382,15 +407,118 @@ export default function TeacherResultsAnalysis() {
     year: selectedYear,
   });
 
-  const studentGenderMap = useMemo(() => {
-    const map = new Map<string, 'male' | 'female'>();
-    learners.forEach(learner => {
-      if (learner.gender) {
-        map.set(learner.studentId, learner.gender);
+  // ==================== FIXED STUDENT DATA MAPPING ====================
+  
+  // Map both document IDs and custom student IDs to gender
+  const studentDataMap = useMemo(() => {
+    const docIdToGender = new Map<string, 'M' | 'F'>();
+    const customIdToGender = new Map<string, 'M' | 'F'>();
+    const docIdToCustomId = new Map<string, string>();
+    const customIdToDocId = new Map<string, string>();
+    
+    learners.forEach((learner: Learner) => {
+      // Document ID (Firestore internal ID)
+      if (learner.id) {
+        if (learner.gender) {
+          docIdToGender.set(learner.id, learner.gender === 'male' ? 'M' : 'F');
+        }
+        
+        // Map to custom ID if available
+        if (learner.studentId) {
+          docIdToCustomId.set(learner.id, learner.studentId);
+        }
+      }
+      
+      // Custom ID (display ID like "G10B_001")
+      if (learner.studentId) {
+        if (learner.gender) {
+          customIdToGender.set(learner.studentId, learner.gender === 'male' ? 'M' : 'F');
+        }
+        
+        // Map to document ID
+        if (learner.id) {
+          customIdToDocId.set(learner.studentId, learner.id);
+        }
       }
     });
-    return map;
+    
+    return { docIdToGender, customIdToGender, docIdToCustomId, customIdToDocId };
   }, [learners]);
+
+  // Helper function to get gender from a student ID (could be document ID or custom ID)
+  const getStudentGender = useCallback((studentId: string): 'M' | 'F' | undefined => {
+    // Method 1: Try as document ID
+    let gender = studentDataMap.docIdToGender.get(studentId);
+    
+    // Method 2: Try as custom ID
+    if (!gender) {
+      gender = studentDataMap.customIdToGender.get(studentId);
+    }
+    
+    // Method 3: Try to find learner by direct comparison (fallback)
+    if (!gender) {
+      const learner = learners.find(l => 
+        l.id === studentId || 
+        l.studentId === studentId
+      );
+      if (learner?.gender) {
+        gender = learner.gender === 'male' ? 'M' : 'F';
+      }
+    }
+    
+    return gender;
+  }, [learners, studentDataMap]);
+
+  // Filter valid end of term results
+  const validEndOfTermResults = useMemo(() => {
+    return results.filter((r: StudentResult) => 
+      r.examType === 'endOfTerm' && 
+      r.grade > 0 && 
+      r.grade <= 9 &&
+      r.percentage >= 0
+    );
+  }, [results]);
+
+  // Debug function to check mappings
+  const checkMappings = useCallback(() => {
+    console.log('===== CHECKING STUDENT MAPPINGS =====');
+    console.log('Total learners:', learners.length);
+    console.log('Total results:', results.length);
+    console.log('Valid end of term results:', validEndOfTermResults.length);
+    
+    // Take first 5 results and try to find their gender
+    const sampleResults = validEndOfTermResults.slice(0, 5);
+    
+    sampleResults.forEach((result, index) => {
+      console.log(`\nResult ${index + 1}:`);
+      console.log('  Student ID in result:', result.studentId);
+      console.log('  Student name:', result.studentName);
+      
+      const finalGender = getStudentGender(result.studentId);
+      console.log('  Final gender:', finalGender || 'Not found');
+      
+      const learner = learners.find(l => 
+        l.id === result.studentId || 
+        l.studentId === result.studentId
+      );
+      
+      if (learner) {
+        console.log('  Found learner:', {
+          id: learner.id,
+          studentId: learner.studentId,
+          name: learner.fullName,
+          gender: learner.gender
+        });
+      }
+    });
+  }, [learners, results, validEndOfTermResults, getStudentGender]);
+
+  // Run debug on mount if showDebug is true
+  useEffect(() => {
+    if (showDebug && results.length > 0 && learners.length > 0) {
+      checkMappings();
+    }
+  }, [showDebug, results, learners, checkMappings]);
 
   const assignedClasses = useMemo(() => {
     if (!assignments) return [];
@@ -437,28 +565,28 @@ export default function TeacherResultsAnalysis() {
   }, [assignments, selectedClass]);
 
   const gradeDistribution = useMemo((): LocalGradeDistribution[] => {
-    if (!results || results.length === 0) return [];
+    if (validEndOfTermResults.length === 0) return [];
 
-    const endOfTermResults = results.filter(r => r.examType === 'endOfTerm' && r.grade > 0);
-    
-    const gradeMap = new Map<number, { boys: number; girls: number }>();
+    const gradeMap = new Map<number, { boys: number; girls: number; unknown: number }>();
     
     for (let i = 1; i <= 9; i++) {
-      gradeMap.set(i, { boys: 0, girls: 0 });
+      gradeMap.set(i, { boys: 0, girls: 0, unknown: 0 });
     }
 
-    endOfTermResults.forEach(result => {
-      const current = gradeMap.get(result.grade) || { boys: 0, girls: 0 };
-      const gender = studentGenderMap.get(result.studentId);
+    validEndOfTermResults.forEach(result => {
+      const current = gradeMap.get(result.grade) || { boys: 0, girls: 0, unknown: 0 };
+      const gender = getStudentGender(result.studentId);
       
-      if (gender === 'male') {
+      if (gender === 'M') {
         gradeMap.set(result.grade, { ...current, boys: current.boys + 1 });
-      } else if (gender === 'female') {
+      } else if (gender === 'F') {
         gradeMap.set(result.grade, { ...current, girls: current.girls + 1 });
+      } else {
+        gradeMap.set(result.grade, { ...current, unknown: current.unknown + 1 });
       }
     });
 
-    const total = endOfTermResults.length;
+    const total = validEndOfTermResults.length;
 
     const getShortDescription = (grade: number): string => {
       if (grade <= 2) return 'Dist';
@@ -473,20 +601,20 @@ export default function TeacherResultsAnalysis() {
         grade,
         boys: counts.boys,
         girls: counts.girls,
-        total: counts.boys + counts.girls,
-        percentage: total > 0 ? Math.round(((counts.boys + counts.girls) / total) * 100) : 0,
+        total: counts.boys + counts.girls + counts.unknown,
+        percentage: total > 0 ? Math.round(((counts.boys + counts.girls + counts.unknown) / total) * 100) : 0,
         description: getShortDescription(grade)
       }))
       .filter(g => g.total > 0)
       .sort((a, b) => a.grade - b.grade);
-  }, [results, studentGenderMap]);
+  }, [validEndOfTermResults, getStudentGender]);
 
   const classPerformance = useMemo((): LocalClassPerformance[] => {
-    if (!results || results.length === 0 || !assignments) return [];
+    if (validEndOfTermResults.length === 0 || !assignments) return [];
 
-    const classMap = new Map<string, typeof results>();
+    const classMap = new Map<string, StudentResult[]>();
     
-    results.forEach(result => {
+    validEndOfTermResults.forEach(result => {
       if (!classMap.has(result.classId)) {
         classMap.set(result.classId, []);
       }
@@ -494,21 +622,22 @@ export default function TeacherResultsAnalysis() {
     });
 
     return Array.from(classMap.entries()).map(([classId, classResults]) => {
-      const endOfTermResults = classResults.filter(r => r.examType === 'endOfTerm' && r.grade > 0);
-      const total = endOfTermResults.length;
+      const total = classResults.length;
       const className = assignments.find(a => a.classId === classId)?.className || classId;
 
-      const gradeMap = new Map<number, { boys: number; girls: number }>();
-      for (let i = 1; i <= 9; i++) gradeMap.set(i, { boys: 0, girls: 0 });
+      const gradeMap = new Map<number, { boys: number; girls: number; unknown: number }>();
+      for (let i = 1; i <= 9; i++) gradeMap.set(i, { boys: 0, girls: 0, unknown: 0 });
       
-      endOfTermResults.forEach(result => {
+      classResults.forEach(result => {
         const current = gradeMap.get(result.grade)!;
-        const gender = studentGenderMap.get(result.studentId);
+        const gender = getStudentGender(result.studentId);
         
-        if (gender === 'male') {
+        if (gender === 'M') {
           gradeMap.set(result.grade, { ...current, boys: current.boys + 1 });
-        } else if (gender === 'female') {
+        } else if (gender === 'F') {
           gradeMap.set(result.grade, { ...current, girls: current.girls + 1 });
+        } else {
+          gradeMap.set(result.grade, { ...current, unknown: current.unknown + 1 });
         }
       });
 
@@ -517,18 +646,18 @@ export default function TeacherResultsAnalysis() {
           grade,
           boys: counts.boys,
           girls: counts.girls,
-          total: counts.boys + counts.girls,
-          percentage: total > 0 ? Math.round(((counts.boys + counts.girls) / total) * 100) : 0,
+          total: counts.boys + counts.girls + counts.unknown,
+          percentage: total > 0 ? Math.round(((counts.boys + counts.girls + counts.unknown) / total) * 100) : 0,
           description: grade <= 2 ? 'Dist' : grade <= 4 ? 'Merit' : grade <= 6 ? 'Credit' : grade <= 8 ? 'Satis' : 'Fail'
         }))
         .filter(g => g.total > 0);
 
-      const qualityBoys = endOfTermResults.filter(r => r.grade <= 6 && studentGenderMap.get(r.studentId) === 'male').length;
-      const qualityGirls = endOfTermResults.filter(r => r.grade <= 6 && studentGenderMap.get(r.studentId) === 'female').length;
-      const quantityBoys = endOfTermResults.filter(r => r.grade <= 8 && studentGenderMap.get(r.studentId) === 'male').length;
-      const quantityGirls = endOfTermResults.filter(r => r.grade <= 8 && studentGenderMap.get(r.studentId) === 'female').length;
-      const failBoys = endOfTermResults.filter(r => r.grade === 9 && studentGenderMap.get(r.studentId) === 'male').length;
-      const failGirls = endOfTermResults.filter(r => r.grade === 9 && studentGenderMap.get(r.studentId) === 'female').length;
+      const qualityBoys = classResults.filter(r => r.grade <= 6 && getStudentGender(r.studentId) === 'M').length;
+      const qualityGirls = classResults.filter(r => r.grade <= 6 && getStudentGender(r.studentId) === 'F').length;
+      const quantityBoys = classResults.filter(r => r.grade <= 8 && getStudentGender(r.studentId) === 'M').length;
+      const quantityGirls = classResults.filter(r => r.grade <= 8 && getStudentGender(r.studentId) === 'F').length;
+      const failBoys = classResults.filter(r => r.grade === 9 && getStudentGender(r.studentId) === 'M').length;
+      const failGirls = classResults.filter(r => r.grade === 9 && getStudentGender(r.studentId) === 'F').length;
 
       const qualityCount = qualityBoys + qualityGirls;
       const quantityCount = quantityBoys + quantityGirls;
@@ -540,12 +669,12 @@ export default function TeacherResultsAnalysis() {
         candidates: {
           boys: qualityBoys + quantityBoys + failBoys,
           girls: qualityGirls + quantityGirls + failGirls,
-          total: endOfTermResults.length
+          total: classResults.length
         },
         sat: {
-          boys: endOfTermResults.filter(r => studentGenderMap.get(r.studentId) === 'male').length,
-          girls: endOfTermResults.filter(r => studentGenderMap.get(r.studentId) === 'female').length,
-          total: endOfTermResults.length
+          boys: classResults.filter(r => getStudentGender(r.studentId) === 'M').length,
+          girls: classResults.filter(r => getStudentGender(r.studentId) === 'F').length,
+          total: classResults.length
         },
         gradeDistribution,
         performance: {
@@ -570,10 +699,10 @@ export default function TeacherResultsAnalysis() {
         }
       };
     });
-  }, [results, assignments, studentGenderMap]);
+  }, [validEndOfTermResults, assignments, getStudentGender]);
 
   const coreMetrics = useMemo(() => {
-    if (!results || results.length === 0) {
+    if (validEndOfTermResults.length === 0) {
       return {
         qualityPass: { percentage: 0, count: 0, total: 0, boys: 0, girls: 0 },
         quantityPass: { percentage: 0, count: 0, total: 0, boys: 0, girls: 0 },
@@ -581,19 +710,18 @@ export default function TeacherResultsAnalysis() {
       };
     }
 
-    const endOfTermResults = results.filter(r => r.examType === 'endOfTerm' && r.grade > 0);
-    const total = endOfTermResults.length;
+    const total = validEndOfTermResults.length;
 
-    const qualityPass = endOfTermResults.filter(r => r.grade <= 6);
-    const quantityPass = endOfTermResults.filter(r => r.grade <= 8);
-    const fail = endOfTermResults.filter(r => r.grade === 9);
+    const qualityPass = validEndOfTermResults.filter(r => r.grade <= 6);
+    const quantityPass = validEndOfTermResults.filter(r => r.grade <= 8);
+    const fail = validEndOfTermResults.filter(r => r.grade === 9);
 
-    const qualityBoys = qualityPass.filter(r => studentGenderMap.get(r.studentId) === 'male').length;
-    const qualityGirls = qualityPass.filter(r => studentGenderMap.get(r.studentId) === 'female').length;
-    const quantityBoys = quantityPass.filter(r => studentGenderMap.get(r.studentId) === 'male').length;
-    const quantityGirls = quantityPass.filter(r => studentGenderMap.get(r.studentId) === 'female').length;
-    const failBoys = fail.filter(r => studentGenderMap.get(r.studentId) === 'male').length;
-    const failGirls = fail.filter(r => studentGenderMap.get(r.studentId) === 'female').length;
+    const qualityBoys = qualityPass.filter(r => getStudentGender(r.studentId) === 'M').length;
+    const qualityGirls = qualityPass.filter(r => getStudentGender(r.studentId) === 'F').length;
+    const quantityBoys = quantityPass.filter(r => getStudentGender(r.studentId) === 'M').length;
+    const quantityGirls = quantityPass.filter(r => getStudentGender(r.studentId) === 'F').length;
+    const failBoys = fail.filter(r => getStudentGender(r.studentId) === 'M').length;
+    const failGirls = fail.filter(r => getStudentGender(r.studentId) === 'F').length;
 
     return {
       qualityPass: {
@@ -618,47 +746,68 @@ export default function TeacherResultsAnalysis() {
         girls: failGirls
       }
     };
-  }, [results, studentGenderMap]);
+  }, [validEndOfTermResults, getStudentGender]);
 
   // ==================== PDF DOWNLOAD FUNCTION USING PDF-LIB ====================
   const handleDownloadPDF = async () => {
     try {
-      if (!results || results.length === 0) {
+      if (validEndOfTermResults.length === 0) {
         alert('No data to export');
         return;
       }
 
-      // Filter end of term results
-      const endOfTermResults = results.filter(r => r.examType === 'endOfTerm' && r.grade > 0);
-      
-      // Split by gender
-      const boysResults = endOfTermResults.filter(r => studentGenderMap.get(r.studentId) === 'male');
-      const girlsResults = endOfTermResults.filter(r => studentGenderMap.get(r.studentId) === 'female');
+      setIsDownloading(true);
 
-      // Calculate metrics for boys
-      const calculateMetrics = (resultsArray: typeof endOfTermResults) => ({
-        registered: resultsArray.length,
-        sat: resultsArray.length,
-        absent: 0, // Calculate if you have attendance data
-        dist: resultsArray.filter(r => r.grade <= 2).length,
-        merit: resultsArray.filter(r => r.grade >= 3 && r.grade <= 4).length,
-        credit: resultsArray.filter(r => r.grade >= 5 && r.grade <= 6).length,
-        pass: resultsArray.filter(r => r.grade >= 7 && r.grade <= 8).length,
-        fail: resultsArray.filter(r => r.grade === 9).length,
-        quality: resultsArray.filter(r => r.grade <= 4).length,
-        quantity: resultsArray.filter(r => r.grade <= 8).length,
+      // Split by gender using the helper function
+      const boysResults: StudentResult[] = [];
+      const girlsResults: StudentResult[] = [];
+      const unknownResults: StudentResult[] = [];
+      
+      validEndOfTermResults.forEach(result => {
+        const gender = getStudentGender(result.studentId);
+        
+        if (gender === 'M') {
+          boysResults.push(result);
+        } else if (gender === 'F') {
+          girlsResults.push(result);
+        } else {
+          unknownResults.push(result);
+        }
       });
 
-      const pdfData = {
+      // Calculate metrics
+      const calculateMetrics = (resultsArray: StudentResult[]): SubjectMetrics => {
+        const total = resultsArray.length;
+        
+        return {
+          registered: total,
+          sat: total,
+          absent: 0,
+          dist: resultsArray.filter(r => r.grade <= 2).length,
+          merit: resultsArray.filter(r => r.grade >= 3 && r.grade <= 4).length,
+          credit: resultsArray.filter(r => r.grade >= 5 && r.grade <= 6).length,
+          pass: resultsArray.filter(r => r.grade >= 7 && r.grade <= 8).length,
+          fail: resultsArray.filter(r => r.grade === 9).length,
+          quality: resultsArray.filter(r => r.grade <= 4).length,
+          quantity: resultsArray.filter(r => r.grade <= 8).length,
+        };
+      };
+
+      // Get subject name - ensure it's a string, never undefined
+      const subjectName = selectedSubject !== 'all' 
+        ? selectedSubject 
+        : (assignedSubjects.length === 1 ? assignedSubjects[0].name : 'All Subjects');
+
+      const pdfData: TeacherPDFData = {
         schoolName: 'KALABO BOARDING SECONDARY SCHOOL',
         address: 'P.O BOX 930096',
         className: selectedClass !== 'all' 
           ? assignedClasses.find(c => c.id === selectedClass)?.name || 'All Classes'
           : 'All Classes',
-        subject: selectedSubject !== 'all' ? selectedSubject : undefined,
+        subject: subjectName, // Always provide a string
         term: selectedTerm,
         year: selectedYear,
-        boys: calculateMetrics(boysResults),
+        boys: calculateMetrics([...boysResults, ...unknownResults]), // Put unknown in boys as fallback
         girls: calculateMetrics(girlsResults),
         generatedDate: new Date().toLocaleDateString('en-GB', {
           day: '2-digit',
@@ -675,8 +824,11 @@ export default function TeacherResultsAnalysis() {
       // Generate PDF
       const pdfBytes = await generateResultsAnalysisPDF(pdfData);
 
+      // FIXED: Convert Uint8Array to Blob using the direct approach
+      // This avoids the ArrayBuffer/SharedArrayBuffer issue
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+
       // Download PDF
-      const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -685,7 +837,7 @@ export default function TeacherResultsAnalysis() {
       const filename = [
         'results',
         pdfData.className.replace(/\s+/g, '-'),
-        pdfData.subject ? pdfData.subject.replace(/\s+/g, '-') : null,
+        pdfData.subject.replace(/\s+/g, '-'),
         pdfData.term.replace(/\s+/g, '-'),
         pdfData.year
       ].filter(Boolean).join('-') + '.pdf';
@@ -699,11 +851,13 @@ export default function TeacherResultsAnalysis() {
     } catch (error) {
       console.error('PDF Generation Error:', error);
       alert('Failed to generate PDF: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    } finally {
+      setIsDownloading(false);
     }
   };
 
   const hasAssignments = assignedClasses.length > 0;
-  const hasData = results && results.length > 0;
+  const hasData = validEndOfTermResults.length > 0;
 
   const currentYear = new Date().getFullYear();
   const years = [currentYear, currentYear + 1, currentYear + 2];
@@ -751,7 +905,7 @@ export default function TeacherResultsAnalysis() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleDownloadPDF}
-              disabled={!hasData}
+              disabled={!hasData || isDownloading}
               className={`
                 inline-flex items-center justify-center
                 bg-blue-600 text-white rounded-lg sm:rounded-xl hover:bg-blue-700
@@ -761,8 +915,12 @@ export default function TeacherResultsAnalysis() {
               `}
               title="Download Results PDF"
             >
-              <Download size={isMobile ? 18 : 16} />
-              {!isMobile && 'Download PDF'}
+              {isDownloading ? (
+                <Loader2 size={isMobile ? 18 : 16} className="animate-spin" />
+              ) : (
+                <Download size={isMobile ? 18 : 16} />
+              )}
+              {!isMobile && (isDownloading ? 'Generating...' : 'Download PDF')}
             </button>
             <button
               onClick={() => refetch()}
@@ -779,6 +937,21 @@ export default function TeacherResultsAnalysis() {
               <RefreshCw size={isMobile ? 18 : 16} className={isFetching ? 'animate-spin' : ''} />
               {!isMobile && 'Refresh'}
             </button>
+            
+            {/* Debug toggle button - only show in development */}
+            {process.env.NODE_ENV === 'development' && (
+              <button
+                onClick={() => setShowDebug(!showDebug)}
+                className={`p-2.5 border rounded-xl transition-colors ${
+                  showDebug 
+                    ? 'bg-blue-100 border-blue-300 text-blue-700' 
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+                title="Toggle Debug"
+              >
+                <Eye size={18} />
+              </button>
+            )}
           </div>
         </div>
 
