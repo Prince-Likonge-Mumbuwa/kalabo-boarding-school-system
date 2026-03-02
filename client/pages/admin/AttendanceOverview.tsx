@@ -44,7 +44,7 @@ interface DateRange {
 
 type ViewMode = 'daily' | 'weekly' | 'monthly' | 'class';
 
-// ==================== STAT CARD ====================
+// ==================== RESPONSIVE STAT CARD ====================
 const StatCard = ({ 
   title, 
   value, 
@@ -69,26 +69,26 @@ const StatCard = ({
   };
 
   return (
-    <div className={`rounded-xl border p-5 ${colors[color]} transition-all hover:shadow-md`}>
+    <div className={`rounded-xl border p-4 ${colors[color]} transition-all hover:shadow-md h-full`}>
       <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm font-medium opacity-80">{title}</p>
-          <p className="text-2xl font-bold mt-1">{value}</p>
-          {subValue && <p className="text-xs mt-1 opacity-70">{subValue}</p>}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium opacity-80 truncate">{title}</p>
+          <p className="text-2xl font-bold mt-1 truncate">{value}</p>
+          {subValue && <p className="text-xs mt-1 opacity-70 truncate">{subValue}</p>}
         </div>
-        <div className="p-3 bg-white/50 rounded-lg">
+        <div className="p-3 bg-white/50 rounded-lg ml-3 flex-shrink-0">
           {icon}
         </div>
       </div>
       {trend && (
-        <div className="mt-3 flex items-center gap-1 text-xs">
-          {trend.direction === 'up' && <TrendingUp size={14} className="text-green-600" />}
-          {trend.direction === 'down' && <TrendingDown size={14} className="text-red-600" />}
-          {trend.direction === 'neutral' && <Minus size={14} className="text-gray-600" />}
-          <span className={
+        <div className="mt-3 flex items-center gap-1 text-xs flex-wrap">
+          {trend.direction === 'up' && <TrendingUp size={14} className="text-green-600 flex-shrink-0" />}
+          {trend.direction === 'down' && <TrendingDown size={14} className="text-red-600 flex-shrink-0" />}
+          {trend.direction === 'neutral' && <Minus size={14} className="text-gray-600 flex-shrink-0" />}
+          <span className={`truncate ${
             trend.direction === 'up' ? 'text-green-600' :
             trend.direction === 'down' ? 'text-red-600' : 'text-gray-600'
-          }>
+          }`}>
             {trend.value}
           </span>
         </div>
@@ -97,36 +97,42 @@ const StatCard = ({
   );
 };
 
-// ==================== ATTENDANCE CHART ====================
+// ==================== RESPONSIVE ATTENDANCE CHART ====================
 const AttendanceChart = ({ data }: { data: AttendanceSummary[] }) => {
   if (!data.length) return null;
 
-  const maxRate = Math.max(...data.map(d => d.rate));
-  const minRate = Math.min(...data.map(d => d.rate));
+  // Filter to Monday-Friday
+  const weekdays = data.filter(d => {
+    const day = new Date(d.date).getDay();
+    return day >= 1 && day <= 5;
+  }).slice(-7);
+
+  const maxRate = Math.max(...weekdays.map(d => d.rate));
+  const minRate = Math.min(...weekdays.map(d => d.rate));
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <h3 className="text-lg font-bold text-gray-900 mb-4">Attendance Trend</h3>
-      
-      <div className="h-64 relative">
-        {/* Y-axis */}
-        <div className="absolute left-0 top-0 bottom-0 w-12 flex flex-col justify-between text-xs text-gray-500">
-          <span>100%</span>
-          <span>75%</span>
-          <span>50%</span>
-          <span>25%</span>
-          <span>0%</span>
+    <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+        <h3 className="text-lg font-bold text-gray-900">Attendance Trend (Mon-Fri)</h3>
+        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+          <span>Avg: <span className="font-bold text-gray-900">
+            {Math.round(weekdays.reduce((sum, d) => sum + d.rate, 0) / weekdays.length)}%
+          </span></span>
+          <span>High: <span className="font-bold text-green-600">{maxRate}%</span></span>
+          <span>Low: <span className="font-bold text-red-600">{minRate}%</span></span>
         </div>
-
-        {/* Chart bars */}
-        <div className="absolute left-16 right-0 top-0 bottom-0">
-          <div className="flex items-end justify-around h-full">
-            {data.slice(-7).map((day, i) => (
-              <div key={day.date} className="flex flex-col items-center w-16">
+      </div>
+      
+      <div className="h-48 sm:h-64 relative">
+        {/* Chart container with horizontal scroll on mobile if needed */}
+        <div className="absolute inset-0 overflow-x-auto overflow-y-visible pb-4">
+          <div className="flex items-end justify-start sm:justify-around gap-2 sm:gap-4 min-w-[300px] sm:min-w-0 h-full">
+            {weekdays.map((day, i) => (
+              <div key={day.date} className="flex flex-col items-center flex-shrink-0 w-12 sm:w-16">
                 <div className="relative group w-full flex justify-center">
                   <div 
-                    className="w-8 bg-blue-500 rounded-t transition-all duration-500 hover:bg-blue-600"
-                    style={{ height: `${day.rate}%`, minHeight: '4px' }}
+                    className="w-6 sm:w-8 bg-blue-500 rounded-t transition-all duration-500 hover:bg-blue-600"
+                    style={{ height: `${Math.max(day.rate * 0.4, 4)}px`, minHeight: '20px' }}
                   />
                   <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 
                                 bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10">
@@ -142,94 +148,103 @@ const AttendanceChart = ({ data }: { data: AttendanceSummary[] }) => {
               </div>
             ))}
           </div>
-
-          {/* Grid lines */}
-          <div className="absolute inset-0 pointer-events-none">
-            {[0, 25, 50, 75, 100].map((val) => (
-              <div 
-                key={val}
-                className="absolute left-0 right-0 border-t border-gray-100"
-                style={{ bottom: `${val}%` }}
-              />
-            ))}
-          </div>
         </div>
-      </div>
 
-      {/* Stats */}
-      <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between text-sm">
-        <div className="flex items-center gap-4">
-          <span className="text-gray-600">Average: <span className="font-bold text-gray-900">
-            {Math.round(data.reduce((sum, d) => sum + d.rate, 0) / data.length)}%
-          </span></span>
-          <span className="text-gray-600">Highest: <span className="font-bold text-green-600">{maxRate}%</span></span>
-          <span className="text-gray-600">Lowest: <span className="font-bold text-red-600">{minRate}%</span></span>
+        {/* Grid lines - hidden on mobile for cleaner look */}
+        <div className="hidden sm:block absolute inset-0 pointer-events-none">
+          {[0, 25, 50, 75, 100].map((val) => (
+            <div 
+              key={val}
+              className="absolute left-0 right-0 border-t border-gray-100"
+              style={{ bottom: `${val}%` }}
+            />
+          ))}
         </div>
       </div>
     </div>
   );
 };
 
-// ==================== CLASS BREAKDOWN TABLE ====================
+// ==================== RESPONSIVE CLASS BREAKDOWN ====================
 const ClassBreakdownTable = ({ data }: { data: AttendanceSummary['classBreakdown'] }) => {
   const classes = Object.values(data);
   
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+      <div className="px-4 sm:px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
         <h3 className="font-semibold text-gray-900">Class-wise Attendance</h3>
         <p className="text-sm text-gray-500 mt-0.5">Today's breakdown by class</p>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Mobile: Card view */}
+      <div className="block sm:hidden divide-y divide-gray-200">
+        {classes.map((cls) => (
+          <div key={cls.className} className="p-4 hover:bg-gray-50">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-medium text-gray-900">{cls.className}</h4>
+              <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${
+                cls.rate >= 90 ? 'bg-green-100 text-green-700' :
+                cls.rate >= 75 ? 'bg-yellow-100 text-yellow-700' :
+                'bg-red-100 text-red-700'
+              }`}>
+                {cls.rate >= 90 ? <CheckCircle2 size={12} /> :
+                 cls.rate >= 75 ? <AlertCircle size={12} /> :
+                 <XCircle size={12} />}
+                {cls.rate}%
+              </span>
+            </div>
+            
+            <div className="grid grid-cols-4 gap-2 text-center">
+              <div>
+                <div className="text-lg font-semibold text-gray-900">{cls.total}</div>
+                <div className="text-xs text-gray-500">Total</div>
+              </div>
+              <div>
+                <div className="text-lg font-semibold text-green-600">{cls.present}</div>
+                <div className="text-xs text-gray-500">Present</div>
+              </div>
+              <div>
+                <div className="text-lg font-semibold text-red-600">{cls.absent}</div>
+                <div className="text-xs text-gray-500">Absent</div>
+              </div>
+              <div>
+                <div className="text-lg font-semibold text-yellow-600">{cls.late}</div>
+                <div className="text-xs text-gray-500">Late</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop: Table view */}
+      <div className="hidden sm:block overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Class</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Total</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Present</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Absent</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Late</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Excused</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Rate</th>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Status</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Class</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Total</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Present</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Absent</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Late</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Excused</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Rate</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
             {classes.map((cls) => (
               <tr key={cls.className} className="hover:bg-gray-50/50">
-                <td className="px-6 py-4 text-sm font-medium text-gray-900">{cls.className}</td>
-                <td className="px-6 py-4 text-sm text-gray-700">{cls.total}</td>
-                <td className="px-6 py-4">
-                  <span className="text-sm font-medium text-green-600">{cls.present}</span>
-                </td>
-                <td className="px-6 py-4">
-                  <span className="text-sm font-medium text-red-600">{cls.absent}</span>
-                </td>
-                <td className="px-6 py-4">
-                  <span className="text-sm font-medium text-yellow-600">{cls.late}</span>
-                </td>
-                <td className="px-6 py-4">
-                  <span className="text-sm font-medium text-purple-600">{cls.excused}</span>
-                </td>
-                <td className="px-6 py-4">
+                <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{cls.className}</td>
+                <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{cls.total}</td>
+                <td className="px-6 py-4 text-sm font-medium text-green-600 whitespace-nowrap">{cls.present}</td>
+                <td className="px-6 py-4 text-sm font-medium text-red-600 whitespace-nowrap">{cls.absent}</td>
+                <td className="px-6 py-4 text-sm font-medium text-yellow-600 whitespace-nowrap">{cls.late}</td>
+                <td className="px-6 py-4 text-sm font-medium text-purple-600 whitespace-nowrap">{cls.excused}</td>
+                <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`text-sm font-semibold ${
                     cls.rate >= 90 ? 'text-green-600' :
                     cls.rate >= 75 ? 'text-yellow-600' : 'text-red-600'
                   }`}>
                     {cls.rate}%
-                  </span>
-                </td>
-                <td className="px-6 py-4">
-                  <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${
-                    cls.rate >= 90 ? 'bg-green-100 text-green-700' :
-                    cls.rate >= 75 ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-red-100 text-red-700'
-                  }`}>
-                    {cls.rate >= 90 ? <CheckCircle2 size={12} /> :
-                     cls.rate >= 75 ? <AlertCircle size={12} /> :
-                     <XCircle size={12} />}
-                    {cls.rate >= 90 ? 'Good' : cls.rate >= 75 ? 'Average' : 'Low'}
                   </span>
                 </td>
               </tr>
@@ -241,48 +256,163 @@ const ClassBreakdownTable = ({ data }: { data: AttendanceSummary['classBreakdown
   );
 };
 
-// ==================== RECENT ACTIVITY ====================
+// ==================== RESPONSIVE RECENT ACTIVITY ====================
 const RecentActivity = ({ records }: { records: AttendanceRecord[] }) => {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
+    <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
       <h3 className="text-lg font-bold text-gray-900 mb-4">Recent Activity</h3>
       
       <div className="space-y-3">
         {records.slice(0, 5).map((record) => (
-          <div key={`${record.studentId}-${record.date}`} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-            <div className={`p-2 rounded-full ${
-              record.status === 'present' ? 'bg-green-100' :
-              record.status === 'absent' ? 'bg-red-100' :
-              record.status === 'late' ? 'bg-yellow-100' :
-              'bg-purple-100'
-            }`}>
-              {record.status === 'present' && <UserCheck size={14} className="text-green-600" />}
-              {record.status === 'absent' && <UserX size={14} className="text-red-600" />}
-              {record.status === 'late' && <Clock size={14} className="text-yellow-600" />}
-              {record.status === 'excused' && <AlertCircle size={14} className="text-purple-600" />}
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-gray-900">{record.studentName}</p>
-              <p className="text-xs text-gray-500">
-                {record.className} • {new Date(record.date).toLocaleDateString()}
-              </p>
-              {record.excuseReason && (
-                <p className="text-xs text-purple-600 mt-1 bg-purple-50 p-1.5 rounded">
-                  {record.excuseReason}
+          <div key={`${record.studentId}-${record.date}`} className="flex flex-col sm:flex-row sm:items-start gap-3 p-3 bg-gray-50 rounded-lg">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <div className={`p-2 rounded-full flex-shrink-0 ${
+                record.status === 'present' ? 'bg-green-100' :
+                record.status === 'absent' ? 'bg-red-100' :
+                record.status === 'late' ? 'bg-yellow-100' :
+                'bg-purple-100'
+              }`}>
+                {record.status === 'present' && <UserCheck size={16} className="text-green-600" />}
+                {record.status === 'absent' && <UserX size={16} className="text-red-600" />}
+                {record.status === 'late' && <Clock size={16} className="text-yellow-600" />}
+                {record.status === 'excused' && <AlertCircle size={16} className="text-purple-600" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                  <p className="text-sm font-medium text-gray-900 truncate">{record.studentName}</p>
+                  <span className={`text-xs px-2 py-1 rounded-full self-start sm:self-center whitespace-nowrap ${
+                    record.status === 'present' ? 'bg-green-100 text-green-700' :
+                    record.status === 'absent' ? 'bg-red-100 text-red-700' :
+                    record.status === 'late' ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-purple-100 text-purple-700'
+                  }`}>
+                    {record.status}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  {record.className} • {new Date(record.date).toLocaleDateString()}
                 </p>
-              )}
+                {record.excuseReason && (
+                  <p className="text-xs text-purple-600 mt-2 bg-purple-50 p-2 rounded">
+                    {record.excuseReason}
+                  </p>
+                )}
+              </div>
             </div>
-            <span className={`text-xs px-2 py-1 rounded-full ${
-              record.status === 'present' ? 'bg-green-100 text-green-700' :
-              record.status === 'absent' ? 'bg-red-100 text-red-700' :
-              record.status === 'late' ? 'bg-yellow-100 text-yellow-700' :
-              'bg-purple-100 text-purple-700'
-            }`}>
-              {record.status}
-            </span>
           </div>
         ))}
       </div>
+    </div>
+  );
+};
+
+// ==================== RESPONSIVE DETAILED RECORDS ====================
+const DetailedRecords = ({ records }: { records: AttendanceRecord[] }) => {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="px-4 sm:px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+        <h3 className="font-semibold text-gray-900">Detailed Records</h3>
+        <p className="text-sm text-gray-500 mt-0.5">All attendance entries</p>
+      </div>
+
+      {/* Mobile: Card view */}
+      <div className="block sm:hidden divide-y divide-gray-200">
+        {records.slice(0, 10).map((record) => (
+          <div key={`${record.studentId}-${record.date}`} className="p-4 hover:bg-gray-50">
+            <div className="flex items-start justify-between gap-2 mb-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">{record.studentName}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{record.studentId}</p>
+              </div>
+              <span className={`text-xs px-2 py-1 rounded-full whitespace-nowrap ${
+                record.status === 'present' ? 'bg-green-100 text-green-700' :
+                record.status === 'absent' ? 'bg-red-100 text-red-700' :
+                record.status === 'late' ? 'bg-yellow-100 text-yellow-700' :
+                'bg-purple-100 text-purple-700'
+              }`}>
+                {record.status}
+              </span>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+              <div>
+                <span className="text-gray-500">Class:</span> {record.className}
+              </div>
+              <div>
+                <span className="text-gray-500">Date:</span> {new Date(record.date).toLocaleDateString()}
+              </div>
+              <div className="col-span-2">
+                <span className="text-gray-500">Marked by:</span> {record.markedByName}
+              </div>
+              {record.excuseReason && (
+                <div className="col-span-2 mt-1">
+                  <span className="text-gray-500">Reason:</span>
+                  <p className="text-purple-600 bg-purple-50 p-2 rounded mt-1">{record.excuseReason}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop: Table view */}
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Date</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Student</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Class</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Status</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Marked By</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase whitespace-nowrap">Reason</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            {records.slice(0, 10).map((record) => (
+              <tr key={`${record.studentId}-${record.date}`} className="hover:bg-gray-50/50">
+                <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">
+                  {new Date(record.date).toLocaleDateString()}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{record.studentName}</p>
+                    <p className="text-xs text-gray-500">{record.studentId}</p>
+                  </div>
+                </td>
+                <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{record.className}</td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${
+                    record.status === 'present' ? 'bg-green-100 text-green-700' :
+                    record.status === 'absent' ? 'bg-red-100 text-red-700' :
+                    record.status === 'late' ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-purple-100 text-purple-700'
+                  }`}>
+                    {record.status === 'present' && <CheckCircle2 size={12} />}
+                    {record.status === 'absent' && <XCircle size={12} />}
+                    {record.status === 'late' && <Clock size={12} />}
+                    {record.status === 'excused' && <AlertCircle size={12} />}
+                    {record.status}
+                  </span>
+                </td>
+                <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{record.markedByName}</td>
+                <td className="px-6 py-4 text-sm text-gray-500 max-w-[200px]">
+                  <span className="truncate block">{record.excuseReason || '-'}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {records.length > 10 && (
+        <div className="px-4 sm:px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+          <p className="text-sm text-gray-500">Showing 10 of {records.length} records</p>
+          <button className="text-sm text-blue-600 hover:text-blue-700 font-medium whitespace-nowrap">
+            View All
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -318,14 +448,12 @@ export default function AttendanceOverview() {
       let records: AttendanceRecord[] = [];
       
       if (viewMode === 'daily') {
-        // Get all classes attendance for the day
         const classPromises = classes.map(cls => 
           attendanceService.getByClassAndDate(cls.id, selectedDate)
         );
         const results = await Promise.all(classPromises);
         records = results.flat();
       } else {
-        // Get date range
         records = await attendanceService.getByDateRange(dateRange.start, dateRange.end);
       }
       
@@ -345,7 +473,6 @@ export default function AttendanceOverview() {
     const late = attendanceRecords.filter(r => r.status === 'late').length;
     const excused = attendanceRecords.filter(r => r.status === 'excused').length;
     
-    // Group by class
     const classBreakdown: AttendanceSummary['classBreakdown'] = {};
     
     attendanceRecords.forEach(record => {
@@ -382,11 +509,10 @@ export default function AttendanceOverview() {
     };
   }, [attendanceRecords, selectedDate]);
 
-  // Generate trend data
+  // Generate trend data (Monday-Friday only)
   const trendData = useMemo((): AttendanceSummary[] => {
     if (viewMode !== 'daily') return [];
     
-    // Last 7 days
     const last7Days = [];
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
@@ -434,13 +560,13 @@ export default function AttendanceOverview() {
 
   return (
     <DashboardLayout activeTab="attendance">
-      <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+      <div className="min-h-screen bg-gray-50">
         
         {/* Header */}
-        <div className="mb-6">
+        <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 tracking-tight">
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
                 Attendance Overview
               </h1>
               <p className="text-sm sm:text-base text-gray-600 mt-1">
@@ -452,14 +578,14 @@ export default function AttendanceOverview() {
               <button
                 onClick={loadAttendance}
                 disabled={isLoading}
-                className="p-2.5 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50"
+                className="p-2.5 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 flex-shrink-0"
               >
                 <RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} />
               </button>
               
               <button
                 onClick={() => {/* Export functionality */}}
-                className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700"
+                className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 whitespace-nowrap"
               >
                 <Download size={18} />
                 <span className="hidden sm:inline">Export Report</span>
@@ -468,27 +594,29 @@ export default function AttendanceOverview() {
           </div>
         </div>
 
-        {/* View Mode Tabs */}
-        <div className="mb-6">
-          <div className="bg-white rounded-xl border border-gray-200 p-1 inline-flex">
-            {(['daily', 'weekly', 'monthly', 'class'] as ViewMode[]).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setViewMode(mode)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all ${
-                  viewMode === mode 
-                    ? 'bg-blue-600 text-white shadow-sm' 
-                    : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                {mode}
-              </button>
-            ))}
+        {/* Main Content */}
+        <div className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
+          
+          {/* View Mode Tabs */}
+          <div className="bg-white rounded-xl border border-gray-200 p-1 inline-flex w-full sm:w-auto overflow-x-auto">
+            <div className="flex gap-1 min-w-max">
+              {(['daily', 'weekly', 'monthly', 'class'] as ViewMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setViewMode(mode)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all whitespace-nowrap ${
+                    viewMode === mode 
+                      ? 'bg-blue-600 text-white shadow-sm' 
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
 
-        {/* Filters */}
-        <div className="mb-6">
+          {/* Filters */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <button
               onClick={() => setShowMobileFilters(!showMobileFilters)}
@@ -502,7 +630,7 @@ export default function AttendanceOverview() {
             </button>
 
             <div className={`p-4 ${showMobileFilters ? 'block' : 'hidden sm:block'}`}>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="flex flex-col sm:flex-row gap-3">
                 
                 {/* Date/Date Range */}
                 {viewMode === 'daily' ? (
@@ -510,21 +638,21 @@ export default function AttendanceOverview() {
                     type="date"
                     value={selectedDate}
                     onChange={(e) => setSelectedDate(e.target.value)}
-                    className="px-4 py-2.5 border border-gray-300 rounded-xl text-sm"
+                    className="w-full sm:w-auto px-4 py-2.5 border border-gray-300 rounded-xl text-sm"
                   />
                 ) : (
-                  <div className="flex gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                     <input
                       type="date"
                       value={dateRange.start}
                       onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-                      className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm"
+                      className="px-4 py-2.5 border border-gray-300 rounded-xl text-sm"
                     />
                     <input
                       type="date"
                       value={dateRange.end}
                       onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-                      className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm"
+                      className="px-4 py-2.5 border border-gray-300 rounded-xl text-sm"
                     />
                   </div>
                 )}
@@ -533,7 +661,7 @@ export default function AttendanceOverview() {
                 <select
                   value={selectedClass}
                   onChange={(e) => setSelectedClass(e.target.value)}
-                  className="px-4 py-2.5 border border-gray-300 rounded-xl text-sm bg-white"
+                  className="w-full sm:w-auto px-4 py-2.5 border border-gray-300 rounded-xl text-sm bg-white"
                 >
                   <option value="all">All Classes</option>
                   {classes.map(cls => (
@@ -542,7 +670,7 @@ export default function AttendanceOverview() {
                 </select>
 
                 {/* Search */}
-                <div className="relative">
+                <div className="relative flex-1">
                   <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
                     type="text"
@@ -555,134 +683,72 @@ export default function AttendanceOverview() {
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
-          <StatCard
-            title="Total Records"
-            value={summary.total}
-            subValue={`${summary.rate}% attendance rate`}
-            icon={<Users size={24} />}
-            color="blue"
-          />
-          <StatCard
-            title="Present"
-            value={summary.present}
-            subValue={`${summary.total > 0 ? Math.round((summary.present / summary.total) * 100) : 0}% of total`}
-            icon={<CheckCircle2 size={24} />}
-            color="green"
-          />
-          <StatCard
-            title="Absent"
-            value={summary.absent}
-            subValue={`${summary.total > 0 ? Math.round((summary.absent / summary.total) * 100) : 0}% of total`}
-            icon={<XCircle size={24} />}
-            color="red"
-          />
-          <StatCard
-            title="Late"
-            value={summary.late}
-            subValue={`${summary.total > 0 ? Math.round((summary.late / summary.total) * 100) : 0}% of total`}
-            icon={<Clock size={24} />}
-            color="yellow"
-          />
-          <StatCard
-            title="Excused"
-            value={summary.excused}
-            subValue={`${summary.total > 0 ? Math.round((summary.excused / summary.total) * 100) : 0}% of total`}
-            icon={<AlertCircle size={24} />}
-            color="purple"
-          />
-        </div>
-
-        {/* Charts and Tables */}
-        <div className="space-y-6">
-          {/* Trend Chart */}
-          {viewMode === 'daily' && trendData.length > 0 && (
-            <AttendanceChart data={trendData} />
-          )}
-
-          {/* Class Breakdown */}
-          {Object.keys(summary.classBreakdown).length > 0 && (
-            <ClassBreakdownTable data={summary.classBreakdown} />
-          )}
-
-          {/* Recent Activity */}
-          <RecentActivity records={filteredRecords} />
-
-          {/* Detailed Records Table */}
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
-              <h3 className="font-semibold text-gray-900">Detailed Records</h3>
-              <p className="text-sm text-gray-500 mt-0.5">All attendance entries</p>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Date</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Student</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Class</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Status</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Marked By</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Reason</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {filteredRecords.slice(0, 10).map((record) => (
-                    <tr key={`${record.studentId}-${record.date}`} className="hover:bg-gray-50/50">
-                      <td className="px-6 py-4 text-sm text-gray-700">
-                        {new Date(record.date).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">{record.studentName}</p>
-                          <p className="text-xs text-gray-500">{record.studentId}</p>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-700">{record.className}</td>
-                      <td className="px-6 py-4">
-                        <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${
-                          record.status === 'present' ? 'bg-green-100 text-green-700' :
-                          record.status === 'absent' ? 'bg-red-100 text-red-700' :
-                          record.status === 'late' ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-purple-100 text-purple-700'
-                        }`}>
-                          {record.status === 'present' && <CheckCircle2 size={12} />}
-                          {record.status === 'absent' && <XCircle size={12} />}
-                          {record.status === 'late' && <Clock size={12} />}
-                          {record.status === 'excused' && <AlertCircle size={12} />}
-                          {record.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-700">{record.markedByName}</td>
-                      <td className="px-6 py-4 text-sm text-gray-500">
-                        {record.excuseReason || '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {filteredRecords.length > 10 && (
-              <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                <p className="text-sm text-gray-500">Showing 10 of {filteredRecords.length} records</p>
-                <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-                  View All
-                </button>
-              </div>
-            )}
+          {/* Stats Cards - Responsive grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <StatCard
+              title="Total Records"
+              value={summary.total}
+              subValue={`${summary.rate}% rate`}
+              icon={<Users size={24} />}
+              color="blue"
+            />
+            <StatCard
+              title="Present"
+              value={summary.present}
+              subValue={`${summary.total > 0 ? Math.round((summary.present / summary.total) * 100) : 0}%`}
+              icon={<CheckCircle2 size={24} />}
+              color="green"
+            />
+            <StatCard
+              title="Absent"
+              value={summary.absent}
+              subValue={`${summary.total > 0 ? Math.round((summary.absent / summary.total) * 100) : 0}%`}
+              icon={<XCircle size={24} />}
+              color="red"
+            />
+            <StatCard
+              title="Late"
+              value={summary.late}
+              subValue={`${summary.total > 0 ? Math.round((summary.late / summary.total) * 100) : 0}%`}
+              icon={<Clock size={24} />}
+              color="yellow"
+            />
+            <StatCard
+              title="Excused"
+              value={summary.excused}
+              subValue={`${summary.total > 0 ? Math.round((summary.excused / summary.total) * 100) : 0}%`}
+              icon={<AlertCircle size={24} />}
+              color="purple"
+            />
           </div>
-        </div>
 
-        {/* Footer */}
-        <div className="mt-8 pt-6 border-t border-gray-200">
-          <p className="text-xs sm:text-sm text-gray-500">
-            Last updated: {new Date().toLocaleString()}
-          </p>
+          {/* Charts and Tables */}
+          <div className="space-y-4 sm:space-y-6">
+            
+            {/* Trend Chart - Mon-Fri only */}
+            {viewMode === 'daily' && trendData.length > 0 && (
+              <AttendanceChart data={trendData} />
+            )}
+
+            {/* Class Breakdown */}
+            {Object.keys(summary.classBreakdown).length > 0 && (
+              <ClassBreakdownTable data={summary.classBreakdown} />
+            )}
+
+            {/* Recent Activity */}
+            <RecentActivity records={filteredRecords} />
+
+            {/* Detailed Records */}
+            <DetailedRecords records={filteredRecords} />
+          </div>
+
+          {/* Footer */}
+          <div className="pt-4 border-t border-gray-200">
+            <p className="text-xs sm:text-sm text-gray-500">
+              Last updated: {new Date().toLocaleString()}
+            </p>
+          </div>
         </div>
       </div>
     </DashboardLayout>

@@ -1,5 +1,4 @@
-// @/pages/admin/AdminResultsAnalysis.tsx - FULLY CORRECTED VERSION
-
+// @/pages/admin/AdminResultsAnalysis.tsx - RESPONSIVE VERSION
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
@@ -94,18 +93,18 @@ interface SubjectPerformance {
   failRate: number;
 }
 
-// Types for PDF data (matches pdf-lib expected structure)
+// Types for PDF data
 interface SubjectMetrics {
   registered: number;
   sat: number;
   absent: number;
-  dist: number; // grades 1-2
-  merit: number; // grades 3-4
-  credit: number; // grades 5-6
-  pass: number; // grades 7-8
-  fail: number; // grade 9
-  quality: number; // grades 1-4
-  quantity: number; // grades 1-8
+  dist: number;
+  merit: number;
+  credit: number;
+  pass: number;
+  fail: number;
+  quality: number;
+  quantity: number;
 }
 
 interface SubjectData {
@@ -209,24 +208,24 @@ const StatCard = ({
   };
 
   return (
-    <div className={`rounded-xl border p-5 ${colors[color]} transition-all hover:shadow-md`}>
+    <div className={`rounded-xl border p-4 sm:p-5 ${colors[color]} transition-all hover:shadow-md h-full`}>
       <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm font-medium opacity-80">{title}</p>
-          <p className="text-3xl font-bold mt-1">{value}</p>
-          <p className="text-xs mt-1 opacity-70">{subValue}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs sm:text-sm font-medium opacity-80 truncate">{title}</p>
+          <p className="text-xl sm:text-2xl lg:text-3xl font-bold mt-1 truncate">{value}</p>
+          <p className="text-[10px] sm:text-xs mt-1 opacity-70 truncate">{subValue}</p>
         </div>
-        <div className="p-3 bg-white/50 rounded-lg">
-          <Icon size={24} className="opacity-80" />
+        <div className="p-2 sm:p-3 bg-white/50 rounded-lg ml-2 flex-shrink-0">
+          <Icon size={20} className="sm:w-6 sm:h-6 opacity-80" />
         </div>
       </div>
       {trend && (
-        <div className="mt-3 flex items-center gap-1 text-xs">
-          {trend.direction === 'up' && <TrendingUp size={14} className={trendColors.up} />}
-          {trend.direction === 'down' && <TrendingDown size={14} className={trendColors.down} />}
-          {trend.direction === 'stable' && <span className="w-3 h-3 rounded-full bg-gray-400"></span>}
-          <span className={trendColors[trend.direction]}>{trend.value}</span>
-          <span className="opacity-60">vs last term</span>
+        <div className="mt-2 sm:mt-3 flex items-center gap-1 text-[10px] sm:text-xs flex-wrap">
+          {trend.direction === 'up' && <TrendingUp size={12} className="sm:w-3.5 sm:h-3.5 text-green-600 flex-shrink-0" />}
+          {trend.direction === 'down' && <TrendingDown size={12} className="sm:w-3.5 sm:h-3.5 text-rose-600 flex-shrink-0" />}
+          {trend.direction === 'stable' && <span className="w-2 h-2 sm:w-3 sm:h-3 rounded-full bg-gray-400 flex-shrink-0"></span>}
+          <span className={`truncate ${trendColors[trend.direction]}`}>{trend.value}</span>
+          <span className="opacity-60 hidden sm:inline">vs last term</span>
         </div>
       )}
     </div>
@@ -246,36 +245,177 @@ const GradeBadge = ({ grade, size = 'md', showLabel = false }: { grade: number; 
   const { color, label } = getGradeInfo(grade);
   
   const sizes = {
-    sm: 'px-2 py-0.5 text-xs',
-    md: 'px-3 py-1 text-sm',
-    lg: 'px-4 py-2 text-base'
+    sm: 'px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-xs',
+    md: 'px-2 sm:px-3 py-1 text-xs sm:text-sm',
+    lg: 'px-3 sm:px-4 py-1.5 sm:py-2 text-sm sm:text-base'
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <span className={`${sizes[size]} ${color} text-white font-bold rounded-lg shadow-sm inline-block`}>
+    <div className="flex items-center gap-1 sm:gap-2">
+      <span className={`${sizes[size]} ${color} text-white font-bold rounded-lg shadow-sm inline-block whitespace-nowrap`}>
         {grade}
       </span>
-      {showLabel && <span className="text-xs text-gray-600">{label}</span>}
+      {showLabel && <span className="text-[10px] sm:text-xs text-gray-600 truncate">{label}</span>}
     </div>
   );
 };
 
-// ==================== SKELETON COMPONENTS ====================
-const MetricSkeleton = () => (
-  <div className="bg-white rounded-2xl border border-gray-200 p-6 animate-pulse">
-    <div className="flex items-start justify-between">
-      <div className="flex-1">
-        <div className="h-4 bg-gray-200 rounded w-24 mb-2"></div>
-        <div className="h-8 bg-gray-300 rounded w-16"></div>
-      </div>
-      <div className="p-3 bg-gray-100 rounded-xl">
-        <div className="w-6 h-6 bg-gray-300 rounded"></div>
-      </div>
+// ==================== MOBILE CARD FOR GRADE DISTRIBUTION ====================
+const GradeDistributionMobileCard = ({ distribution }: { distribution: GradeDistribution[] }) => {
+  return (
+    <div className="sm:hidden space-y-3">
+      {distribution.map((grade) => (
+        <div key={grade.grade} className="bg-white rounded-lg border border-gray-200 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <GradeBadge grade={grade.grade} size="sm" />
+              <span className="text-xs capitalize text-gray-600">{grade.passStatus}</span>
+            </div>
+            <span className="text-sm font-semibold text-gray-900">{grade.percentage}%</span>
+          </div>
+          
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div>
+              <div className="text-base font-semibold text-blue-600">{grade.boys}</div>
+              <div className="text-[10px] text-gray-500">Boys</div>
+            </div>
+            <div>
+              <div className="text-base font-semibold text-rose-600">{grade.girls}</div>
+              <div className="text-[10px] text-gray-500">Girls</div>
+            </div>
+            <div>
+              <div className="text-base font-semibold text-gray-900">{grade.total}</div>
+              <div className="text-[10px] text-gray-500">Total</div>
+            </div>
+          </div>
+          
+          <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-blue-500 rounded-full"
+              style={{ width: `${grade.percentage}%` }}
+            />
+          </div>
+        </div>
+      ))}
     </div>
-    <div className="h-2 bg-gray-200 rounded w-32 mt-4"></div>
-  </div>
-);
+  );
+};
+
+// ==================== MOBILE CARD FOR CLASS PERFORMANCE ====================
+const ClassPerformanceMobileCard = ({ classes }: { classes: ClassPerformance[] }) => {
+  return (
+    <div className="sm:hidden space-y-3">
+      {classes.map((cls) => {
+        const topGrade = cls.gradeDistribution.length > 0 
+          ? cls.gradeDistribution.reduce((min, g) => g.grade < min.grade ? g : min).grade
+          : 9;
+        
+        return (
+          <div key={cls.classId} className="bg-white rounded-lg border border-gray-200 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-semibold text-gray-900 truncate max-w-[150px]">{cls.className}</h4>
+              <GradeBadge grade={topGrade} size="sm" />
+            </div>
+            
+            <div className="grid grid-cols-2 gap-3 mb-2">
+              <div>
+                <div className="text-xs text-gray-500">Students</div>
+                <div className="flex items-center gap-1">
+                  <span className="text-base font-semibold text-gray-900">{cls.candidates.total}</span>
+                  <span className="text-[10px]">
+                    <span className="text-blue-600">B:{cls.candidates.boys}</span>
+                    <span className="text-gray-400 mx-0.5">/</span>
+                    <span className="text-rose-600">G:{cls.candidates.girls}</span>
+                  </span>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Quality</div>
+                <span className={`text-base font-semibold ${
+                  cls.performance.quality.percentage >= 70 ? 'text-green-600' :
+                  cls.performance.quality.percentage >= 50 ? 'text-amber-600' : 'text-rose-600'
+                }`}>
+                  {cls.performance.quality.percentage}%
+                </span>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-xs text-gray-500">Quantity</div>
+                <span className="text-base font-semibold text-blue-600">
+                  {cls.performance.quantity.percentage}%
+                </span>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Fail</div>
+                <span className={`text-base font-semibold ${
+                  cls.performance.fail.percentage <= 5 ? 'text-green-600' :
+                  cls.performance.fail.percentage <= 10 ? 'text-amber-600' : 'text-rose-600'
+                }`}>
+                  {cls.performance.fail.percentage}%
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ==================== MOBILE CARD FOR SUBJECT PERFORMANCE ====================
+const SubjectPerformanceMobileCard = ({ subjects }: { subjects: SubjectPerformance[] }) => {
+  return (
+    <div className="sm:hidden space-y-3">
+      {subjects.map((subject) => (
+        <div key={subject.subject} className="bg-white rounded-lg border border-gray-200 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-semibold text-gray-900 truncate">{subject.subject}</h4>
+              <p className="text-[10px] text-gray-500 truncate">{subject.teacher}</p>
+            </div>
+            <GradeBadge grade={Math.round(subject.averageGrade)} size="sm" />
+          </div>
+          
+          <div className="grid grid-cols-4 gap-1 text-center mb-2">
+            <div>
+              <div className="text-xs font-semibold text-gray-900">{subject.classCount}</div>
+              <div className="text-[8px] text-gray-500">Classes</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-gray-900">{subject.studentCount}</div>
+              <div className="text-[8px] text-gray-500">Students</div>
+            </div>
+            <div>
+              <div className={`text-xs font-semibold ${
+                subject.qualityRate >= 70 ? 'text-green-600' :
+                subject.qualityRate >= 50 ? 'text-amber-600' : 'text-rose-600'
+              }`}>
+                {subject.qualityRate}%
+              </div>
+              <div className="text-[8px] text-gray-500">Quality</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-blue-600">{subject.quantityRate}%</div>
+              <div className="text-[8px] text-gray-500">Qty</div>
+            </div>
+          </div>
+          
+          <div className="flex items-center justify-between text-[10px]">
+            <span className="text-gray-500">Fail rate:</span>
+            <span className={`font-semibold ${
+              subject.failRate <= 5 ? 'text-green-600' :
+              subject.failRate <= 10 ? 'text-amber-600' : 'text-rose-600'
+            }`}>
+              {subject.failRate}%
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 // ==================== MAIN COMPONENT ====================
 export default function AdminResultsAnalysis() {
@@ -333,7 +473,7 @@ export default function AdminResultsAnalysis() {
     setNotifications(prev => prev.filter(n => n.id !== id));
   }, []);
 
-  // ==================== FILTER VALID RESULTS (MUST BE BEFORE USAGE) ====================
+  // ==================== FILTER VALID RESULTS ====================
   
   // Filter valid end of term results
   const validEndOfTermResults = useMemo(() => {
@@ -345,7 +485,7 @@ export default function AdminResultsAnalysis() {
     );
   }, [results]);
 
-  // ==================== CORRECTED STUDENT DATA MAPPING ====================
+  // ==================== STUDENT DATA MAPPING ====================
   
   // Map both document IDs and custom student IDs to gender
   const studentDataMap = useMemo(() => {
@@ -392,7 +532,7 @@ export default function AdminResultsAnalysis() {
     return { docIdToGender, customIdToGender, docIdToCustomId, customIdToDocId };
   }, [learners]);
 
-  // Helper function to get gender from a student ID (could be document ID or custom ID)
+  // Helper function to get gender from a student ID
   const getStudentGender = useCallback((studentId: string): 'M' | 'F' | undefined => {
     // Method 1: Try as document ID
     let gender = studentDataMap.docIdToGender.get(studentId);
@@ -416,64 +556,6 @@ export default function AdminResultsAnalysis() {
     return gender;
   }, [learners, studentDataMap]);
 
-  // Debug function to check mappings
-  const checkMappings = useCallback(() => {
-    console.log('===== CHECKING STUDENT MAPPINGS =====');
-    console.log('Total learners:', learners.length);
-    console.log('Total results:', results.length);
-    console.log('Valid end of term results:', validEndOfTermResults.length);
-    
-    // Take first 5 results and try to find their gender
-    const sampleResults = validEndOfTermResults.slice(0, 5);
-    
-    sampleResults.forEach((result, index) => {
-      console.log(`\nResult ${index + 1}:`);
-      console.log('  Student ID in result:', result.studentId);
-      console.log('  Student name:', result.studentName);
-      
-      // Try to find by document ID
-      const gender1 = studentDataMap.docIdToGender.get(result.studentId);
-      console.log('  Gender by docId:', gender1 || 'Not found');
-      
-      // Try to find by custom ID
-      const gender2 = studentDataMap.customIdToGender.get(result.studentId);
-      console.log('  Gender by customId:', gender2 || 'Not found');
-      
-      // Get final gender using helper
-      const finalGender = getStudentGender(result.studentId);
-      console.log('  Final gender:', finalGender || 'Not found');
-      
-      // Try to find learner directly
-      const learner = learners.find(l => 
-        l.id === result.studentId || 
-        l.studentId === result.studentId
-      );
-      
-      if (learner) {
-        console.log('  Found learner:', {
-          id: learner.id,
-          studentId: learner.studentId,
-          name: learner.fullName,
-          gender: learner.gender
-        });
-      } else {
-        console.log('  No matching learner found in learners array');
-      }
-    });
-    
-    console.log('\nMap sizes:');
-    console.log('  docIdToGender:', studentDataMap.docIdToGender.size);
-    console.log('  customIdToGender:', studentDataMap.customIdToGender.size);
-    console.log('  Total learners with gender:', learners.filter(l => l.gender).length);
-  }, [learners, results, validEndOfTermResults, studentDataMap, getStudentGender]);
-
-  // Run debug on mount if showDebug is true
-  useEffect(() => {
-    if (showDebug && results.length > 0 && learners.length > 0) {
-      checkMappings();
-    }
-  }, [showDebug, results, learners, checkMappings]);
-
   // Group results by subject for quick access
   const subjectGroups = useMemo(() => {
     const groups = new Map<string, StudentResult[]>();
@@ -485,7 +567,7 @@ export default function AdminResultsAnalysis() {
     return groups;
   }, [validEndOfTermResults]);
 
-  // Get subject name map from teacher assignments when a specific class is selected
+  // Get subject name map from teacher assignments
   const subjectNameMap = useMemo(() => {
     const map = new Map<string, string>();
     if (selectedClass !== 'all') {
@@ -791,15 +873,15 @@ export default function AdminResultsAnalysis() {
         const total = resultsArray.length;
         
         // Grade distribution using PDF legend ranges
-        const dist = resultsArray.filter(r => r.grade <= 2).length;      // DIST (1-2)
-        const merit = resultsArray.filter(r => r.grade >= 3 && r.grade <= 4).length; // MERIT (3-4)
-        const credit = resultsArray.filter(r => r.grade >= 5 && r.grade <= 6).length; // CREDIT (5-6)
-        const pass = resultsArray.filter(r => r.grade >= 7 && r.grade <= 8).length;   // PASS (7-8)
-        const fail = resultsArray.filter(r => r.grade === 9).length;     // FAIL (9)
+        const dist = resultsArray.filter(r => r.grade <= 2).length;
+        const merit = resultsArray.filter(r => r.grade >= 3 && r.grade <= 4).length;
+        const credit = resultsArray.filter(r => r.grade >= 5 && r.grade <= 6).length;
+        const pass = resultsArray.filter(r => r.grade >= 7 && r.grade <= 8).length;
+        const fail = resultsArray.filter(r => r.grade === 9).length;
         
         // Quality and quantity passes as per PDF legend
-        const quality = resultsArray.filter(r => r.grade <= 4).length;   // QLTY (1-4)
-        const quantity = resultsArray.filter(r => r.grade <= 8).length;  // QTY (1-8)
+        const quality = resultsArray.filter(r => r.grade <= 4).length;
+        const quantity = resultsArray.filter(r => r.grade <= 8).length;
 
         return {
           registered: total,
@@ -824,7 +906,7 @@ export default function AdminResultsAnalysis() {
                             subjectResults[0]?.subjectName || 
                             subjectId;
         
-        // Split by gender using the helper function
+        // Split by gender
         const boysResults: StudentResult[] = [];
         const girlsResults: StudentResult[] = [];
         const unknownResults: StudentResult[] = [];
@@ -845,7 +927,7 @@ export default function AdminResultsAnalysis() {
         if (boysResults.length > 0 || girlsResults.length > 0 || unknownResults.length > 0) {
           subjects.push({
             name: displayName,
-            boys: calculateMetrics([...boysResults, ...unknownResults]), // Put unknown in boys as fallback
+            boys: calculateMetrics([...boysResults, ...unknownResults]),
             girls: calculateMetrics(girlsResults)
           });
         }
@@ -877,8 +959,6 @@ export default function AdminResultsAnalysis() {
       const { generateResultsAnalysisPDF } = await import('@/services/pdf/resultsAnalysisPDFLib');
       const pdfBytes = await generateResultsAnalysisPDF(pdfData);
 
-      // FIXED: Convert Uint8Array to Blob using ArrayBuffer approach
-      // This is the most reliable method across all browsers
       const arrayBuffer = pdfBytes.buffer.slice(
         pdfBytes.byteOffset,
         pdfBytes.byteOffset + pdfBytes.byteLength
@@ -955,15 +1035,15 @@ export default function AdminResultsAnalysis() {
   if (isLoading || classesLoading || learnersLoading) {
     return (
       <DashboardLayout activeTab="results">
-        <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
-          <div className="animate-pulse space-y-6">
-            <div className="h-8 bg-gray-200 rounded w-64"></div>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <div className="min-h-screen bg-gray-50 p-3 sm:p-6 lg:p-8">
+          <div className="animate-pulse space-y-4 sm:space-y-6">
+            <div className="h-6 sm:h-8 bg-gray-200 rounded w-48 sm:w-64"></div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4">
               {[1,2,3,4].map(i => (
-                <div key={i} className="h-32 bg-gray-100 rounded-xl"></div>
+                <div key={i} className="h-24 sm:h-32 bg-gray-100 rounded-xl"></div>
               ))}
             </div>
-            <div className="h-96 bg-gray-100 rounded-xl"></div>
+            <div className="h-64 sm:h-96 bg-gray-100 rounded-xl"></div>
           </div>
         </div>
       </DashboardLayout>
@@ -972,10 +1052,10 @@ export default function AdminResultsAnalysis() {
 
   return (
     <DashboardLayout activeTab="results">
-      <div className="min-h-screen bg-gray-50 p-3 sm:p-6 lg:p-8 transition-all duration-200">
+      <div className="min-h-screen bg-gray-50 p-3 sm:p-6 lg:p-8">
         
         {/* Notifications */}
-        <div className="fixed top-4 right-4 z-50 space-y-2">
+        <div className="fixed top-4 right-4 z-50 space-y-2 max-w-[90vw] sm:max-w-md">
           {notifications.map(notification => (
             <Notification
               key={notification.id}
@@ -988,18 +1068,18 @@ export default function AdminResultsAnalysis() {
         </div>
 
         {/* Header */}
-        <div className="mb-6 sm:mb-8">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 tracking-tight">
+        <div className="mb-4 sm:mb-6 lg:mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 tracking-tight truncate">
                 School Results Analysis
               </h1>
-              <p className="text-sm sm:text-base text-gray-600 mt-1 sm:mt-2 flex items-center gap-2 flex-wrap">
-                <School size={16} className="text-gray-400" />
-                <span>End of Term Performance • {selectedTerm} {selectedYear}</span>
+              <p className="text-xs sm:text-sm text-gray-600 mt-1 flex items-center gap-1 sm:gap-2 flex-wrap">
+                <School size={14} className="text-gray-400 flex-shrink-0" />
+                <span className="truncate">End of Term Performance • {selectedTerm} {selectedYear}</span>
                 {isFetching && (
-                  <span className="inline-flex items-center gap-1.5 text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full text-xs">
-                    <Loader2 size={12} className="animate-spin" />
+                  <span className="inline-flex items-center gap-1 text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full text-[10px] sm:text-xs whitespace-nowrap">
+                    <Loader2 size={10} className="animate-spin" />
                     updating
                   </span>
                 )}
@@ -1007,49 +1087,52 @@ export default function AdminResultsAnalysis() {
             </div>
             
             {/* Action Buttons */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
               <button
                 onClick={handleDownloadPDF}
                 disabled={validEndOfTermResults.length === 0 || isFetching || isDownloading}
-                className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm whitespace-nowrap"
               >
                 {isDownloading ? (
-                  <Loader2 size={18} className="animate-spin" />
+                  <Loader2 size={16} className="animate-spin" />
                 ) : (
-                  <Download size={18} />
+                  <Download size={16} />
                 )}
-                <span className={isMobile ? 'hidden sm:inline' : ''}>
+                <span className="hidden sm:inline">
                   {isDownloading ? 'Generating...' : 'Download PDF'}
+                </span>
+                <span className="sm:hidden">
+                  PDF
                 </span>
               </button>
               
               <button
                 onClick={handleRefresh}
                 disabled={isFetching}
-                className="p-2.5 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
+                className="p-2 sm:p-2.5 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
                 title="Refresh"
               >
-                <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
+                <RefreshCw size={16} className={isFetching ? 'animate-spin' : ''} />
               </button>
 
               {/* Debug toggle button */}
               <button
                 onClick={() => setShowDebug(!showDebug)}
-                className={`p-2.5 border rounded-xl transition-colors ${
+                className={`p-2 sm:p-2.5 border rounded-xl transition-colors ${
                   showDebug 
                     ? 'bg-blue-100 border-blue-300 text-blue-700' 
                     : 'border-gray-300 text-gray-700 hover:bg-gray-50'
                 }`}
                 title="Toggle Debug"
               >
-                <Eye size={18} />
+                <Eye size={16} />
               </button>
             </div>
           </div>
         </div>
 
         {/* School Overview Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 lg:gap-4 mb-4 sm:mb-6 lg:mb-8">
           <StatCard
             title="Total Students"
             value={schoolMetrics.totalStudents.toString()}
@@ -1081,53 +1164,53 @@ export default function AdminResultsAnalysis() {
         </div>
 
         {/* Filters */}
-        <div className="mb-8">
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="mb-4 sm:mb-6 lg:mb-8">
+          <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
             
             {/* Mobile Filter Toggle */}
-            {isMobile && (
-              <button
-                onClick={() => setShowMobileFilters(!showMobileFilters)}
-                className="w-full flex items-center justify-between p-4 bg-white"
-              >
-                <div className="flex items-center gap-2">
-                  <Filter size={18} className="text-gray-400" />
-                  <span className="font-medium text-gray-700">
-                    {selectedClass !== 'all' ? `Class: ${selectedClass}` : 'Filter by class'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {selectedClass !== 'all' && (
-                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-                  )}
-                  <ChevronDown 
-                    size={18} 
-                    className={`text-gray-500 transition-transform duration-200 ${showMobileFilters ? 'rotate-180' : ''}`} 
-                  />
-                </div>
-              </button>
-            )}
+            <button
+              onClick={() => setShowMobileFilters(!showMobileFilters)}
+              className="w-full flex items-center justify-between p-3 sm:p-4 bg-white sm:hidden"
+            >
+              <div className="flex items-center gap-2">
+                <Filter size={16} className="text-gray-400" />
+                <span className="text-sm font-medium text-gray-700 truncate max-w-[200px]">
+                  {selectedClass !== 'all' 
+                    ? `Class: ${classes.find(c => c.id === selectedClass)?.name || selectedClass}` 
+                    : 'All Classes'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {selectedClass !== 'all' && (
+                  <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
+                )}
+                <ChevronDown 
+                  size={16} 
+                  className={`text-gray-500 transition-transform duration-200 ${showMobileFilters ? 'rotate-180' : ''}`} 
+                />
+              </div>
+            </button>
 
             {/* Filter Content */}
-            <div className={`p-4 sm:p-6 ${isMobile && !showMobileFilters ? 'hidden' : 'block'}`}>
-              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className={`p-3 sm:p-4 lg:p-6 ${showMobileFilters ? 'block' : 'hidden sm:block'}`}>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
                 <div className="flex items-center gap-2">
-                  <div className="p-2 bg-blue-50 rounded-lg">
-                    <Filter size={16} className="text-blue-600" />
+                  <div className="p-1.5 sm:p-2 bg-blue-50 rounded-lg">
+                    <Filter size={14} className="text-blue-600" />
                   </div>
-                  <span className="text-sm font-medium text-gray-700">Filter by:</span>
+                  <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">Filter by:</span>
                 </div>
                 
-                <div className="flex flex-col sm:flex-row gap-3 flex-1">
+                <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 flex-1">
                   {/* Class Filter */}
                   <div className="relative flex-1">
                     <select
                       value={selectedClass}
                       onChange={(e) => handleFilterChange('class', e.target.value)}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl
+                      className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg sm:rounded-xl
                                focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                               appearance-none bg-white cursor-pointer text-sm
-                               hover:border-gray-400 transition-colors"
+                               appearance-none bg-white cursor-pointer text-xs sm:text-sm
+                               hover:border-gray-400 transition-colors pr-8"
                     >
                       <option value="all">All Classes</option>
                       {classes.map(cls => (
@@ -1136,44 +1219,44 @@ export default function AdminResultsAnalysis() {
                         </option>
                       ))}
                     </select>
-                    <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                      <ChevronDown size={16} className="text-gray-400" />
+                    <div className="absolute right-2 sm:right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
+                      <ChevronDown size={14} className="text-gray-400" />
                     </div>
                   </div>
 
                   {/* Term Filter */}
-                  <div className="relative sm:w-40">
+                  <div className="relative sm:w-36 lg:w-40">
                     <select
                       value={selectedTerm}
                       onChange={(e) => handleFilterChange('term', e.target.value)}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl
+                      className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg sm:rounded-xl
                                focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                               appearance-none bg-white cursor-pointer text-sm"
+                               appearance-none bg-white cursor-pointer text-xs sm:text-sm pr-8"
                     >
                       <option value="Term 1">Term 1</option>
                       <option value="Term 2">Term 2</option>
                       <option value="Term 3">Term 3</option>
                     </select>
-                    <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                      <ChevronDown size={16} className="text-gray-400" />
+                    <div className="absolute right-2 sm:right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
+                      <ChevronDown size={14} className="text-gray-400" />
                     </div>
                   </div>
 
                   {/* Year Filter */}
-                  <div className="relative sm:w-32">
+                  <div className="relative sm:w-28 lg:w-32">
                     <select
                       value={selectedYear}
                       onChange={(e) => handleFilterChange('year', Number(e.target.value))}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl
+                      className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg sm:rounded-xl
                                focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                               appearance-none bg-white cursor-pointer text-sm"
+                               appearance-none bg-white cursor-pointer text-xs sm:text-sm pr-8"
                     >
                       {years.map(year => (
                         <option key={year} value={year}>{year}</option>
                       ))}
                     </select>
-                    <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                      <ChevronDown size={16} className="text-gray-400" />
+                    <div className="absolute right-2 sm:right-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
+                      <ChevronDown size={14} className="text-gray-400" />
                     </div>
                   </div>
                 </div>
@@ -1181,16 +1264,16 @@ export default function AdminResultsAnalysis() {
 
               {/* Active Filter Indicator */}
               {selectedClass !== 'all' && (
-                <div className="mt-3 pt-3 border-t border-gray-100">
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-gray-600">Currently showing:</span>
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium">
-                      <Filter size={12} />
+                <div className="mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-gray-100">
+                  <div className="flex items-center gap-2 text-xs sm:text-sm">
+                    <span className="text-gray-600 whitespace-nowrap">Currently showing:</span>
+                    <span className="inline-flex items-center gap-1 px-2 sm:px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-[10px] sm:text-xs font-medium truncate max-w-[200px]">
+                      <Filter size={10} />
                       {classes.find(c => c.id === selectedClass)?.name || selectedClass}
                     </span>
                     <button
                       onClick={() => handleFilterChange('class', 'all')}
-                      className="text-xs text-gray-500 hover:text-gray-700 hover:underline ml-1"
+                      className="text-[10px] sm:text-xs text-gray-500 hover:text-gray-700 hover:underline ml-1 whitespace-nowrap"
                     >
                       Clear filter
                     </button>
@@ -1201,53 +1284,57 @@ export default function AdminResultsAnalysis() {
           </div>
         </div>
 
-        {/* Main Content - Tables Only */}
+        {/* Main Content */}
         {validEndOfTermResults.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 rounded-full mb-4">
-              <FileText className="text-gray-400" size={32} />
+          <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 p-8 sm:p-12 text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gray-100 rounded-full mb-3 sm:mb-4">
+              <FileText className="text-gray-400" size={24} />
             </div>
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">No Results Available</h3>
-            <p className="text-gray-600 max-w-md mx-auto">
+            <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mb-1 sm:mb-2">No Results Available</h3>
+            <p className="text-sm sm:text-base text-gray-600 max-w-md mx-auto">
               {selectedClass !== 'all' 
                 ? `No end of term results found for ${classes.find(c => c.id === selectedClass)?.name}.`
                 : 'No end of term results have been entered yet.'}
             </p>
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className="space-y-4 sm:space-y-6 lg:space-y-8">
             
-            {/* Grade Distribution TABLE */}
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
-                <div className="flex items-center justify-between">
+            {/* Grade Distribution */}
+            <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 overflow-hidden">
+              <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <div>
-                    <h3 className="font-semibold text-gray-900">Grade Distribution</h3>
-                    <p className="text-sm text-gray-500 mt-0.5">Overall performance across all grades with gender breakdown</p>
+                    <h3 className="text-sm sm:text-base font-semibold text-gray-900">Grade Distribution</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Overall performance with gender breakdown</p>
                   </div>
-                  <div className="flex items-center gap-4 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="w-3 h-3 bg-blue-500 rounded-full"></span>
-                      <span>Boys: {gradeDistribution.reduce((sum, g) => sum + g.boys, 0)}</span>
+                  <div className="flex items-center gap-3 sm:gap-4 text-xs">
+                    <div className="flex items-center gap-1 sm:gap-2">
+                      <span className="w-2 h-2 sm:w-3 sm:h-3 bg-blue-500 rounded-full"></span>
+                      <span className="whitespace-nowrap">Boys: {gradeDistribution.reduce((sum, g) => sum + g.boys, 0)}</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-3 h-3 bg-rose-500 rounded-full"></span>
-                      <span>Girls: {gradeDistribution.reduce((sum, g) => sum + g.girls, 0)}</span>
+                    <div className="flex items-center gap-1 sm:gap-2">
+                      <span className="w-2 h-2 sm:w-3 sm:h-3 bg-rose-500 rounded-full"></span>
+                      <span className="whitespace-nowrap">Girls: {gradeDistribution.reduce((sum, g) => sum + g.girls, 0)}</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
+              {/* Mobile Card View */}
+              <GradeDistributionMobileCard distribution={gradeDistribution} />
+
+              {/* Desktop Table View */}
+              <div className="hidden sm:block overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Grade</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Boys</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Girls</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Total</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Percentage</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Grade</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Status</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Boys</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Girls</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Total</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Percentage</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
@@ -1256,21 +1343,21 @@ export default function AdminResultsAnalysis() {
                         <td className="px-6 py-4">
                           <GradeBadge grade={grade.grade} size="sm" showLabel={false} />
                         </td>
-                        <td className="px-6 py-4 text-sm capitalize text-gray-700">
+                        <td className="px-6 py-4 text-sm capitalize text-gray-700 whitespace-nowrap">
                           {grade.passStatus}
                         </td>
-                        <td className="px-6 py-4 text-sm font-medium text-blue-600">
+                        <td className="px-6 py-4 text-sm font-medium text-blue-600 whitespace-nowrap">
                           {grade.boys}
                         </td>
-                        <td className="px-6 py-4 text-sm font-medium text-rose-600">
+                        <td className="px-6 py-4 text-sm font-medium text-rose-600 whitespace-nowrap">
                           {grade.girls}
                         </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-gray-900">
+                        <td className="px-6 py-4 text-sm font-semibold text-gray-900 whitespace-nowrap">
                           {grade.total}
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-gray-700">{grade.percentage}%</span>
+                            <span className="text-sm font-medium text-gray-700 whitespace-nowrap">{grade.percentage}%</span>
                             <div className="w-16 h-2 bg-gray-100 rounded-full overflow-hidden">
                               <div 
                                 className="h-full bg-blue-500 rounded-full"
@@ -1284,14 +1371,14 @@ export default function AdminResultsAnalysis() {
                   </tbody>
                   <tfoot className="bg-gray-50 border-t border-gray-200">
                     <tr>
-                      <td colSpan={2} className="px-6 py-3 text-sm font-semibold text-gray-900">Total Students</td>
-                      <td className="px-6 py-3 text-sm font-semibold text-blue-600">
+                      <td colSpan={2} className="px-6 py-3 text-sm font-semibold text-gray-900 whitespace-nowrap">Total Students</td>
+                      <td className="px-6 py-3 text-sm font-semibold text-blue-600 whitespace-nowrap">
                         {gradeDistribution.reduce((sum, g) => sum + g.boys, 0)}
                       </td>
-                      <td className="px-6 py-3 text-sm font-semibold text-rose-600">
+                      <td className="px-6 py-3 text-sm font-semibold text-rose-600 whitespace-nowrap">
                         {gradeDistribution.reduce((sum, g) => sum + g.girls, 0)}
                       </td>
-                      <td className="px-6 py-3 text-sm font-semibold text-gray-900">
+                      <td className="px-6 py-3 text-sm font-semibold text-gray-900 whitespace-nowrap">
                         {gradeDistribution.reduce((sum, g) => sum + g.total, 0)}
                       </td>
                       <td className="px-6 py-3"></td>
@@ -1301,25 +1388,29 @@ export default function AdminResultsAnalysis() {
               </div>
             </div>
 
-            {/* Class Performance Summary Table */}
+            {/* Class Performance Summary */}
             {classPerformance.length > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
-                  <h3 className="font-semibold text-gray-900">Class Performance Summary</h3>
-                  <p className="text-sm text-gray-500 mt-0.5">Quick overview of all classes</p>
+              <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+                  <h3 className="text-sm sm:text-base font-semibold text-gray-900">Class Performance Summary</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Quick overview of all classes</p>
                 </div>
 
-                <div className="overflow-x-auto">
+                {/* Mobile Card View */}
+                <ClassPerformanceMobileCard classes={classPerformance} />
+
+                {/* Desktop Table View */}
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full">
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Class</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Students</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Boys/Girls</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Quality</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Quantity</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Fail</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Top Grade</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Class</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Students</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Boys/Girls</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Quality</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Quantity</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Fail</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Top Grade</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
@@ -1330,14 +1421,14 @@ export default function AdminResultsAnalysis() {
                         
                         return (
                           <tr key={cls.classId} className="hover:bg-gray-50/50 transition-colors">
-                            <td className="px-6 py-4 text-sm font-medium text-gray-900">{cls.className}</td>
-                            <td className="px-6 py-4 text-sm text-gray-700">{cls.candidates.total}</td>
-                            <td className="px-6 py-4 text-sm">
+                            <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{cls.className}</td>
+                            <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{cls.candidates.total}</td>
+                            <td className="px-6 py-4 text-sm whitespace-nowrap">
                               <span className="text-blue-600 font-medium">{cls.candidates.boys}</span>
                               <span className="text-gray-400 mx-1">/</span>
                               <span className="text-rose-600 font-medium">{cls.candidates.girls}</span>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-4 whitespace-nowrap">
                               <span className={`text-sm font-semibold ${
                                 cls.performance.quality.percentage >= 70 ? 'text-green-600' :
                                 cls.performance.quality.percentage >= 50 ? 'text-amber-600' : 'text-rose-600'
@@ -1345,12 +1436,12 @@ export default function AdminResultsAnalysis() {
                                 {cls.performance.quality.percentage}%
                               </span>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-4 whitespace-nowrap">
                               <span className="text-sm font-semibold text-blue-600">
                                 {cls.performance.quantity.percentage}%
                               </span>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-4 whitespace-nowrap">
                               <span className={`text-sm font-semibold ${
                                 cls.performance.fail.percentage <= 5 ? 'text-green-600' :
                                 cls.performance.fail.percentage <= 10 ? 'text-amber-600' : 'text-rose-600'
@@ -1358,7 +1449,7 @@ export default function AdminResultsAnalysis() {
                                 {cls.performance.fail.percentage}%
                               </span>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-4 whitespace-nowrap">
                               <GradeBadge grade={topGrade} size="sm" />
                             </td>
                           </tr>
@@ -1372,37 +1463,41 @@ export default function AdminResultsAnalysis() {
 
             {/* Subject Performance Table */}
             {subjectPerformance.length > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
-                  <h3 className="font-semibold text-gray-900">Subject Performance</h3>
-                  <p className="text-sm text-gray-500 mt-0.5">Performance metrics by subject</p>
+              <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+                  <h3 className="text-sm sm:text-base font-semibold text-gray-900">Subject Performance</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Performance metrics by subject</p>
                 </div>
 
-                <div className="overflow-x-auto">
+                {/* Mobile Card View */}
+                <SubjectPerformanceMobileCard subjects={subjectPerformance} />
+
+                {/* Desktop Table View */}
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full">
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Subject</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Teacher</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Classes</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Students</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Avg Grade</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Quality</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Quantity</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Fail</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Subject</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Teacher</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Classes</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Students</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Avg Grade</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Quality</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Quantity</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Fail</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                       {subjectPerformance.map((subject) => (
                         <tr key={subject.subject} className="hover:bg-gray-50/50 transition-colors">
-                          <td className="px-6 py-4 text-sm font-medium text-gray-900">{subject.subject}</td>
-                          <td className="px-6 py-4 text-sm text-gray-700">{subject.teacher}</td>
-                          <td className="px-6 py-4 text-sm text-gray-700">{subject.classCount}</td>
-                          <td className="px-6 py-4 text-sm text-gray-700">{subject.studentCount}</td>
-                          <td className="px-6 py-4">
+                          <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{subject.subject}</td>
+                          <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{subject.teacher}</td>
+                          <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{subject.classCount}</td>
+                          <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{subject.studentCount}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
                             <GradeBadge grade={Math.round(subject.averageGrade)} size="sm" />
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-6 py-4 whitespace-nowrap">
                             <span className={`text-sm font-semibold ${
                               subject.qualityRate >= 70 ? 'text-green-600' :
                               subject.qualityRate >= 50 ? 'text-amber-600' : 'text-rose-600'
@@ -1410,12 +1505,12 @@ export default function AdminResultsAnalysis() {
                               {subject.qualityRate}%
                             </span>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-6 py-4 whitespace-nowrap">
                             <span className="text-sm font-semibold text-blue-600">
                               {subject.quantityRate}%
                             </span>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-6 py-4 whitespace-nowrap">
                             <span className={`text-sm font-semibold ${
                               subject.failRate <= 5 ? 'text-green-600' :
                               subject.failRate <= 10 ? 'text-amber-600' : 'text-rose-600'
@@ -1434,13 +1529,12 @@ export default function AdminResultsAnalysis() {
         )}
 
         {/* Footer */}
-        <div className="mt-8 pt-6 border-t border-gray-200">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <p className="text-xs sm:text-sm text-gray-500">
+        <div className="mt-4 sm:mt-6 lg:mt-8 pt-4 sm:pt-6 border-t border-gray-200">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+            <p className="text-[10px] sm:text-xs text-gray-500">
               {validEndOfTermResults.length > 0 ? (
                 <>
                   <span className="font-medium">Data source:</span> End of Term Results • 
-                  <span className="font-medium ml-1">Last updated:</span> Just now •
                   <span className="font-medium ml-1">Total assessments:</span> {schoolMetrics.totalAssessments}
                 </>
               ) : (
@@ -1449,7 +1543,7 @@ export default function AdminResultsAnalysis() {
             </p>
             <button 
               onClick={() => refetch()}
-              className="text-xs sm:text-sm text-gray-600 hover:text-gray-900 font-medium"
+              className="text-[10px] sm:text-xs text-gray-600 hover:text-gray-900 font-medium whitespace-nowrap"
             >
               Refresh data
             </button>
