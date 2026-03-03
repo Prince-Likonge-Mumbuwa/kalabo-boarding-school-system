@@ -1,17 +1,22 @@
 // @/services/pdf/resultsAnalysisPDFLib.ts
+// UPDATED WITH CORRECT QUALITY/QUANTITY/FAIL CALCULATIONS
+// Quality: Grades 1-2 only (Distinction)
+// Quantity: Grades 3-7 (Merit through Satisfactory)
+// Fail: Grades 8-9 (Satisfactory Low and Unsatisfactory)
+
 import { PDFDocument, rgb, StandardFonts, PageSizes } from 'pdf-lib';
 
 interface SubjectMetrics {
   registered: number;
   sat: number;
   absent: number;
-  dist: number; // grades 1-2
-  merit: number; // grades 3-4
-  credit: number; // grades 5-6
-  pass: number; // grades 7-8
-  fail: number; // grade 9
-  quality: number; // grades 1-4
-  quantity: number; // grades 1-8
+  dist: number;      // grades 1-2
+  merit: number;     // grades 3-4
+  credit: number;    // grades 5-6
+  pass: number;      // grade 7 only
+  fail: number;      // grades 8-9
+  quality: number;   // grades 1-2
+  quantity: number;  // grades 3-7
 }
 
 interface SubjectData {
@@ -66,6 +71,9 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
   const lightGray = rgb(0.95, 0.95, 0.95);
   const borderColor = rgb(0.7, 0.7, 0.7);
   const headerBgColor = rgb(0.85, 0.85, 0.85);
+  const qualityColor = rgb(0.2, 0.6, 0.2); // Green for quality
+  const quantityColor = rgb(0.2, 0.4, 0.8); // Blue for quantity
+  const failColor = rgb(0.8, 0.3, 0.3); // Red for fail
 
   // Table configuration
   const margin = 40;
@@ -77,28 +85,30 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
     availableWidth * 0.06, // Reg
     availableWidth * 0.06, // Sat
     availableWidth * 0.06, // Abs
-    availableWidth * 0.08, // DIST(1-2)
-    availableWidth * 0.08, // MERIT(3-4)
-    availableWidth * 0.08, // CREDIT(5-6)
-    availableWidth * 0.08, // PASS(7-8)
-    availableWidth * 0.08, // FAIL(9)
-    availableWidth * 0.06, // FAIL%
-    availableWidth * 0.08, // QLTY(1-4)
-    availableWidth * 0.08, // QTY(1-8)
+    availableWidth * 0.07, // DIST(1-2)
+    availableWidth * 0.07, // MERIT(3-4)
+    availableWidth * 0.07, // CREDIT(5-6)
+    availableWidth * 0.07, // PASS(7)
+    availableWidth * 0.07, // FAIL(8-9)
+    availableWidth * 0.07, // FAIL%
+    availableWidth * 0.07, // QLTY(1-2)
+    availableWidth * 0.07, // QTY(3-7)
+    availableWidth * 0.06, // QLTY%
+    availableWidth * 0.06, // QTY%
   ];
 
   const headers = [
     'Category', 'Reg', 'Sat', 'Abs',
     'DIST', 'MERIT', 'CREDIT',
     'PASS', 'FAIL', 'FAIL%',
-    'QLTY', 'QTY'
+    'QLTY', 'QTY', 'QLTY%', 'QTY%'
   ];
 
   const subHeaders = [
     '', '', '', '',
     '(1-2)', '(3-4)', '(5-6)',
-    '(7-8)', '(9)', '',
-    '(1-4)', '(1-8)'
+    '(7)', '(8-9)', '',
+    '(1-2)', '(3-7)', '%', '%'
   ];
 
   let y = height - margin;
@@ -193,12 +203,18 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
         borderWidth: 1,
       });
 
+      // Special coloring for quality/quantity/fail headers
+      let textColor = black;
+      if (header === 'QLTY' || header === 'QLTY%') textColor = qualityColor;
+      if (header === 'QTY' || header === 'QTY%') textColor = quantityColor;
+      if (header === 'FAIL' || header === 'FAIL%') textColor = failColor;
+
       page.drawText(header, {
         x: x + (colWidths[i] / 2) - (font.widthOfTextAtSize(header, 8) / 2),
         y: currentY - 12,
         size: 8,
         font: boldFont,
-        color: black,
+        color: textColor,
       });
 
       x += colWidths[i];
@@ -235,10 +251,20 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
     return currentY - 25;
   };
 
-  // Helper function to calculate fail percentage
+  // Helper function to calculate percentages
   const calculateFailPercentage = (sat: number, fail: number): string => {
     if (sat === 0) return '0.0';
     return ((fail / sat) * 100).toFixed(1);
+  };
+
+  const calculateQualityPercentage = (sat: number, quality: number): string => {
+    if (sat === 0) return '0.0';
+    return ((quality / sat) * 100).toFixed(1);
+  };
+
+  const calculateQuantityPercentage = (sat: number, quantity: number): string => {
+    if (sat === 0) return '0.0';
+    return ((quantity / sat) * 100).toFixed(1);
   };
 
   // Helper function to draw a data row
@@ -253,8 +279,10 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
     let x = startX;
     const rowY = startY - 20;
 
-    // Calculate fail percentage
+    // Calculate percentages
     const failPercentage = calculateFailPercentage(metrics.sat, metrics.fail);
+    const qualityPercentage = calculateQualityPercentage(metrics.sat, metrics.quality);
+    const quantityPercentage = calculateQuantityPercentage(metrics.sat, metrics.quantity);
 
     const rowData = [
       metrics.registered,
@@ -268,6 +296,8 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
       failPercentage,
       metrics.quality,
       metrics.quantity,
+      qualityPercentage,
+      quantityPercentage,
     ];
 
     // Category column
@@ -291,27 +321,35 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
 
     // Data columns
     rowData.forEach((value, i) => {
+      const colIndex = i + 1;
+      
       page.drawRectangle({
         x,
         y: rowY,
-        width: colWidths[i + 1],
+        width: colWidths[colIndex],
         height: 20,
         borderColor,
         borderWidth: 1,
       });
       
+      // Special coloring for percentage columns
+      let textColor = black;
+      if (i === 8) textColor = failColor; // FAIL%
+      if (i === 11) textColor = qualityColor; // QLTY%
+      if (i === 12) textColor = quantityColor; // QTY%
+      
       const text = typeof value === 'number' ? value.toString() : value;
       const textWidth = font.widthOfTextAtSize(text, 9);
       
       page.drawText(text, {
-        x: x + (colWidths[i + 1] / 2) - (textWidth / 2),
+        x: x + (colWidths[colIndex] / 2) - (textWidth / 2),
         y: rowY + 5,
         size: 9,
         font: isTotal ? boldFont : font,
-        color: black,
+        color: textColor,
       });
       
-      x += colWidths[i + 1];
+      x += colWidths[colIndex];
     });
 
     return startY - 20;
@@ -375,7 +413,7 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
       const subject = data.subjects[i];
       
       // Check if we need a new page
-      if (y < 200) {
+      if (y < 250) {
         page = pdfDoc.addPage(pageSize);
         y = height - margin;
         y = drawHeader(page, y, true);
@@ -391,7 +429,7 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
   }
 
   // ==================== FOOTER ====================
-  if (y < 100) {
+  if (y < 150) {
     page = pdfDoc.addPage(pageSize);
     y = height - margin;
     y = drawHeader(page, y, true);
@@ -412,7 +450,7 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
 
   // Legend at bottom (centered)
   y -= 15;
-  const legend1 = 'DIST = Distinction (1-2) | MERIT = Merit (3-4) | CREDIT = Credit (5-6) | PASS = Satisfactory (7-8) | FAIL = Grade 9';
+  const legend1 = 'DIST = Distinction (1-2) | MERIT = Merit (3-4) | CREDIT = Credit (5-6) | PASS = Satisfactory (7) | FAIL = Grades 8-9';
   const legend1Width = font.widthOfTextAtSize(legend1, 7);
   page.drawText(legend1, {
     x: (width - legend1Width) / 2,
@@ -423,7 +461,7 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
   });
   
   y -= 12;
-  const legend2 = 'QLTY = Quality Pass (Grades 1-4) | QTY = Quantity Pass (Grades 1-8) | FAIL% = (Fail/Sat) × 100';
+  const legend2 = 'QLTY = Quality Pass (Grades 1-2) | QTY = Quantity Pass (Grades 3-7) | FAIL% = (Fail/Sat) × 100 | QLTY% = (Quality/Sat) × 100 | QTY% = (Quantity/Sat) × 100';
   const legend2Width = font.widthOfTextAtSize(legend2, 7);
   page.drawText(legend2, {
     x: (width - legend2Width) / 2,

@@ -1,6 +1,6 @@
-// @/pages/admin/ReportCards.tsx
+// @/pages/admin/ReportCards.tsx - UPDATED WITH FIXED TYPES AND PROGRESS BAR
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useStudentProgress, useResults } from '@/hooks/useResults';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
@@ -10,7 +10,6 @@ import { useAuth } from '@/hooks/useAuth';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import {
   Search,
-  Eye,
   CheckCircle,
   XCircle,
   FileText,
@@ -25,17 +24,21 @@ import {
   Download,
   X,
   ChevronLeft,
-  ChevronRight
+  FileSpreadsheet,
+  Loader2
 } from 'lucide-react';
 
-// ==================== TYPES ====================
+// Import types from service
+import type { StudentResult, ReportCardData as ServiceReportCardData, StudentProgress as ServiceStudentProgress } from '@/services/resultsService';
+
+// ==================== LOCAL TYPES ====================
 interface SubjectProgress {
   subjectId: string;
   subjectName: string;
   teacherName: string;
-  week4: { status: 'complete' | 'missing' | 'absent'; marks?: number };
-  week8: { status: 'complete' | 'missing' | 'absent'; marks?: number };
-  endOfTerm: { status: 'complete' | 'missing' | 'absent'; marks?: number };
+  week4: { status: 'complete' | 'missing' | 'absent' | 'not_conducted'; marks?: number };
+  week8: { status: 'complete' | 'missing' | 'absent' | 'not_conducted'; marks?: number };
+  endOfTerm: { status: 'complete' | 'missing' | 'absent' | 'not_conducted'; marks?: number };
   subjectProgress: number;
   grade?: number;
 }
@@ -54,6 +57,7 @@ interface StudentProgress {
   subjects: SubjectProgress[];
   missingSubjects: number;
   totalSubjects: number;
+  gender?: string;
 }
 
 interface ReportCardSubject {
@@ -73,7 +77,7 @@ export interface ReportCardData {
   className: string;
   classId: string;
   form: string;
-  grade: number; // Overall grade
+  grade: number;
   position: string;
   gender: string;
   totalMarks: number;
@@ -90,6 +94,29 @@ export interface ReportCardData {
   year: number;
   isComplete: boolean;
   completionPercentage: number;
+}
+
+// Interface for class results matrix
+interface ClassResultsMatrix {
+  className: string;
+  term: string;
+  year: number;
+  students: Array<{
+    studentId: string;
+    studentName: string;
+    gender: string;
+    subjects: Array<{
+      subjectName: string;
+      week4: { marks: number; status: string };
+      week8: { marks: number; status: string };
+      endOfTerm: { marks: number; status: string; grade: number };
+      average: number;
+    }>;
+    overallAverage: number;
+    overallGrade: number;
+  }>;
+  subjects: string[];
+  generatedDate: string;
 }
 
 const GRADE_SYSTEM: Record<number | 'X', { min: number; max: number; description: string; color: string; shortDesc: string }> = {
@@ -129,6 +156,9 @@ const StatusBadge = ({ status }: { status: 'pass' | 'fail' | 'pending' }) => {
 
 // ==================== PROGRESS BAR ====================
 const ProgressBar = ({ progress, size = 'md', showLabel = true }: { progress: number; size?: 'sm' | 'md' | 'lg'; showLabel?: boolean }) => {
+  // FIXED: Ensure progress is a valid number between 0-100
+  const validProgress = Math.min(100, Math.max(0, progress || 0));
+  
   const getProgressColor = (p: number) => {
     if (p >= 75) return 'bg-green-500';
     if (p >= 50) return 'bg-blue-500';
@@ -143,11 +173,14 @@ const ProgressBar = ({ progress, size = 'md', showLabel = true }: { progress: nu
       {showLabel && (
         <div className="flex items-center justify-between text-xs mb-1">
           <span className="text-gray-600">Progress</span>
-          <span className="font-medium text-gray-900">{progress}%</span>
+          <span className="font-medium text-gray-900">{validProgress}%</span>
         </div>
       )}
       <div className={`w-full ${heights[size]} bg-gray-200 rounded-full overflow-hidden`}>
-        <div className={`h-full ${getProgressColor(progress)} transition-all duration-300`} style={{ width: `${progress}%` }} />
+        <div 
+          className={`h-full ${getProgressColor(validProgress)} transition-all duration-300`} 
+          style={{ width: `${validProgress}%` }} 
+        />
       </div>
     </div>
   );
@@ -218,9 +251,9 @@ const StudentCard = ({ student, onClick }: StudentCardProps) => {
       <div className="mb-3">
         <div className="flex items-center justify-between text-[10px] mb-1">
           <span className="text-gray-600">Completion</span>
-          <span className="font-medium text-gray-900">{student.completionPercentage}%</span>
+          <span className="font-medium text-gray-900">{student.completionPercentage || 0}%</span>
         </div>
-        <ProgressBar progress={student.completionPercentage} size="sm" showLabel={false} />
+        <ProgressBar progress={student.completionPercentage || 0} size="sm" showLabel={false} />
       </div>
       
       <div className="flex items-center justify-between">
@@ -252,21 +285,21 @@ const MobileSubjectCard = ({ subject }: { subject: ReportCardSubject }) => {
           <p className="text-[10px] text-gray-500">W4</p>
           <p className="font-medium text-xs">
             {subject.week4 >= 0 ? `${subject.week4}%` : 
-             subject.week4 === -1 ? 'ABS' : '—'}
+             subject.week4 === -1 ? 'ABS' : subject.week4 === -2 ? 'NC' : '—'}
           </p>
         </div>
         <div className="text-center p-2 bg-gray-50 rounded-lg">
           <p className="text-[10px] text-gray-500">W8</p>
           <p className="font-medium text-xs">
             {subject.week8 >= 0 ? `${subject.week8}%` : 
-             subject.week8 === -1 ? 'ABS' : '—'}
+             subject.week8 === -1 ? 'ABS' : subject.week8 === -2 ? 'NC' : '—'}
           </p>
         </div>
         <div className="text-center p-2 bg-blue-50 rounded-lg">
           <p className="text-[10px] text-blue-600">EOT</p>
           <p className="font-medium text-xs text-blue-600">
             {subject.endOfTerm >= 0 ? `${subject.endOfTerm}%` : 
-             subject.endOfTerm === -1 ? 'ABS' : '—'}
+             subject.endOfTerm === -1 ? 'ABS' : subject.endOfTerm === -2 ? 'NC' : '—'}
           </p>
         </div>
       </div>
@@ -297,7 +330,8 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
     try {
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
       const pdfBytes = await generateReportCardPDF(report);
-      const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
+      // FIXED: Convert Uint8Array to Blob properly
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -525,6 +559,8 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
                             <span className="font-medium text-gray-900">{subject.week4}%</span>
                           ) : subject.week4 === -1 ? (
                             <span className="text-gray-500 italic">ABS</span>
+                          ) : subject.week4 === -2 ? (
+                            <span className="text-gray-400 italic">NC</span>
                           ) : (
                             <span className="text-gray-400">—</span>
                           )}
@@ -534,6 +570,8 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
                             <span className="font-medium text-gray-900">{subject.week8}%</span>
                           ) : subject.week8 === -1 ? (
                             <span className="text-gray-500 italic">ABS</span>
+                          ) : subject.week8 === -2 ? (
+                            <span className="text-gray-400 italic">NC</span>
                           ) : (
                             <span className="text-gray-400">—</span>
                           )}
@@ -543,6 +581,8 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
                             <span className="font-bold text-blue-700">{subject.endOfTerm}%</span>
                           ) : subject.endOfTerm === -1 ? (
                             <span className="text-gray-500 italic">ABS</span>
+                          ) : subject.endOfTerm === -2 ? (
+                            <span className="text-gray-400 italic">NC</span>
                           ) : (
                             <span className="text-gray-400">—</span>
                           )}
@@ -602,6 +642,10 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
                   <span className="flex items-center gap-1">
                     <span className="w-3 h-3 bg-gray-500 rounded-full"></span>
                     <span>ABS = Absent</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-3 h-3 bg-gray-400 rounded-full"></span>
+                    <span>NC = Not Conducted</span>
                   </span>
                 </div>
 
@@ -748,6 +792,7 @@ export default function ReportCards() {
   const isMobile = useMediaQuery('(max-width: 640px)');
   const { classes, isLoading: loadingClasses } = useSchoolClasses();
   const { assignments, isLoading: loadingAssignments } = useTeacherAssignments(user?.id || '');
+  const { learners } = useSchoolLearners();
   
   const [selectedClass, setSelectedClass] = useState<string>('');
   const [selectedTerm, setSelectedTerm] = useState<string>('Term 1');
@@ -755,10 +800,22 @@ export default function ReportCards() {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
+  const [isDownloadingMatrix, setIsDownloadingMatrix] = useState(false);
   
   // Cache for generated reports
   const [reportCache, setReportCache] = useState<Map<string, ReportCardData>>(new Map());
   const [loadingReports, setLoadingReports] = useState<Set<string>>(new Set());
+
+  // Create a map of student IDs to gender
+  const studentGenderMap = useMemo(() => {
+    const map = new Map<string, string>();
+    learners.forEach(learner => {
+      if (learner.id) map.set(learner.id, learner.gender || 'Not specified');
+      if (learner.studentId) map.set(learner.studentId, learner.gender || 'Not specified');
+    });
+    return map;
+  }, [learners]);
 
   const {
     students = [],
@@ -772,7 +829,7 @@ export default function ReportCards() {
     year: selectedYear,
   });
 
-  const { generateReportCard } = useResults();
+  const { generateReportCard, generateClassReportCards } = useResults();
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
@@ -789,12 +846,57 @@ export default function ReportCards() {
     }
   }, [classes, user, assignments, selectedClass]);
 
+  // Transform service students to local StudentProgress type with gender
+  const transformedStudents = useMemo((): StudentProgress[] => {
+    if (!students || students.length === 0) return [];
+    
+    return students.map((student: any) => {
+      // Ensure completionPercentage is calculated correctly
+      const totalSubjects = student.totalSubjects || 0;
+      const completedSubjects = student.subjects?.filter((s: any) => 
+        s.week4?.status !== 'missing' && 
+        s.week8?.status !== 'missing' && 
+        s.endOfTerm?.status !== 'missing'
+      ).length || 0;
+      
+      const completionPercentage = totalSubjects > 0 
+        ? Math.round((completedSubjects / totalSubjects) * 100) 
+        : 0;
+
+      return {
+        studentId: student.studentId || '',
+        studentName: student.studentName || '',
+        className: student.className || '',
+        classId: student.classId || '',
+        form: student.form || '',
+        overallPercentage: student.overallPercentage || 0,
+        overallGrade: student.overallGrade || 0,
+        status: student.status || 'pending',
+        isComplete: student.isComplete || false,
+        completionPercentage: completionPercentage, // FIXED: Use calculated value
+        subjects: Array.isArray(student.subjects) ? student.subjects.map((subject: any) => ({
+          subjectId: subject.subjectId || '',
+          subjectName: subject.subjectName || '',
+          teacherName: subject.teacherName || '',
+          week4: subject.week4 || { status: 'missing' },
+          week8: subject.week8 || { status: 'missing' },
+          endOfTerm: subject.endOfTerm || { status: 'missing' },
+          subjectProgress: subject.subjectProgress || 0,
+          grade: subject.grade
+        })) : [],
+        missingSubjects: student.missingSubjects || 0,
+        totalSubjects: totalSubjects,
+        gender: studentGenderMap.get(student.studentId) || 'Not specified'
+      };
+    });
+  }, [students, studentGenderMap]);
+
   // Generate reports for all students when data loads
   useEffect(() => {
     const generateAllReports = async () => {
       if (!students.length || !selectedTerm || !selectedYear) return;
 
-      const studentsToGenerate = students.filter((s: StudentProgress) => 
+      const studentsToGenerate = students.filter((s: any) => 
         !reportCache.has(s.studentId) && !loadingReports.has(s.studentId)
       );
 
@@ -802,7 +904,7 @@ export default function ReportCards() {
 
       setLoadingReports(prev => {
         const newSet = new Set(prev);
-        studentsToGenerate.forEach(s => newSet.add(s.studentId));
+        studentsToGenerate.forEach((s: any) => newSet.add(s.studentId));
         return newSet;
       });
 
@@ -810,7 +912,7 @@ export default function ReportCards() {
       for (let i = 0; i < studentsToGenerate.length; i += batchSize) {
         const batch = studentsToGenerate.slice(i, i + batchSize);
         await Promise.all(
-          batch.map(async (student: StudentProgress) => {
+          batch.map(async (student: any) => {
             try {
               const report = await generateReportCard({
                 studentId: student.studentId,
@@ -823,17 +925,21 @@ export default function ReportCards() {
               });
 
               if (report) {
-                // Transform report to remove teacher field and add grade descriptions
+                // FIXED: Transform service ReportCardData to local ReportCardData
                 const transformedReport: ReportCardData = {
-                  ...report,
-                  grade: student.overallGrade, // Add the overall grade from student progress
-                  generatedDate: report.generatedDate || new Date().toLocaleDateString('en-GB', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  }),
+                  id: report.id,
+                  studentId: report.studentId,
+                  studentName: report.studentName,
+                  className: report.className,
+                  classId: report.classId,
+                  form: report.form,
+                  grade: report.overallGrade, // Map overallGrade to grade
+                  position: report.position,
+                  gender: report.gender || studentGenderMap.get(student.studentId) || 'Not specified',
+                  totalMarks: report.totalMarks,
+                  percentage: report.percentage,
+                  status: report.status,
+                  improvement: report.improvement,
                   subjects: report.subjects.map(s => ({
                     subjectId: s.subjectId,
                     subjectName: s.subjectName,
@@ -841,8 +947,23 @@ export default function ReportCards() {
                     week8: s.week8,
                     endOfTerm: s.endOfTerm,
                     grade: s.grade,
-                    gradeDescription: getGradeDescription(s.grade)
-                  }))
+                    gradeDescription: s.gradeDescription || getGradeDescription(s.grade)
+                  })),
+                  attendance: report.attendance,
+                  teachersComment: report.teachersComment,
+                  parentsEmail: report.parentsEmail,
+                  parentsPhone: report.parentsPhone,
+                  generatedDate: report.generatedDate || new Date().toLocaleDateString('en-GB', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  }),
+                  term: report.term,
+                  year: report.year,
+                  isComplete: report.isComplete,
+                  completionPercentage: report.completionPercentage
                 };
                 
                 setReportCache(prev => {
@@ -866,36 +987,216 @@ export default function ReportCards() {
     };
 
     generateAllReports();
-  }, [students, selectedTerm, selectedYear, generateReportCard, reportCache, loadingReports]);
+  }, [students, selectedTerm, selectedYear, generateReportCard, reportCache, loadingReports, studentGenderMap]);
 
-  // Transform data
-  const transformedStudents = useMemo((): StudentProgress[] => {
-    if (!students || students.length === 0) return [];
-    return students.map((student: any) => ({
-      studentId: student.studentId || '',
-      studentName: student.studentName || '',
-      className: student.className || '',
-      classId: student.classId || '',
-      form: student.form || '',
-      overallPercentage: student.overallPercentage || 0,
-      overallGrade: student.overallGrade || 0,
-      status: student.status || 'pending',
-      isComplete: student.isComplete || false,
-      completionPercentage: student.completionPercentage || 0,
-      subjects: Array.isArray(student.subjects) ? student.subjects.map((subject: any) => ({
-        subjectId: subject.subjectId || '',
-        subjectName: subject.subjectName || '',
-        teacherName: subject.teacherName || '',
-        week4: subject.week4 || { status: 'missing' },
-        week8: subject.week8 || { status: 'missing' },
-        endOfTerm: subject.endOfTerm || { status: 'missing' },
-        subjectProgress: subject.subjectProgress || 0,
-        grade: subject.grade
-      })) : [],
-      missingSubjects: student.missingSubjects || 0,
-      totalSubjects: student.totalSubjects || 0
-    }));
-  }, [students]);
+  // ==================== DOWNLOAD ALL REPORT CARDS ====================
+  const handleDownloadAllReportCards = useCallback(async () => {
+    if (!selectedClass || students.length === 0) {
+      alert('No students to generate reports for');
+      return;
+    }
+
+    setIsDownloadingAll(true);
+    
+    try {
+      // Generate all report cards using the bulk operation
+      const result = await generateClassReportCards({
+        classId: selectedClass,
+        term: selectedTerm,
+        year: selectedYear,
+        options: {
+          includeIncomplete: true,
+          markMissing: true,
+        }
+      });
+
+      if (result.reportCards.length === 0) {
+        alert('No report cards were generated');
+        return;
+      }
+
+      // Import the PDF generator
+      const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
+
+      // Download each PDF sequentially with a slight delay
+      for (let i = 0; i < result.reportCards.length; i++) {
+        const report = result.reportCards[i];
+        
+        // Show progress every 5 reports
+        if (i % 5 === 0) {
+          console.log(`Downloading report ${i + 1} of ${result.reportCards.length}`);
+        }
+
+        try {
+          // FIXED: Transform service ReportCardData to local ReportCardData for PDF generation
+          const localReport: ReportCardData = {
+            id: report.id,
+            studentId: report.studentId,
+            studentName: report.studentName,
+            className: report.className,
+            classId: report.classId,
+            form: report.form,
+            grade: report.overallGrade,
+            position: report.position,
+            gender: report.gender || 'Not specified',
+            totalMarks: report.totalMarks,
+            percentage: report.percentage,
+            status: report.status,
+            improvement: report.improvement,
+            subjects: report.subjects.map(s => ({
+              subjectId: s.subjectId,
+              subjectName: s.subjectName,
+              week4: s.week4,
+              week8: s.week8,
+              endOfTerm: s.endOfTerm,
+              grade: s.grade,
+              gradeDescription: s.gradeDescription || getGradeDescription(s.grade)
+            })),
+            attendance: report.attendance,
+            teachersComment: report.teachersComment,
+            parentsEmail: report.parentsEmail,
+            parentsPhone: report.parentsPhone,
+            generatedDate: report.generatedDate,
+            term: report.term,
+            year: report.year,
+            isComplete: report.isComplete,
+            completionPercentage: report.completionPercentage
+          };
+
+          const pdfBytes = await generateReportCardPDF(localReport);
+          // FIXED: Properly convert Uint8Array to Blob
+          const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+          const url = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `${report.studentName.replace(/\s+/g, '_')}_${report.studentId}_${report.term}_${report.year}.pdf`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+          
+          // Small delay between downloads to prevent browser from blocking
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (error) {
+          console.error(`Failed to download PDF for ${report.studentName}:`, error);
+        }
+      }
+
+      alert(`Successfully downloaded ${result.reportCards.length} report cards`);
+
+    } catch (error) {
+      console.error('Failed to download all report cards:', error);
+      alert('Failed to download all report cards. Please try again.');
+    } finally {
+      setIsDownloadingAll(false);
+    }
+  }, [selectedClass, students, selectedTerm, selectedYear, generateClassReportCards]);
+
+  // ==================== DOWNLOAD CLASS RESULTS MATRIX ====================
+  const handleDownloadClassMatrix = useCallback(async () => {
+    if (!selectedClass || students.length === 0) {
+      alert('No data to generate class matrix');
+      return;
+    }
+
+    setIsDownloadingMatrix(true);
+
+    try {
+      // Get all unique subjects from all students
+      const allSubjects = new Set<string>();
+      transformedStudents.forEach(student => {
+        student.subjects.forEach(subject => {
+          allSubjects.add(subject.subjectName);
+        });
+      });
+      const subjectsList = Array.from(allSubjects).sort();
+
+      // Build the matrix data
+      const matrixData: ClassResultsMatrix = {
+        className: transformedStudents[0]?.className || 'Unknown Class',
+        term: selectedTerm,
+        year: selectedYear,
+        students: transformedStudents.map(student => ({
+          studentId: student.studentId,
+          studentName: student.studentName,
+          gender: student.gender || studentGenderMap.get(student.studentId) || 'Not specified',
+          subjects: subjectsList.map(subjectName => {
+            const subject = student.subjects.find(s => s.subjectName === subjectName);
+            return {
+              subjectName,
+              week4: {
+                marks: subject?.week4?.marks ?? -3,
+                status: subject?.week4?.status || 'missing'
+              },
+              week8: {
+                marks: subject?.week8?.marks ?? -3,
+                status: subject?.week8?.status || 'missing'
+              },
+              endOfTerm: {
+                marks: subject?.endOfTerm?.marks ?? -3,
+                status: subject?.endOfTerm?.status || 'missing',
+                grade: subject?.grade || -1
+              },
+              average: subject?.grade ? calculateAverageGrade(subject) : -1
+            };
+          }),
+          overallAverage: student.overallPercentage,
+          overallGrade: student.overallGrade
+        })),
+        subjects: subjectsList,
+        generatedDate: new Date().toLocaleDateString('en-GB', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      };
+
+      // Generate PDF matrix
+      const { generateClassResultsMatrixPDF } = await import('@/services/pdf/classResultsMatrixPDFLib');
+      const pdfBytes = await generateClassResultsMatrixPDF(matrixData);
+
+      // FIXED: Properly convert Uint8Array to Blob
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `class-matrix-${matrixData.className.replace(/\s+/g, '_')}-${selectedTerm}-${selectedYear}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+      console.error('Failed to generate class matrix:', error);
+      alert('Failed to generate class matrix. Please try again.');
+    } finally {
+      setIsDownloadingMatrix(false);
+    }
+  }, [selectedClass, transformedStudents, selectedTerm, selectedYear, studentGenderMap]);
+
+  // Helper function to calculate average grade from subject exams
+  const calculateAverageGrade = (subject: SubjectProgress): number => {
+    const scores = [
+      subject.week4?.marks,
+      subject.week8?.marks,
+      subject.endOfTerm?.marks
+    ].filter(m => m !== undefined && m >= 0);
+    
+    if (scores.length === 0) return -1;
+    const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+    
+    if (avg >= 75) return 1;
+    if (avg >= 70) return 2;
+    if (avg >= 65) return 3;
+    if (avg >= 60) return 4;
+    if (avg >= 55) return 5;
+    if (avg >= 50) return 6;
+    if (avg >= 45) return 7;
+    if (avg >= 40) return 8;
+    return 9;
+  };
 
   // Filter students
   const filteredStudents = useMemo(() => {
@@ -970,13 +1271,53 @@ export default function ReportCards() {
               </p>
             </div>
             
-            <button
-              onClick={() => refetch()}
-              className="p-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all self-end sm:self-auto"
-              title="Refresh data"
-            >
-              <RefreshCw size={isMobile ? 16 : 18} className={isFetching ? 'animate-spin' : ''} />
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Download All Report Cards Button */}
+              {selectedClass && students.length > 0 && (
+                <button
+                  onClick={handleDownloadAllReportCards}
+                  disabled={isDownloadingAll}
+                  className="flex items-center gap-1 sm:gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 text-xs sm:text-sm"
+                  title="Download all report cards (sequential)"
+                >
+                  {isDownloadingAll ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Download size={16} />
+                  )}
+                  <span className="hidden sm:inline">
+                    {isDownloadingAll ? 'Downloading...' : 'All Reports'}
+                  </span>
+                </button>
+              )}
+
+              {/* Download Class Matrix Button */}
+              {selectedClass && students.length > 0 && (
+                <button
+                  onClick={handleDownloadClassMatrix}
+                  disabled={isDownloadingMatrix}
+                  className="flex items-center gap-1 sm:gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 text-xs sm:text-sm"
+                  title="Download class results matrix"
+                >
+                  {isDownloadingMatrix ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <FileSpreadsheet size={16} />
+                  )}
+                  <span className="hidden sm:inline">
+                    {isDownloadingMatrix ? 'Generating...' : 'Class Matrix'}
+                  </span>
+                </button>
+              )}
+
+              <button
+                onClick={() => refetch()}
+                className="p-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all"
+                title="Refresh data"
+              >
+                <RefreshCw size={isMobile ? 16 : 18} className={isFetching ? 'animate-spin' : ''} />
+              </button>
+            </div>
           </div>
 
           {!selectedClass ? (

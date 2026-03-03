@@ -1,4 +1,10 @@
 // @/pages/admin/AdminResultsAnalysis.tsx - RESPONSIVE VERSION
+// UPDATED WITH AVERAGES OF ALL TESTS
+// Quality: Grades 1-2 only (Distinction)
+// Quantity: Grades 3-7 (Merit through Satisfactory)
+// Fail: Grades 8-9 (Satisfactory Low and Unsatisfactory)
+// Uses AVERAGES of all exams (week4, week8, endOfTerm) per student per subject
+
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
@@ -98,13 +104,13 @@ interface SubjectMetrics {
   registered: number;
   sat: number;
   absent: number;
-  dist: number;
-  merit: number;
-  credit: number;
-  pass: number;
-  fail: number;
-  quality: number;
-  quantity: number;
+  dist: number;      // Grades 1-2
+  merit: number;     // Grades 3-4
+  credit: number;    // Grades 5-6
+  pass: number;      // Grade 7 only
+  fail: number;      // Grades 8-9
+  quality: number;   // Grades 1-2
+  quantity: number;  // Grades 3-7
 }
 
 interface SubjectData {
@@ -238,8 +244,8 @@ const GradeBadge = ({ grade, size = 'md', showLabel = false }: { grade: number; 
     if (grade <= 2) return { color: 'bg-emerald-500', label: 'Distinction' };
     if (grade <= 4) return { color: 'bg-blue-500', label: 'Merit' };
     if (grade <= 6) return { color: 'bg-amber-500', label: 'Credit' };
-    if (grade <= 8) return { color: 'bg-orange-500', label: 'Satisfactory' };
-    return { color: 'bg-rose-500', label: 'Fail' };
+    if (grade <= 7) return { color: 'bg-orange-500', label: 'Satisfactory' }; // Grade 7 only
+    return { color: 'bg-rose-500', label: 'Fail' }; // Grades 8-9
   };
 
   const { color, label } = getGradeInfo(grade);
@@ -417,6 +423,41 @@ const SubjectPerformanceMobileCard = ({ subjects }: { subjects: SubjectPerforman
   );
 };
 
+// ==================== HELPER FUNCTION FOR AVERAGE CALCULATION ====================
+
+/**
+ * Calculate average grade for a student in a subject across all exams
+ * Uses all available exam results (week4, week8, endOfTerm)
+ */
+const calculateStudentSubjectAverageGrade = (
+  studentId: string,
+  subjectId: string,
+  allResults: StudentResult[]
+): number | null => {
+  // Get all results for this student and subject
+  const subjectResults = allResults.filter(r => 
+    r.studentId === studentId && 
+    r.subjectId === subjectId &&
+    r.percentage >= 0 // Only include valid scores
+  );
+  
+  if (subjectResults.length === 0) return null;
+  
+  // Calculate average percentage across all exams
+  const avgPercentage = subjectResults.reduce((sum, r) => sum + r.percentage, 0) / subjectResults.length;
+  
+  // Convert to grade using the grade scale
+  if (avgPercentage >= 75) return 1;
+  if (avgPercentage >= 70) return 2;
+  if (avgPercentage >= 65) return 3;
+  if (avgPercentage >= 60) return 4;
+  if (avgPercentage >= 55) return 5;
+  if (avgPercentage >= 50) return 6;
+  if (avgPercentage >= 45) return 7;
+  if (avgPercentage >= 40) return 8;
+  return 9;
+};
+
 // ==================== MAIN COMPONENT ====================
 export default function AdminResultsAnalysis() {
   const { user } = useAuth();
@@ -445,7 +486,7 @@ export default function AdminResultsAnalysis() {
   // Get all learners for gender data
   const { learners, isLoading: learnersLoading } = useSchoolLearners();
 
-  // Use the analytics hook with real data
+  // Use the analytics hook with real data - get ALL results, not just endOfTerm
   const { 
     analytics, 
     results, 
@@ -472,18 +513,6 @@ export default function AdminResultsAnalysis() {
   const removeNotification = useCallback((id: string) => {
     setNotifications(prev => prev.filter(n => n.id !== id));
   }, []);
-
-  // ==================== FILTER VALID RESULTS ====================
-  
-  // Filter valid end of term results
-  const validEndOfTermResults = useMemo(() => {
-    return results.filter((r: StudentResult) => 
-      r.examType === 'endOfTerm' && 
-      r.grade > 0 && 
-      r.grade <= 9 &&
-      r.percentage >= 0
-    );
-  }, [results]);
 
   // ==================== STUDENT DATA MAPPING ====================
   
@@ -556,16 +585,18 @@ export default function AdminResultsAnalysis() {
     return gender;
   }, [learners, studentDataMap]);
 
+  // ==================== PROCESS RESULTS USING AVERAGES ====================
+  
   // Group results by subject for quick access
   const subjectGroups = useMemo(() => {
     const groups = new Map<string, StudentResult[]>();
-    validEndOfTermResults.forEach((result: StudentResult) => {
+    results.forEach((result: StudentResult) => {
       const key = result.subjectId || 'Unknown';
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(result);
     });
     return groups;
-  }, [validEndOfTermResults]);
+  }, [results]);
 
   // Get subject name map from teacher assignments
   const subjectNameMap = useMemo(() => {
@@ -579,9 +610,40 @@ export default function AdminResultsAnalysis() {
     return map;
   }, [classes, selectedClass]);
 
-  // Calculate grade distribution with gender breakdown
+  // Calculate student-subject averages
+  const studentSubjectAverages = useMemo(() => {
+    const averages = new Map<string, Map<string, { avgGrade: number; gender?: 'M' | 'F' }>>();
+    
+    // Get unique student-subject combinations
+    const uniqueCombinations = new Set<string>();
+    results.forEach((r: StudentResult) => {
+      uniqueCombinations.add(`${r.studentId}|${r.subjectId}`);
+    });
+    
+    // Calculate average grade for each student-subject combination
+    uniqueCombinations.forEach(combo => {
+      const [studentId, subjectId] = combo.split('|');
+      
+      const avgGrade = calculateStudentSubjectAverageGrade(studentId, subjectId, results);
+      
+      if (avgGrade !== null) {
+        // Get gender
+        const gender = getStudentGender(studentId);
+        
+        // Store in map
+        if (!averages.has(studentId)) {
+          averages.set(studentId, new Map());
+        }
+        averages.get(studentId)!.set(subjectId, { avgGrade, gender });
+      }
+    });
+    
+    return averages;
+  }, [results, getStudentGender]);
+
+  // Calculate grade distribution based on averages
   const gradeDistribution = useMemo((): GradeDistribution[] => {
-    if (validEndOfTermResults.length === 0) return [];
+    if (studentSubjectAverages.size === 0) return [];
 
     const gradeMap = new Map<number, { boys: number; girls: number; unknown: number }>();
     
@@ -593,21 +655,22 @@ export default function AdminResultsAnalysis() {
     let matchedCount = 0;
     let unmatchedCount = 0;
 
-    // Count boys and girls per grade
-    validEndOfTermResults.forEach((result: StudentResult) => {
-      const current = gradeMap.get(result.grade) || { boys: 0, girls: 0, unknown: 0 };
-      const gender = getStudentGender(result.studentId);
-      
-      if (gender === 'M') {
-        gradeMap.set(result.grade, { ...current, boys: current.boys + 1 });
-        matchedCount++;
-      } else if (gender === 'F') {
-        gradeMap.set(result.grade, { ...current, girls: current.girls + 1 });
-        matchedCount++;
-      } else {
-        gradeMap.set(result.grade, { ...current, unknown: current.unknown + 1 });
-        unmatchedCount++;
-      }
+    // Count each student-subject average
+    studentSubjectAverages.forEach((subjectMap) => {
+      subjectMap.forEach(({ avgGrade, gender }) => {
+        const current = gradeMap.get(avgGrade) || { boys: 0, girls: 0, unknown: 0 };
+        
+        if (gender === 'M') {
+          gradeMap.set(avgGrade, { ...current, boys: current.boys + 1 });
+          matchedCount++;
+        } else if (gender === 'F') {
+          gradeMap.set(avgGrade, { ...current, girls: current.girls + 1 });
+          matchedCount++;
+        } else {
+          gradeMap.set(avgGrade, { ...current, unknown: current.unknown + 1 });
+          unmatchedCount++;
+        }
+      });
     });
 
     // Log matching rate if there are unmatched students
@@ -615,19 +678,19 @@ export default function AdminResultsAnalysis() {
       console.log('Grade distribution matching:', { 
         matchedCount, 
         unmatchedCount, 
-        total: validEndOfTermResults.length,
-        matchRate: Math.round((matchedCount / validEndOfTermResults.length) * 100) + '%'
+        total: matchedCount + unmatchedCount,
+        matchRate: Math.round((matchedCount / (matchedCount + unmatchedCount)) * 100) + '%'
       });
     }
 
-    const total = validEndOfTermResults.length;
+    const total = matchedCount + unmatchedCount;
 
     const getPassStatus = (grade: number): 'distinction' | 'merit' | 'credit' | 'satisfactory' | 'fail' => {
       if (grade <= 2) return 'distinction';
       if (grade <= 4) return 'merit';
       if (grade <= 6) return 'credit';
-      if (grade <= 8) return 'satisfactory';
-      return 'fail';
+      if (grade <= 7) return 'satisfactory'; // Grade 7 only
+      return 'fail'; // Grades 8-9
     };
 
     return Array.from(gradeMap.entries())
@@ -640,75 +703,115 @@ export default function AdminResultsAnalysis() {
         passStatus: getPassStatus(grade)
       }))
       .filter(g => g.total > 0);
-  }, [validEndOfTermResults, getStudentGender]);
+  }, [studentSubjectAverages]);
 
-  // Calculate school-wide metrics
+  // ==================== UPDATED SCHOOL-WIDE METRICS USING AVERAGES ====================
   const schoolMetrics = useMemo(() => {
-    if (!analytics || validEndOfTermResults.length === 0) {
+    if (studentSubjectAverages.size === 0) {
       return {
         totalStudents: 0,
         totalAssessments: 0,
         averageScore: 0,
-        passRate: 0,
-        failRate: 0,
+        qualityRate: 0,      // Grades 1-2 only
+        quantityRate: 0,     // Grades 3-7
+        failRate: 0,         // Grades 8-9
         distinctionRate: 0,
         classesCount: classes?.length || 0,
         subjectsCount: 0
       };
     }
 
-    const totalAssessments = validEndOfTermResults.length;
+    // Collect all student-subject average grades
+    const allGrades: { grade: number; gender?: 'M' | 'F' }[] = [];
     
-    const distinctionCount = validEndOfTermResults.filter(r => r.grade <= 2).length;
-    const passCount = validEndOfTermResults.filter(r => r.grade <= 6).length;
-    const failCount = validEndOfTermResults.filter(r => r.grade >= 7).length;
+    studentSubjectAverages.forEach((subjectMap) => {
+      subjectMap.forEach(({ avgGrade, gender }) => {
+        allGrades.push({ grade: avgGrade, gender });
+      });
+    });
+
+    const totalAssessments = allGrades.length;
     
-    const uniqueStudents = new Set(validEndOfTermResults.map(r => r.studentId)).size;
-    const uniqueSubjects = new Set(validEndOfTermResults.map(r => r.subjectId)).size;
+    const distinctionCount = allGrades.filter(g => g.grade <= 2).length;
+    const qualityCount = allGrades.filter(g => g.grade <= 2).length;      // Quality: Grades 1-2
+    const quantityCount = allGrades.filter(g => g.grade >= 3 && g.grade <= 7).length; // Quantity: Grades 3-7
+    const failCount = allGrades.filter(g => g.grade >= 8).length;         // Fail: Grades 8-9
+    
+    const uniqueStudents = studentSubjectAverages.size;
+    const uniqueSubjects = new Set(
+      Array.from(studentSubjectAverages.values())
+        .flatMap(subjectMap => Array.from(subjectMap.keys()))
+    ).size;
+
+    // Calculate average score from all results
+    const validResults = results.filter(r => r.percentage >= 0);
+    const avgScore = validResults.length > 0
+      ? Math.round(validResults.reduce((sum, r) => sum + r.percentage, 0) / validResults.length)
+      : 0;
 
     return {
       totalStudents: uniqueStudents,
       totalAssessments,
-      averageScore: analytics.averagePercentage || 0,
-      passRate: totalAssessments > 0 ? Math.round((passCount / totalAssessments) * 100) : 0,
+      averageScore: avgScore,
+      qualityRate: totalAssessments > 0 ? Math.round((qualityCount / totalAssessments) * 100) : 0,
+      quantityRate: totalAssessments > 0 ? Math.round((quantityCount / totalAssessments) * 100) : 0,
       failRate: totalAssessments > 0 ? Math.round((failCount / totalAssessments) * 100) : 0,
       distinctionRate: totalAssessments > 0 ? Math.round((distinctionCount / totalAssessments) * 100) : 0,
       classesCount: classes?.length || 0,
       subjectsCount: uniqueSubjects
     };
-  }, [analytics, validEndOfTermResults, classes]);
+  }, [studentSubjectAverages, results, classes]);
 
-  // Calculate class-level performance
+  // ==================== UPDATED CLASS-LEVEL PERFORMANCE USING AVERAGES ====================
   const classPerformance = useMemo((): ClassPerformance[] => {
-    if (validEndOfTermResults.length === 0 || !classes) return [];
+    if (studentSubjectAverages.size === 0 || !classes) return [];
 
-    // Group results by class
-    const classMap = new Map<string, StudentResult[]>();
+    // Group students by class - we need to know which class each student belongs to
+    // This requires mapping student IDs to class IDs
+    const studentClassMap = new Map<string, string>();
     
-    validEndOfTermResults.forEach((result: StudentResult) => {
-      if (!classMap.has(result.classId)) {
-        classMap.set(result.classId, []);
+    // Get class data from learners
+    learners.forEach(learner => {
+      if (learner.id && learner.classId) {
+        studentClassMap.set(learner.id, learner.classId);
       }
-      classMap.get(result.classId)!.push(result);
+      if (learner.studentId && learner.classId) {
+        studentClassMap.set(learner.studentId, learner.classId);
+      }
     });
 
-    return Array.from(classMap.entries()).map(([classId, classResults]) => {
-      const total = classResults.length;
+    // Group grades by class
+    const classGradesMap = new Map<string, { grade: number; gender?: 'M' | 'F' }[]>();
+    
+    studentSubjectAverages.forEach((subjectMap, studentId) => {
+      const classId = studentClassMap.get(studentId);
+      if (classId) {
+        if (!classGradesMap.has(classId)) {
+          classGradesMap.set(classId, []);
+        }
+        subjectMap.forEach(({ avgGrade, gender }) => {
+          classGradesMap.get(classId)!.push({ grade: avgGrade, gender });
+        });
+      }
+    });
+
+    return Array.from(classGradesMap.entries()).map(([classId, classGrades]) => {
+      const total = classGrades.length;
+      const className = classes.find(c => c.id === classId)?.name || classId;
 
       // Grade distribution for this class
       const gradeMap = new Map<number, { boys: number; girls: number; unknown: number }>();
       for (let i = 1; i <= 9; i++) gradeMap.set(i, { boys: 0, girls: 0, unknown: 0 });
       
-      classResults.forEach((result: StudentResult) => {
-        const current = gradeMap.get(result.grade)!;
-        const gender = getStudentGender(result.studentId);
+      classGrades.forEach(({ grade, gender }) => {
+        const current = gradeMap.get(grade)!;
         
         if (gender === 'M') {
-          gradeMap.set(result.grade, { ...current, boys: current.boys + 1 });
+          gradeMap.set(grade, { ...current, boys: current.boys + 1 });
         } else if (gender === 'F') {
-          gradeMap.set(result.grade, { ...current, girls: current.girls + 1 });
+          gradeMap.set(grade, { ...current, girls: current.girls + 1 });
         } else {
-          gradeMap.set(result.grade, { ...current, unknown: current.unknown + 1 });
+          gradeMap.set(grade, { ...current, unknown: current.unknown + 1 });
         }
       });
 
@@ -718,7 +821,7 @@ export default function AdminResultsAnalysis() {
           if (grade <= 2) passStatus = 'distinction';
           else if (grade <= 4) passStatus = 'merit';
           else if (grade <= 6) passStatus = 'credit';
-          else if (grade <= 8) passStatus = 'satisfactory';
+          else if (grade <= 7) passStatus = 'satisfactory';
           else passStatus = 'fail';
           
           return {
@@ -732,36 +835,19 @@ export default function AdminResultsAnalysis() {
         })
         .filter(g => g.total > 0);
 
-      // Performance metrics with gender breakdown
-      const qualityBoys = classResults.filter(r => 
-        r.grade <= 6 && getStudentGender(r.studentId) === 'M'
-      ).length;
+      // Performance metrics using averages
+      const qualityBoys = classGrades.filter(g => g.grade <= 2 && g.gender === 'M').length;
+      const qualityGirls = classGrades.filter(g => g.grade <= 2 && g.gender === 'F').length;
       
-      const qualityGirls = classResults.filter(r => 
-        r.grade <= 6 && getStudentGender(r.studentId) === 'F'
-      ).length;
+      const quantityBoys = classGrades.filter(g => g.grade >= 3 && g.grade <= 7 && g.gender === 'M').length;
+      const quantityGirls = classGrades.filter(g => g.grade >= 3 && g.grade <= 7 && g.gender === 'F').length;
       
-      const quantityBoys = classResults.filter(r => 
-        r.grade <= 8 && getStudentGender(r.studentId) === 'M'
-      ).length;
-      
-      const quantityGirls = classResults.filter(r => 
-        r.grade <= 8 && getStudentGender(r.studentId) === 'F'
-      ).length;
-      
-      const failBoys = classResults.filter(r => 
-        r.grade === 9 && getStudentGender(r.studentId) === 'M'
-      ).length;
-      
-      const failGirls = classResults.filter(r => 
-        r.grade === 9 && getStudentGender(r.studentId) === 'F'
-      ).length;
+      const failBoys = classGrades.filter(g => g.grade >= 8 && g.gender === 'M').length;
+      const failGirls = classGrades.filter(g => g.grade >= 8 && g.gender === 'F').length;
 
-      const qualityCount = classResults.filter(r => r.grade <= 6).length;
-      const quantityCount = classResults.filter(r => r.grade <= 8).length;
-      const failCount = classResults.filter(r => r.grade === 9).length;
-
-      const className = classes.find(c => c.id === classId)?.name || classId;
+      const qualityCount = qualityBoys + qualityGirls;
+      const quantityCount = quantityBoys + quantityGirls;
+      const failCount = failBoys + failGirls;
 
       return {
         classId,
@@ -769,12 +855,12 @@ export default function AdminResultsAnalysis() {
         candidates: {
           boys: qualityBoys + quantityBoys + failBoys,
           girls: qualityGirls + quantityGirls + failGirls,
-          total: classResults.length
+          total: classGrades.length
         },
         sat: {
-          boys: classResults.filter(r => getStudentGender(r.studentId) === 'M').length,
-          girls: classResults.filter(r => getStudentGender(r.studentId) === 'F').length,
-          total: classResults.length
+          boys: classGrades.filter(g => g.gender === 'M').length,
+          girls: classGrades.filter(g => g.gender === 'F').length,
+          total: classGrades.length
         },
         gradeDistribution,
         performance: {
@@ -799,11 +885,11 @@ export default function AdminResultsAnalysis() {
         }
       };
     });
-  }, [validEndOfTermResults, classes, getStudentGender]);
+  }, [studentSubjectAverages, classes, learners]);
 
-  // Calculate subject performance across school
+  // ==================== UPDATED SUBJECT PERFORMANCE USING AVERAGES ====================
   const subjectPerformance = useMemo((): SubjectPerformance[] => {
-    if (validEndOfTermResults.length === 0) return [];
+    if (studentSubjectAverages.size === 0) return [];
 
     const subjectMap = new Map<string, {
       teacher: string;
@@ -812,27 +898,36 @@ export default function AdminResultsAnalysis() {
       grades: number[];
     }>();
 
-    validEndOfTermResults.forEach((result: StudentResult) => {
-      const subjectKey = result.subjectId || 'Unknown';
-      if (!subjectMap.has(subjectKey)) {
-        subjectMap.set(subjectKey, {
-          teacher: result.teacherName || 'Unknown',
-          classes: new Set(),
-          students: new Set(),
-          grades: []
-        });
-      }
-      const data = subjectMap.get(subjectKey)!;
-      data.classes.add(result.classId);
-      data.students.add(result.studentId);
-      data.grades.push(result.grade);
+    // Group average grades by subject
+    studentSubjectAverages.forEach((subjectMapForStudent, studentId) => {
+      subjectMapForStudent.forEach(({ avgGrade }, subjectId) => {
+        if (!subjectMap.has(subjectId)) {
+          // Find teacher name from results
+          const result = results.find(r => r.subjectId === subjectId);
+          subjectMap.set(subjectId, {
+            teacher: result?.teacherName || 'Unknown',
+            classes: new Set(),
+            students: new Set(),
+            grades: []
+          });
+        }
+        const data = subjectMap.get(subjectId)!;
+        data.students.add(studentId);
+        data.grades.push(avgGrade);
+        
+        // Add class ID if we can find it
+        const learner = learners.find(l => l.id === studentId || l.studentId === studentId);
+        if (learner?.classId) {
+          data.classes.add(learner.classId);
+        }
+      });
     });
 
     return Array.from(subjectMap.entries()).map(([subject, data]) => {
       const total = data.grades.length;
-      const quality = data.grades.filter(g => g <= 6).length;
-      const quantity = data.grades.filter(g => g <= 8).length;
-      const fail = data.grades.filter(g => g === 9).length;
+      const quality = data.grades.filter(g => g <= 2).length;           // Quality: Grades 1-2
+      const quantity = data.grades.filter(g => g >= 3 && g <= 7).length; // Quantity: Grades 3-7
+      const fail = data.grades.filter(g => g >= 8).length;              // Fail: Grades 8-9
       const averageGrade = data.grades.reduce((sum, g) => sum + g, 0) / total;
 
       return {
@@ -846,16 +941,16 @@ export default function AdminResultsAnalysis() {
         failRate: Math.round((fail / total) * 100)
       };
     }).sort((a, b) => a.failRate - b.failRate);
-  }, [validEndOfTermResults]);
+  }, [studentSubjectAverages, results, learners]);
 
-  // ==================== PDF DOWNLOAD FUNCTION ====================
+  // ==================== UPDATED PDF DOWNLOAD FUNCTION USING AVERAGES ====================
   const handleDownloadPDF = async () => {
     try {
-      if (validEndOfTermResults.length === 0) {
+      if (studentSubjectAverages.size === 0) {
         showNotification(
           'warning',
           'No data to export',
-          'There are no valid end of term results for the selected filters.'
+          'There are no valid results for the selected filters.'
         );
         return;
       }
@@ -868,20 +963,20 @@ export default function AdminResultsAnalysis() {
         'Please wait while we prepare your download.'
       );
 
-      // Calculate metrics for a group of results
-      const calculateMetrics = (resultsArray: StudentResult[]): SubjectMetrics => {
-        const total = resultsArray.length;
+      // Calculate metrics for a group of grades
+      const calculateMetrics = (grades: number[]): SubjectMetrics => {
+        const total = grades.length;
         
-        // Grade distribution using PDF legend ranges
-        const dist = resultsArray.filter(r => r.grade <= 2).length;
-        const merit = resultsArray.filter(r => r.grade >= 3 && r.grade <= 4).length;
-        const credit = resultsArray.filter(r => r.grade >= 5 && r.grade <= 6).length;
-        const pass = resultsArray.filter(r => r.grade >= 7 && r.grade <= 8).length;
-        const fail = resultsArray.filter(r => r.grade === 9).length;
+        // Grade distribution using updated ranges
+        const dist = grades.filter(g => g <= 2).length;                 // Grades 1-2
+        const merit = grades.filter(g => g >= 3 && g <= 4).length;      // Grades 3-4
+        const credit = grades.filter(g => g >= 5 && g <= 6).length;     // Grades 5-6
+        const pass = grades.filter(g => g === 7).length;                // Grade 7 only
+        const fail = grades.filter(g => g >= 8).length;                 // Grades 8-9
         
-        // Quality and quantity passes as per PDF legend
-        const quality = resultsArray.filter(r => r.grade <= 4).length;
-        const quantity = resultsArray.filter(r => r.grade <= 8).length;
+        // Quality and quantity passes as per updated definitions
+        const quality = grades.filter(g => g <= 2).length;              // Quality: Grades 1-2
+        const quantity = grades.filter(g => g >= 3 && g <= 7).length;   // Quantity: Grades 3-7
 
         return {
           registered: total,
@@ -897,40 +992,42 @@ export default function AdminResultsAnalysis() {
         };
       };
 
-      // Build subject data array
+      // Build subject data array using averages
       const subjects: SubjectData[] = [];
 
-      for (const [subjectId, subjectResults] of subjectGroups.entries()) {
-        // Get display name
-        const displayName = subjectNameMap.get(subjectId) || 
-                            subjectResults[0]?.subjectName || 
-                            subjectId;
+      // Group by subject using our averages map
+      const subjectGradesMap = new Map<string, { boys: number[]; girls: number[]; unknown: number[] }>();
+      
+      studentSubjectAverages.forEach((subjectMap, studentId) => {
+        const gender = getStudentGender(studentId);
         
-        // Split by gender
-        const boysResults: StudentResult[] = [];
-        const girlsResults: StudentResult[] = [];
-        const unknownResults: StudentResult[] = [];
-        
-        subjectResults.forEach(result => {
-          const gender = getStudentGender(result.studentId);
+        subjectMap.forEach(({ avgGrade }, subjectId) => {
+          if (!subjectGradesMap.has(subjectId)) {
+            subjectGradesMap.set(subjectId, { boys: [], girls: [], unknown: [] });
+          }
           
+          const data = subjectGradesMap.get(subjectId)!;
           if (gender === 'M') {
-            boysResults.push(result);
+            data.boys.push(avgGrade);
           } else if (gender === 'F') {
-            girlsResults.push(result);
+            data.girls.push(avgGrade);
           } else {
-            unknownResults.push(result);
+            data.unknown.push(avgGrade);
           }
         });
+      });
 
-        // Include subjects with results
-        if (boysResults.length > 0 || girlsResults.length > 0 || unknownResults.length > 0) {
-          subjects.push({
-            name: displayName,
-            boys: calculateMetrics([...boysResults, ...unknownResults]),
-            girls: calculateMetrics(girlsResults)
-          });
-        }
+      // Convert to SubjectData format
+      for (const [subjectId, grades] of subjectGradesMap.entries()) {
+        const displayName = subjectNameMap.get(subjectId) || 
+                            results.find(r => r.subjectId === subjectId)?.subjectName || 
+                            subjectId;
+        
+        subjects.push({
+          name: displayName,
+          boys: calculateMetrics([...grades.boys, ...grades.unknown]),
+          girls: calculateMetrics(grades.girls)
+        });
       }
 
       // Sort subjects alphabetically
@@ -1076,7 +1173,7 @@ export default function AdminResultsAnalysis() {
               </h1>
               <p className="text-xs sm:text-sm text-gray-600 mt-1 flex items-center gap-1 sm:gap-2 flex-wrap">
                 <School size={14} className="text-gray-400 flex-shrink-0" />
-                <span className="truncate">End of Term Performance • {selectedTerm} {selectedYear}</span>
+                <span className="truncate">Average of All Tests • {selectedTerm} {selectedYear}</span>
                 {isFetching && (
                   <span className="inline-flex items-center gap-1 text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full text-[10px] sm:text-xs whitespace-nowrap">
                     <Loader2 size={10} className="animate-spin" />
@@ -1090,7 +1187,7 @@ export default function AdminResultsAnalysis() {
             <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
               <button
                 onClick={handleDownloadPDF}
-                disabled={validEndOfTermResults.length === 0 || isFetching || isDownloading}
+                disabled={studentSubjectAverages.size === 0 || isFetching || isDownloading}
                 className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm whitespace-nowrap"
               >
                 {isDownloading ? (
@@ -1131,7 +1228,7 @@ export default function AdminResultsAnalysis() {
           </div>
         </div>
 
-        {/* School Overview Stats */}
+        {/* ==================== UPDATED SCHOOL OVERVIEW STATS ==================== */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 lg:gap-4 mb-4 sm:mb-6 lg:mb-8">
           <StatCard
             title="Total Students"
@@ -1141,23 +1238,23 @@ export default function AdminResultsAnalysis() {
             color="blue"
           />
           <StatCard
-            title="Pass Rate"
-            value={`${schoolMetrics.passRate}%`}
-            subValue={`${schoolMetrics.distinctionRate}% distinction`}
+            title="Quality Pass"
+            value={`${schoolMetrics.qualityRate}%`}
+            subValue={`Grades 1-2 (Distinction)`}
             icon={Target}
             color="green"
           />
           <StatCard
-            title="Average Score"
-            value={`${schoolMetrics.averageScore}%`}
-            subValue="Mean performance"
+            title="Quantity Pass"
+            value={`${schoolMetrics.quantityRate}%`}
+            subValue={`Grades 3-7`}
             icon={GraduationCap}
             color="amber"
           />
           <StatCard
             title="Fail Rate"
             value={`${schoolMetrics.failRate}%`}
-            subValue="Grade 9 students"
+            subValue={`Grades 8-9`}
             icon={AlertCircle}
             color="rose"
           />
@@ -1285,7 +1382,7 @@ export default function AdminResultsAnalysis() {
         </div>
 
         {/* Main Content */}
-        {validEndOfTermResults.length === 0 ? (
+        {studentSubjectAverages.size === 0 ? (
           <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 p-8 sm:p-12 text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gray-100 rounded-full mb-3 sm:mb-4">
               <FileText className="text-gray-400" size={24} />
@@ -1293,8 +1390,8 @@ export default function AdminResultsAnalysis() {
             <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mb-1 sm:mb-2">No Results Available</h3>
             <p className="text-sm sm:text-base text-gray-600 max-w-md mx-auto">
               {selectedClass !== 'all' 
-                ? `No end of term results found for ${classes.find(c => c.id === selectedClass)?.name}.`
-                : 'No end of term results have been entered yet.'}
+                ? `No results found for ${classes.find(c => c.id === selectedClass)?.name}.`
+                : 'No results have been entered yet.'}
             </p>
           </div>
         ) : (
@@ -1306,7 +1403,7 @@ export default function AdminResultsAnalysis() {
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <div>
                     <h3 className="text-sm sm:text-base font-semibold text-gray-900">Grade Distribution</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Overall performance with gender breakdown</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Based on averages of all tests</p>
                   </div>
                   <div className="flex items-center gap-3 sm:gap-4 text-xs">
                     <div className="flex items-center gap-1 sm:gap-2">
@@ -1371,7 +1468,7 @@ export default function AdminResultsAnalysis() {
                   </tbody>
                   <tfoot className="bg-gray-50 border-t border-gray-200">
                     <tr>
-                      <td colSpan={2} className="px-6 py-3 text-sm font-semibold text-gray-900 whitespace-nowrap">Total Students</td>
+                      <td colSpan={2} className="px-6 py-3 text-sm font-semibold text-gray-900 whitespace-nowrap">Total Assessments</td>
                       <td className="px-6 py-3 text-sm font-semibold text-blue-600 whitespace-nowrap">
                         {gradeDistribution.reduce((sum, g) => sum + g.boys, 0)}
                       </td>
@@ -1393,7 +1490,7 @@ export default function AdminResultsAnalysis() {
               <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
                   <h3 className="text-sm sm:text-base font-semibold text-gray-900">Class Performance Summary</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Quick overview of all classes</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Based on averages of all tests</p>
                 </div>
 
                 {/* Mobile Card View */}
@@ -1405,7 +1502,7 @@ export default function AdminResultsAnalysis() {
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>
                         <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Class</th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Students</th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Assessments</th>
                         <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Boys/Girls</th>
                         <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Quality</th>
                         <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap">Quantity</th>
@@ -1466,7 +1563,7 @@ export default function AdminResultsAnalysis() {
               <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
                   <h3 className="text-sm sm:text-base font-semibold text-gray-900">Subject Performance</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Performance metrics by subject</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Based on averages of all tests</p>
                 </div>
 
                 {/* Mobile Card View */}
@@ -1532,10 +1629,12 @@ export default function AdminResultsAnalysis() {
         <div className="mt-4 sm:mt-6 lg:mt-8 pt-4 sm:pt-6 border-t border-gray-200">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
             <p className="text-[10px] sm:text-xs text-gray-500">
-              {validEndOfTermResults.length > 0 ? (
+              {studentSubjectAverages.size > 0 ? (
                 <>
-                  <span className="font-medium">Data source:</span> End of Term Results • 
-                  <span className="font-medium ml-1">Total assessments:</span> {schoolMetrics.totalAssessments}
+                  <span className="font-medium">Data source:</span> Averages of all tests • 
+                  <span className="font-medium ml-1">Quality (Grades 1-2):</span> {schoolMetrics.qualityRate}% • 
+                  <span className="font-medium ml-1">Quantity (Grades 3-7):</span> {schoolMetrics.quantityRate}% • 
+                  <span className="font-medium ml-1">Fail (Grades 8-9):</span> {schoolMetrics.failRate}%
                 </>
               ) : (
                 'No results data available for the current selection'
