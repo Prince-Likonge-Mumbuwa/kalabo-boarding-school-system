@@ -68,7 +68,7 @@ const ModeToggle = ({
   </div>
 );
 
-// ==================== SIMPLE STATS CARD ====================
+// ==================== IMPROVED STATS CARD ====================
 const StatCard = ({ label, value, icon, color }: { label: string; value: number; icon: React.ReactNode; color: string }) => {
   const colors = {
     green: 'bg-green-50 text-green-700 border-green-200',
@@ -79,15 +79,25 @@ const StatCard = ({ label, value, icon, color }: { label: string; value: number;
   };
 
   return (
-    <div className={`rounded-lg sm:rounded-xl border p-3 sm:p-4 ${colors[color as keyof typeof colors] || colors.blue}`}>
-      <div className="flex items-center justify-between">
-        <div className="min-w-0 flex-1">
-          <p className="text-xs sm:text-sm font-medium opacity-80 truncate">{label}</p>
-          <p className="text-lg sm:text-xl lg:text-2xl font-bold mt-1 truncate">{value}</p>
+    <div className={`rounded-lg sm:rounded-xl border p-2 sm:p-3 lg:p-4 ${colors[color as keyof typeof colors] || colors.blue}`}>
+      <div className="flex flex-col gap-1 sm:gap-2">
+        {/* Label and Icon Row - Always visible */}
+        <div className="flex items-center justify-between">
+          <p className="text-xs sm:text-sm font-medium opacity-80 truncate pr-2">{label}</p>
+          <div className="p-1 sm:p-1.5 bg-white/50 rounded-lg flex-shrink-0">
+            {icon}
+          </div>
         </div>
-        <div className="p-1.5 sm:p-2 bg-white/50 rounded-lg ml-2 flex-shrink-0">
-          <div className="w-4 h-4 sm:w-5 sm:h-5">{icon}</div>
-        </div>
+        
+        {/* Value - Always visible with larger text */}
+        <p className="text-lg sm:text-xl lg:text-2xl xl:text-3xl font-bold truncate">
+          {value}
+        </p>
+        
+        {/* Small hint for very small screens */}
+        <p className="text-[8px] sm:text-[10px] text-gray-500 opacity-70 truncate hidden xs:block">
+          {value} {label.toLowerCase()}
+        </p>
       </div>
     </div>
   );
@@ -198,11 +208,12 @@ export default function AttendanceTracking() {
     if (selectedClass && selectedDate) {
       loadAttendance();
     }
-  }, [selectedClass, selectedDate]);
+  }, [selectedClass, selectedDate, selectedSubject, selectedPeriod]);
 
   const loadAttendance = async () => {
     setLoadingAttendance(true);
     try {
+      // For periodic attendance, we might want to filter by subject/period
       const records = await attendanceService.getByClassAndDate(selectedClass, selectedDate);
       setAttendanceRecords(records);
       setLocalAttendance(new Map());
@@ -243,13 +254,15 @@ export default function AttendanceTracking() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [studentsWithAttendance, searchTerm, statusFilter]);
 
-  // Calculate stats
+  // Calculate stats - FIXED: Show numbers for all students, not just filtered
   const stats = useMemo(() => {
-    const total = filteredStudents.length;
-    const present = filteredStudents.filter(s => s.attendance?.status === 'present').length;
-    const absent = filteredStudents.filter(s => s.attendance?.status === 'absent').length;
-    const late = filteredStudents.filter(s => s.attendance?.status === 'late').length;
-    const excused = filteredStudents.filter(s => s.attendance?.status === 'excused').length;
+    // Use all students with attendance, not just filtered
+    const allStudents = studentsWithAttendance;
+    const total = allStudents.length;
+    const present = allStudents.filter(s => s.attendance?.status === 'present').length;
+    const absent = allStudents.filter(s => s.attendance?.status === 'absent').length;
+    const late = allStudents.filter(s => s.attendance?.status === 'late').length;
+    const excused = allStudents.filter(s => s.attendance?.status === 'excused').length;
     
     return {
       total,
@@ -260,7 +273,7 @@ export default function AttendanceTracking() {
       presentCount: present + late,
       unsavedChanges: localAttendance.size
     };
-  }, [filteredStudents, localAttendance.size]);
+  }, [studentsWithAttendance, localAttendance.size]);
 
   // Handle status change
   const handleStatusChange = (studentId: string, status: AttendanceStatus, reason?: string) => {
@@ -507,19 +520,29 @@ export default function AttendanceTracking() {
             </div>
           </div>
 
-          {/* Stats Cards */}
-          <div className="grid grid-cols-4 gap-1.5 sm:gap-2 lg:gap-3">
-            <StatCard label="Present" value={stats.presentCount} icon={<UserCheck size={16} />} color="green" />
-            <StatCard label="Absent" value={stats.absent} icon={<UserX size={16} />} color="red" />
-            <StatCard label="Late" value={stats.late} icon={<Clock size={16} />} color="yellow" />
-            <StatCard label="Excused" value={stats.excused} icon={<AlertCircle size={16} />} color="purple" />
+          {/* IMPROVED Stats Cards - Numbers always visible */}
+          <div className="grid grid-cols-2 xs:grid-cols-4 gap-2 sm:gap-3 lg:gap-4">
+            <StatCard label="Present" value={stats.presentCount} icon={<UserCheck size={14} className="sm:w-4 sm:h-4" />} color="green" />
+            <StatCard label="Absent" value={stats.absent} icon={<UserX size={14} className="sm:w-4 sm:h-4" />} color="red" />
+            <StatCard label="Late" value={stats.late} icon={<Clock size={14} className="sm:w-4 sm:h-4" />} color="yellow" />
+            <StatCard label="Excused" value={stats.excused} icon={<AlertCircle size={14} className="sm:w-4 sm:h-4" />} color="purple" />
+          </div>
+
+          {/* Total Students Bar */}
+          <div className="flex items-center justify-between px-2 sm:px-3 py-1.5 sm:py-2 bg-blue-50 rounded-lg border border-blue-100">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <Users size={12} className="sm:w-4 sm:h-4 text-blue-600" />
+              <span className="text-xs sm:text-sm text-blue-700 font-medium">Total Students</span>
+            </div>
+            <span className="text-sm sm:text-base lg:text-lg font-bold text-blue-800">{stats.total}</span>
           </div>
 
           {/* Action Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               {stats.unsavedChanges > 0 && (
-                <span className="text-xs sm:text-sm text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg whitespace-nowrap">
+                <span className="text-xs sm:text-sm text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg whitespace-nowrap flex items-center gap-1">
+                  <Clock size={12} />
                   {stats.unsavedChanges} unsaved
                 </span>
               )}
@@ -535,6 +558,7 @@ export default function AttendanceTracking() {
                 onClick={loadAttendance}
                 disabled={isLoading}
                 className="p-2 sm:p-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 flex-shrink-0"
+                title="Refresh"
               >
                 <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
               </button>
@@ -552,7 +576,10 @@ export default function AttendanceTracking() {
 
           {/* Student List */}
           {isLoading ? (
-            <div className="text-center py-8 text-sm text-gray-500">Loading...</div>
+            <div className="flex items-center justify-center py-12 bg-white rounded-xl border border-gray-200">
+              <Loader2 size={24} className="animate-spin text-blue-600" />
+              <span className="ml-2 text-sm text-gray-600">Loading students...</span>
+            </div>
           ) : (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               {/* Header */}
@@ -567,103 +594,146 @@ export default function AttendanceTracking() {
                           setSelectedStudents(new Set(filteredStudents.map(s => s.id)));
                         }
                       }}
-                      className="w-4 h-4 sm:w-5 sm:h-5 border-2 rounded flex items-center justify-center flex-shrink-0"
+                      className={`w-4 h-4 sm:w-5 sm:h-5 border-2 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                        selectedStudents.size === filteredStudents.length && filteredStudents.length > 0
+                          ? 'border-blue-600 bg-blue-600'
+                          : 'border-gray-300 hover:border-gray-400'
+                      }`}
                     >
                       {selectedStudents.size === filteredStudents.length && filteredStudents.length > 0 && 
-                        <Check size={10} className="sm:w-3 sm:h-3 text-blue-600" />
+                        <Check size={10} className="sm:w-3 sm:h-3 text-white" />
                       }
                     </button>
-                    <span className="text-xs sm:text-sm font-medium">{selectedStudents.size} selected</span>
+                    <span className="text-xs sm:text-sm font-medium">
+                      {selectedStudents.size > 0 ? `${selectedStudents.size} selected` : 'Select all'}
+                    </span>
                   </div>
-                  <span className="text-xs sm:text-sm text-gray-500">{filteredStudents.length} students</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs sm:text-sm text-gray-500">
+                      {filteredStudents.length} of {studentsWithAttendance.length} students
+                    </span>
+                    {filteredStudents.length < studentsWithAttendance.length && (
+                      <button
+                        onClick={() => setStatusFilter('all')}
+                        className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        Show all
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* Student Rows - UPDATED LAYOUT: Name on top, status buttons below */}
-              <div className="divide-y divide-gray-100">
-                {filteredStudents.map(student => (
-                  <div key={student.id} className={`p-3 sm:p-4 ${selectedStudents.has(student.id) ? 'bg-blue-50/50' : ''}`}>
-                    <div className="flex items-start gap-2 sm:gap-3">
-                      <button
-                        onClick={() => {
-                          setSelectedStudents(prev => {
-                            const newSet = new Set(prev);
-                            if (newSet.has(student.id)) newSet.delete(student.id);
-                            else newSet.add(student.id);
-                            return newSet;
-                          });
-                        }}
-                        className={`mt-1 w-4 h-4 sm:w-5 sm:h-5 border-2 rounded flex items-center justify-center flex-shrink-0 ${
-                          selectedStudents.has(student.id) ? 'border-blue-600 bg-blue-600' : 'border-gray-300'
-                        }`}
-                      >
-                        {selectedStudents.has(student.id) && <Check size={10} className="sm:w-3 sm:h-3 text-white" />}
-                      </button>
+              {/* Student Rows - Improved layout */}
+              <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
+                {filteredStudents.length > 0 ? (
+                  filteredStudents.map(student => (
+                    <div key={student.id} className={`p-3 sm:p-4 hover:bg-gray-50/50 transition-colors ${
+                      selectedStudents.has(student.id) ? 'bg-blue-50/30' : ''
+                    }`}>
+                      <div className="flex items-start gap-2 sm:gap-3">
+                        {/* Checkbox */}
+                        <button
+                          onClick={() => {
+                            setSelectedStudents(prev => {
+                              const newSet = new Set(prev);
+                              if (newSet.has(student.id)) newSet.delete(student.id);
+                              else newSet.add(student.id);
+                              return newSet;
+                            });
+                          }}
+                          className={`mt-1 w-4 h-4 sm:w-5 sm:h-5 border-2 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                            selectedStudents.has(student.id) 
+                              ? 'border-blue-600 bg-blue-600' 
+                              : 'border-gray-300 hover:border-gray-400'
+                          }`}
+                        >
+                          {selectedStudents.has(student.id) && <Check size={10} className="sm:w-3 sm:h-3 text-white" />}
+                        </button>
 
-                      <div className="flex-1 min-w-0">
-                        {/* Name and Gender - Horizontal row */}
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm sm:text-base font-medium truncate max-w-[150px] sm:max-w-[200px]">
-                            {student.name}
-                          </span>
-                          <span className={`text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap ${
-                            student.gender === 'male' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'
-                          }`}>
-                            {student.gender === 'male' ? 'B' : 'G'}
-                          </span>
-                          {localAttendance.has(student.id) && (
-                            <span className="text-[8px] sm:text-xs px-1.5 sm:px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full whitespace-nowrap">
-                              Unsaved
+                        {/* Student Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-col xs:flex-row xs:items-center gap-1 xs:gap-2 flex-wrap">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm sm:text-base font-medium truncate max-w-[120px] xs:max-w-[150px] sm:max-w-[200px]">
+                                {student.name}
+                              </span>
+                              <span className={`text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${
+                                student.gender === 'male' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'
+                              }`}>
+                                {student.gender === 'male' ? 'B' : 'G'}
+                              </span>
+                            </div>
+                            <span className="text-[10px] sm:text-xs text-gray-500 font-mono truncate">
+                              {student.studentId}
                             </span>
+                            {localAttendance.has(student.id) && (
+                              <span className="text-[8px] sm:text-xs px-1.5 sm:px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full whitespace-nowrap inline-flex items-center gap-0.5">
+                                <Clock size={8} />
+                                Unsaved
+                              </span>
+                            )}
+                          </div>
+                          
+                          {/* Status Buttons - Compact and responsive */}
+                          <div className="grid grid-cols-4 gap-1 mt-2 sm:mt-3">
+                            {(['present', 'absent', 'late', 'excused'] as AttendanceStatus[]).map(status => {
+                              const isActive = student.attendance?.status === status;
+                              const colors = {
+                                present: isActive 
+                                  ? 'bg-green-600 text-white border-green-600' 
+                                  : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100',
+                                absent: isActive 
+                                  ? 'bg-red-600 text-white border-red-600' 
+                                  : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100',
+                                late: isActive 
+                                  ? 'bg-yellow-600 text-white border-yellow-600' 
+                                  : 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100',
+                                excused: isActive 
+                                  ? 'bg-purple-600 text-white border-purple-600' 
+                                  : 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
+                              };
+                              
+                              return (
+                                <button
+                                  key={status}
+                                  onClick={() => {
+                                    if (status === 'excused') {
+                                      setExcuseModal({ isOpen: true, studentId: student.id, studentName: student.name });
+                                    } else {
+                                      handleStatusChange(student.id, status);
+                                    }
+                                  }}
+                                  className={`px-1 sm:px-2 py-1.5 sm:py-2 rounded-lg text-[10px] sm:text-xs font-medium border transition-all flex items-center justify-center gap-0.5 sm:gap-1 ${colors[status]}`}
+                                >
+                                  <span className="hidden xs:inline">{status.charAt(0).toUpperCase() + status.slice(1)}</span>
+                                  <span className="xs:hidden">
+                                    {status === 'present' && 'P'}
+                                    {status === 'absent' && 'A'}
+                                    {status === 'late' && 'L'}
+                                    {status === 'excused' && 'E'}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Excuse Reason */}
+                          {student.attendance?.status === 'excused' && student.attendance.excuseReason && (
+                            <div className="mt-2 text-[10px] sm:text-xs text-purple-600 bg-purple-50 p-2 rounded-lg flex items-start gap-1">
+                              <MessageSquare size={10} className="flex-shrink-0 mt-0.5" />
+                              <span className="break-words">{student.attendance.excuseReason}</span>
+                            </div>
                           )}
-                        </div>
-                        
-                        {/* Student ID */}
-                        <p className="text-[10px] sm:text-xs text-gray-500 font-mono mt-0.5 truncate">{student.studentId}</p>
-                        
-                        {/* Status Buttons - Below name */}
-                        <div className="flex gap-1 mt-2 sm:mt-3">
-                          {(['present', 'absent', 'late', 'excused'] as AttendanceStatus[]).map(status => {
-                            const isActive = student.attendance?.status === status;
-                            const colors = {
-                              present: isActive ? 'bg-green-600 text-white' : 'bg-green-50 text-green-700 hover:bg-green-100',
-                              absent: isActive ? 'bg-red-600 text-white' : 'bg-red-50 text-red-700 hover:bg-red-100',
-                              late: isActive ? 'bg-yellow-600 text-white' : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100',
-                              excused: isActive ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-700 hover:bg-purple-100',
-                            };
-                            
-                            return (
-                              <button
-                                key={status}
-                                onClick={() => {
-                                  if (status === 'excused') {
-                                    setExcuseModal({ isOpen: true, studentId: student.id, studentName: student.name });
-                                  } else {
-                                    handleStatusChange(student.id, status);
-                                  }
-                                }}
-                                className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full text-xs sm:text-sm font-medium transition-all flex items-center justify-center ${colors[status]}`}
-                              >
-                                {status === 'present' && 'P'}
-                                {status === 'absent' && 'A'}
-                                {status === 'late' && 'L'}
-                                {status === 'excused' && 'E'}
-                              </button>
-                            );
-                          })}
                         </div>
                       </div>
                     </div>
-
-                    {/* Excuse Reason */}
-                    {student.attendance?.status === 'excused' && student.attendance.excuseReason && (
-                      <div className="mt-2 ml-6 sm:ml-8 text-[10px] sm:text-xs text-purple-600 bg-purple-50 p-2 rounded-lg">
-                        <MessageSquare size={10} className="inline mr-1" />
-                        {student.attendance.excuseReason}
-                      </div>
-                    )}
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-sm text-gray-500">
+                    No students match your filters
                   </div>
-                ))}
+                )}
               </div>
             </div>
           )}
@@ -671,53 +741,65 @@ export default function AttendanceTracking() {
 
         {/* Bulk Action Bar - Mobile Optimized */}
         {selectedStudents.size > 0 && (
-          <div className="fixed bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-2xl border border-gray-200 p-2 sm:p-3 flex gap-1 sm:gap-2 w-[95%] sm:w-auto overflow-x-auto">
-            <div className="flex gap-1 sm:gap-2 min-w-max">
-              <button
-                onClick={() => handleBulkStatus('present')}
-                className="px-2 sm:px-4 py-1.5 sm:py-2 bg-green-600 text-white rounded-lg text-xs sm:text-sm hover:bg-green-700 whitespace-nowrap"
-              >
-                Present
-              </button>
-              <button
-                onClick={() => handleBulkStatus('absent')}
-                className="px-2 sm:px-4 py-1.5 sm:py-2 bg-red-600 text-white rounded-lg text-xs sm:text-sm hover:bg-red-700 whitespace-nowrap"
-              >
-                Absent
-              </button>
-              <button
-                onClick={() => handleBulkStatus('late')}
-                className="px-2 sm:px-4 py-1.5 sm:py-2 bg-yellow-600 text-white rounded-lg text-xs sm:text-sm hover:bg-yellow-700 whitespace-nowrap"
-              >
-                Late
-              </button>
-              <button
-                onClick={() => setExcuseModal({ isOpen: true, studentId: 'bulk', studentName: `${selectedStudents.size} students` })}
-                className="px-2 sm:px-4 py-1.5 sm:py-2 bg-purple-600 text-white rounded-lg text-xs sm:text-sm hover:bg-purple-700 whitespace-nowrap"
-              >
-                Excuse
-              </button>
+          <div className="fixed bottom-3 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-2xl border border-gray-200 p-2 w-[calc(100%-24px)] sm:w-auto z-50">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs sm:text-sm font-medium text-gray-700 px-2">
+                {selectedStudents.size} selected
+              </span>
+              <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-0.5">
+                <button
+                  onClick={() => handleBulkStatus('present')}
+                  className="px-2 sm:px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs sm:text-sm hover:bg-green-700 whitespace-nowrap flex items-center gap-1"
+                >
+                  <UserCheck size={12} />
+                  <span>Present</span>
+                </button>
+                <button
+                  onClick={() => handleBulkStatus('absent')}
+                  className="px-2 sm:px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs sm:text-sm hover:bg-red-700 whitespace-nowrap flex items-center gap-1"
+                >
+                  <UserX size={12} />
+                  <span>Absent</span>
+                </button>
+                <button
+                  onClick={() => handleBulkStatus('late')}
+                  className="px-2 sm:px-3 py-1.5 bg-yellow-600 text-white rounded-lg text-xs sm:text-sm hover:bg-yellow-700 whitespace-nowrap flex items-center gap-1"
+                >
+                  <Clock size={12} />
+                  <span>Late</span>
+                </button>
+                <button
+                  onClick={() => setExcuseModal({ isOpen: true, studentId: 'bulk', studentName: `${selectedStudents.size} students` })}
+                  className="px-2 sm:px-3 py-1.5 bg-purple-600 text-white rounded-lg text-xs sm:text-sm hover:bg-purple-700 whitespace-nowrap flex items-center gap-1"
+                >
+                  <AlertCircle size={12} />
+                  <span>Excuse</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
 
         {/* Excuse Modal - Mobile Optimized */}
         {excuseModal.isOpen && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3 sm:p-4">
-            <div className="bg-white rounded-xl max-w-md w-full p-4 sm:p-6">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3">
+            <div className="bg-white rounded-xl max-w-md w-full p-4 sm:p-6 animate-in fade-in zoom-in duration-200">
               <h3 className="text-base sm:text-lg font-semibold mb-2">Excuse Reason</h3>
-              <p className="text-xs sm:text-sm text-gray-600 mb-3 sm:mb-4 truncate">{excuseModal.studentName}</p>
+              <p className="text-xs sm:text-sm text-gray-600 mb-3 sm:mb-4 break-words">
+                {excuseModal.studentName}
+              </p>
               
               <textarea
-                className="w-full border-2 border-gray-200 rounded-lg p-2 sm:p-3 text-xs sm:text-sm min-h-[80px] sm:min-h-[100px]"
-                placeholder="Enter reason..."
+                className="w-full border-2 border-gray-200 rounded-lg p-2 sm:p-3 text-xs sm:text-sm min-h-[80px] focus:border-purple-500 focus:outline-none"
+                placeholder="Enter reason for absence..."
                 id="excuseReason"
+                autoFocus
               />
               
               <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-3 sm:mt-4">
                 <button
                   onClick={() => setExcuseModal({ isOpen: false })}
-                  className="w-full sm:flex-1 px-4 py-2 border-2 border-gray-200 rounded-lg text-xs sm:text-sm order-2 sm:order-1"
+                  className="w-full sm:flex-1 px-4 py-2 border-2 border-gray-200 rounded-lg text-xs sm:text-sm hover:bg-gray-50 transition-colors order-2 sm:order-1"
                 >
                   Cancel
                 </button>
@@ -733,7 +815,7 @@ export default function AttendanceTracking() {
                       setExcuseModal({ isOpen: false });
                     }
                   }}
-                  className="w-full sm:flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg text-xs sm:text-sm order-1 sm:order-2"
+                  className="w-full sm:flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg text-xs sm:text-sm hover:bg-purple-700 transition-colors order-1 sm:order-2"
                 >
                   Submit
                 </button>

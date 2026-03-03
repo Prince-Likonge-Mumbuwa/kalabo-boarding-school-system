@@ -1,4 +1,4 @@
-// @/services/pdf/markSchedulePDF.ts - UPDATED WITH IMPROVED MARKS HANDLING
+// @/services/pdf/markSchedulePDF.ts - UPDATED WITH NOT CONDUCTED HANDLING
 
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
@@ -21,6 +21,7 @@ interface MarkScheduleOptions {
     week8?: Array<{ studentId: string; marks: number; studentName: string }>;
     endOfTerm?: Array<{ studentId: string; marks: number; studentName: string }>;
   };
+  isNotConducted?: boolean;
 }
 
 export const generateMarkSchedulePDF = async ({
@@ -33,7 +34,8 @@ export const generateMarkSchedulePDF = async ({
   students,
   teacherName,
   schoolName,
-  allExamData
+  allExamData,
+  isNotConducted = false
 }: MarkScheduleOptions): Promise<void> => {
   try {
     console.log('📄 PDF Generator - Starting with data:', {
@@ -44,7 +46,8 @@ export const generateMarkSchedulePDF = async ({
       year,
       totalMarks,
       studentCount: students.length,
-      studentsWithMarks: students.filter(s => s.marks && s.marks !== '').length,
+      isNotConducted,
+      studentsWithMarks: students.filter(s => s.marks && s.marks !== '' && s.marks !== 'N/A').length,
       sampleStudent: students[0] ? {
         name: students[0].name,
         marks: students[0].marks
@@ -127,7 +130,7 @@ export const generateMarkSchedulePDF = async ({
 
     // Create info box
     const infoBoxY = yPosition;
-    const infoBoxHeight = 70;
+    const infoBoxHeight = 80;
     
     // Draw info box background
     currentPage.drawRectangle({
@@ -135,18 +138,33 @@ export const generateMarkSchedulePDF = async ({
       y: infoBoxY - infoBoxHeight,
       width: contentWidth,
       height: infoBoxHeight,
-      color: rgb(0.95, 0.97, 1),
-      borderColor: rgb(0.7, 0.7, 0.7),
+      color: isNotConducted ? rgb(0.97, 0.97, 0.97) : rgb(0.95, 0.97, 1),
+      borderColor: isNotConducted ? rgb(0.8, 0.8, 0.8) : rgb(0.7, 0.7, 0.7),
       borderWidth: 0.5,
     });
+
+    // If not conducted, add a prominent badge
+    if (isNotConducted) {
+      const badgeText = 'TEST NOT CONDUCTED';
+      currentPage.drawText(badgeText, {
+        x: centerText(badgeText, 14),
+        y: infoBoxY - 15,
+        size: 14,
+        font: helveticaBold,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+    }
 
     // Format exam type for display
     const examTypeDisplay = examType === 'week4' ? 'Week 4' : 
                            examType === 'week8' ? 'Week 8' : 'End of Term';
 
     // Count entered marks and calculate statistics
-    const enteredMarks = students.filter(s => s.marks && s.marks !== '' && s.marks.toLowerCase() !== 'x');
+    const enteredMarks = students.filter(s => 
+      s.marks && s.marks !== '' && s.marks.toLowerCase() !== 'x' && s.marks !== 'N/A'
+    );
     const absentCount = students.filter(s => s.marks.toLowerCase() === 'x').length;
+    const notConductedCount = students.filter(s => s.marks === 'N/A').length;
     const enteredCount = enteredMarks.length;
     
     // Calculate average if there are marks
@@ -189,7 +207,7 @@ export const generateMarkSchedulePDF = async ({
     // Row 2
     infoY -= 18;
     drawInfoItem('Term:', `${term} ${year}`, infoX, infoY);
-    drawInfoItem('Total:', totalMarks.toString(), infoX + 150, infoY);
+    drawInfoItem('Total:', isNotConducted ? 'N/A' : totalMarks.toString(), infoX + 150, infoY);
     drawInfoItem('Teacher:', teacherName, infoX + 300, infoY);
 
     // Row 3
@@ -197,7 +215,16 @@ export const generateMarkSchedulePDF = async ({
     const today = new Date();
     drawInfoItem('Date:', today.toLocaleDateString(), infoX, infoY);
     drawInfoItem('Students:', students.length.toString(), infoX + 150, infoY);
-    drawInfoItem('Entered:', `${enteredCount}/${students.length}`, infoX + 300, infoY);
+    drawInfoItem('Entered:', isNotConducted ? 'N/A' : `${enteredCount}/${students.length}`, infoX + 300, infoY);
+
+    // Row 4 - Additional stats when not conducted
+    if (isNotConducted) {
+      infoY -= 18;
+      drawInfoItem('Status:', 'NOT CONDUCTED', infoX + 150, infoY);
+    } else if (notConductedCount > 0) {
+      infoY -= 18;
+      drawInfoItem('N/A:', notConductedCount.toString(), infoX + 150, infoY);
+    }
 
     yPosition = infoBoxY - infoBoxHeight - 20;
 
@@ -218,7 +245,7 @@ export const generateMarkSchedulePDF = async ({
       y: yPosition - 5,
       width: contentWidth,
       height: 20,
-      color: rgb(0.2, 0.4, 0.6),
+      color: isNotConducted ? rgb(0.5, 0.5, 0.5) : rgb(0.2, 0.4, 0.6),
     });
 
     // Draw header text
@@ -238,6 +265,7 @@ export const generateMarkSchedulePDF = async ({
     const calculateGrade = (marksNum: number | null): { grade: string; color: any } => {
       if (marksNum === null || isNaN(marksNum)) return { grade: '-', color: rgb(0.5, 0.5, 0.5) };
       if (marksNum === -1) return { grade: 'ABS', color: rgb(0.7, 0.3, 0.3) };
+      if (marksNum === -2) return { grade: 'N/A', color: rgb(0.5, 0.5, 0.5) };
       
       const percentage = (marksNum / totalMarks) * 100;
       
@@ -268,7 +296,7 @@ export const generateMarkSchedulePDF = async ({
           y: yPosition - 5,
           width: contentWidth,
           height: 20,
-          color: rgb(0.2, 0.4, 0.6),
+          color: isNotConducted ? rgb(0.5, 0.5, 0.5) : rgb(0.2, 0.4, 0.6),
         });
 
         headers.forEach(header => {
@@ -295,20 +323,21 @@ export const generateMarkSchedulePDF = async ({
         });
       }
 
-      // Get marks - ensure we handle empty strings correctly
+      // Get marks - handle different cases
       const marksValue = student.marks || '';
       const marksStr = marksValue.toString().trim();
       const isAbsent = marksStr.toLowerCase() === 'x';
+      const isNA = marksStr === 'N/A' || marksStr === 'na';
       
-      // Parse marks number if not absent and not empty
+      // Parse marks number if not absent, not NA, and not empty
       let marksNum: number | null = null;
-      if (!isAbsent && marksStr !== '') {
+      if (!isAbsent && !isNA && marksStr !== '') {
         marksNum = parseInt(marksStr);
         if (isNaN(marksNum)) marksNum = null;
       }
       
       const percentage = marksNum !== null && !isNaN(marksNum) ? ((marksNum / totalMarks) * 100).toFixed(0) : null;
-      const { grade, color: gradeColor } = calculateGrade(marksNum);
+      const { grade, color: gradeColor } = calculateGrade(isNA ? -2 : marksNum);
 
       // Draw row data
       currentPage.drawText(`${i + 1}`, {
@@ -334,8 +363,26 @@ export const generateMarkSchedulePDF = async ({
         font: helveticaFont,
       });
 
-      // IMPROVED: Marks display with better handling of empty values
-      if (isAbsent) {
+      // IMPROVED: Marks display with better handling of different states
+      if (isNotConducted) {
+        // Entire test not conducted
+        currentPage.drawText('N/A', {
+          x: margin + 315,
+          y: yPosition,
+          size: 9,
+          font: helveticaOblique,
+          color: rgb(0.5, 0.5, 0.5),
+        });
+      } else if (isNA) {
+        // Individual student marked as N/A
+        currentPage.drawText('N/A', {
+          x: margin + 315,
+          y: yPosition,
+          size: 9,
+          font: helveticaOblique,
+          color: rgb(0.5, 0.5, 0.5),
+        });
+      } else if (isAbsent) {
         // Student is absent
         currentPage.drawText('ABS', {
           x: margin + 315,
@@ -364,7 +411,12 @@ export const generateMarkSchedulePDF = async ({
       }
 
       // Score
-      const score = marksNum !== null && !isNaN(marksNum) ? `${marksNum}/${totalMarks}` : '-';
+      let score = '-';
+      if (isNotConducted || isNA) {
+        score = 'N/A';
+      } else if (marksNum !== null && !isNaN(marksNum)) {
+        score = `${marksNum}/${totalMarks}`;
+      }
       currentPage.drawText(score, {
         x: margin + 365,
         y: yPosition,
@@ -373,7 +425,12 @@ export const generateMarkSchedulePDF = async ({
       });
 
       // Percentage
-      const percentText = percentage ? `${percentage}%` : '-';
+      let percentText = '-';
+      if (isNotConducted || isNA) {
+        percentText = 'N/A';
+      } else if (percentage) {
+        percentText = `${percentage}%`;
+      }
       currentPage.drawText(percentText, {
         x: margin + 430,
         y: yPosition,
@@ -402,7 +459,7 @@ export const generateMarkSchedulePDF = async ({
       y: yPosition - 30,
       width: contentWidth,
       height: 40,
-      color: rgb(0.95, 0.95, 0.95),
+      color: isNotConducted ? rgb(0.97, 0.97, 0.97) : rgb(0.95, 0.95, 0.95),
       borderColor: rgb(0.7, 0.7, 0.7),
       borderWidth: 0.5,
     });
@@ -415,25 +472,39 @@ export const generateMarkSchedulePDF = async ({
       font: helveticaBold,
     });
 
-    const summaryItems = [
-      `Total Students: ${students.length}`,
-      `Marks Entered: ${enteredCount}`,
-      `Absent: ${absentCount}`,
-      `Pending: ${students.length - enteredCount - absentCount}`,
-      `Average: ${averageMark}`,
-    ];
+    let summaryItems: string[];
+    if (isNotConducted) {
+      summaryItems = [
+        `Total Students: ${students.length}`,
+        `Status: NOT CONDUCTED`,
+        `-`,
+        `-`,
+        `-`,
+      ];
+    } else {
+      summaryItems = [
+        `Total Students: ${students.length}`,
+        `Marks Entered: ${enteredCount}`,
+        `Absent: ${absentCount}`,
+        `N/A: ${notConductedCount}`,
+        `Pending: ${students.length - enteredCount - absentCount - notConductedCount}`,
+        `Average: ${averageMark}`,
+      ];
+    }
 
     summaryItems.forEach((item, index) => {
-      currentPage.drawText(item, {
-        x: margin + 10 + (index * 110),
-        y: yPosition - 22,
-        size: 8,
-        font: helveticaFont,
-      });
+      if (item !== '-') {
+        currentPage.drawText(item, {
+          x: margin + 10 + (index * 85),
+          y: yPosition - 22,
+          size: 8,
+          font: helveticaFont,
+        });
+      }
     });
 
     // If we have all exam data, add a second page with term summary
-    if (allExamData && (allExamData.week4 || allExamData.week8 || allExamData.endOfTerm)) {
+    if (allExamData && (allExamData.week4 || allExamData.week8 || allExamData.endOfTerm) && !isNotConducted) {
       console.log('📊 Adding term summary page with all exam data');
       
       const summaryPage = pdfDoc.addPage([pageWidth, pageHeight]);
@@ -496,8 +567,14 @@ export const generateMarkSchedulePDF = async ({
         const student = students[i];
         
         if (summaryY < margin + 60) {
-          // Would need to add another page, but keeping simple for now
-          console.log('⚠️ Term summary truncated - too many students for one page');
+          // Add a note about truncation
+          summaryPage.drawText('... more students (truncated for space)', {
+            x: margin + 35,
+            y: summaryY,
+            size: 8,
+            font: helveticaOblique,
+            color: rgb(0.5, 0.5, 0.5),
+          });
           break;
         }
 
@@ -505,11 +582,11 @@ export const generateMarkSchedulePDF = async ({
         const week8Mark = week8Map.get(student.studentId);
         const eotMark = eotMap.get(student.studentId);
         
-        // Calculate average of valid marks (not absent and not undefined)
+        // Calculate average of valid marks (not absent, not N/A, and not undefined)
         const validMarks = [
-          week4Mark !== undefined && week4Mark !== -1 ? week4Mark : null,
-          week8Mark !== undefined && week8Mark !== -1 ? week8Mark : null,
-          eotMark !== undefined && eotMark !== -1 ? eotMark : null
+          week4Mark !== undefined && week4Mark !== -1 && week4Mark !== -2 ? week4Mark : null,
+          week8Mark !== undefined && week8Mark !== -1 && week8Mark !== -2 ? week8Mark : null,
+          eotMark !== undefined && eotMark !== -1 && eotMark !== -2 ? eotMark : null
         ].filter((m): m is number => m !== null);
         
         const avg = validMarks.length > 0 
@@ -544,6 +621,8 @@ export const generateMarkSchedulePDF = async ({
             summaryPage.drawText('-', { x, y: summaryY, size: 8, font: helveticaFont, color: rgb(0.7, 0.7, 0.7) });
           } else if (mark === -1) {
             summaryPage.drawText('ABS', { x, y: summaryY, size: 8, font: helveticaOblique, color: rgb(0.7, 0.3, 0.3) });
+          } else if (mark === -2) {
+            summaryPage.drawText('N/A', { x, y: summaryY, size: 8, font: helveticaOblique, color: rgb(0.5, 0.5, 0.5) });
           } else {
             summaryPage.drawText(mark.toString(), { x, y: summaryY, size: 8, font: helveticaFont });
           }
@@ -595,7 +674,8 @@ export const generateMarkSchedulePDF = async ({
     link.href = url;
     
     // Generate filename with actual data
-    const fileName = `${schoolName.replace(/\s+/g, '_')}_${className.replace(/\s+/g, '_')}_${subject.replace(/\s+/g, '_')}_${examType}_${term.replace(/\s+/g, '_')}_${year}.pdf`;
+    const status = isNotConducted ? '_NOT_CONDUCTED' : '';
+    const fileName = `${schoolName.replace(/\s+/g, '_')}_${className.replace(/\s+/g, '_')}_${subject.replace(/\s+/g, '_')}_${examType}${status}_${term.replace(/\s+/g, '_')}_${year}.pdf`;
     
     link.download = fileName;
     document.body.appendChild(link);

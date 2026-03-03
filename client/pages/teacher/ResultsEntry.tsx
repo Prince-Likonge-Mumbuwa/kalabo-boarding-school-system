@@ -1,4 +1,4 @@
-// @/pages/teacher/ResultsEntry.tsx - UPDATED WITH FIXED TEACHER AND ENTERED COUNT
+// @/pages/teacher/ResultsEntry.tsx - FINAL VERSION WITH EXAM TYPE NOT CONDUCTED
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -10,17 +10,13 @@ import {
   AlertCircle, 
   CheckCircle, 
   XCircle, 
-  ChevronDown, 
-  ChevronUp, 
   GraduationCap, 
   Lock,
   Download,
   Edit3,
   Trash2,
-  FileSpreadsheet,
   History,
-  RefreshCw,
-  AlertTriangle
+  Ban
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useResults, useSubjectCompletion } from '@/hooks/useResults';
@@ -28,8 +24,7 @@ import { learnerService } from '@/services/schoolService';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { calculateGrade, getGradeDisplay } from '@/services/resultsService';
-import { StudentResult } from '@/types/results';
+import { calculateGrade } from '@/services/resultsService';
 
 interface StudentResultInput {
   id: string;
@@ -51,12 +46,40 @@ interface SavedDraft {
   lastModified: string;
   completedCount: number;
   totalStudents: number;
+  isNotConducted?: boolean;
+}
+
+// Extended subject completion type to include not conducted status
+interface ExtendedSubjectCompletion {
+  subjectName: string;
+  totalStudents: number;
+  percentComplete: number;
+  week4Complete: boolean;
+  week8Complete: boolean;
+  endOfTermComplete: boolean;
+  enteredStudents: {
+    week4: number;
+    week8: number;
+    endOfTerm: number;
+  };
+  enteredStudentIds?: {
+    week4: string[];
+    week8: string[];
+    endOfTerm: string[];
+  };
+  savedMarks?: Record<string, number>;
+  notConducted?: {
+    week4: boolean;
+    week8: boolean;
+    endOfTerm: boolean;
+  };
 }
 
 // ==================== GRADE BADGE ====================
 const GradeBadge = ({ grade }: { grade: number | null }) => {
   if (grade === null) return <span className="text-gray-300 text-xs">—</span>;
   if (grade === -1) return <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded-md text-xs font-mono">X</span>;
+  if (grade === -2) return <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded-md text-xs font-mono">N/A</span>;
   
   const colors = {
     1: 'bg-green-600 text-white',
@@ -88,6 +111,7 @@ interface StudentRowProps {
   isMobile: boolean;
   disabled?: boolean;
   showExistingMark?: number | null;
+  isNotConducted?: boolean;
 }
 
 const StudentRow = ({ 
@@ -99,9 +123,10 @@ const StudentRow = ({
   onEnterPress,
   isMobile,
   disabled = false,
-  showExistingMark
+  showExistingMark,
+  isNotConducted = false
 }: StudentRowProps) => {
-  const marks = student.marks;
+  const marks = student.marks || '';
   const isAbsent = marks.toLowerCase() === 'x';
   const marksNum = marks && !isAbsent ? parseInt(marks) : null;
   const percentage = marksNum !== null ? ((marksNum / totalMarks) * 100).toFixed(0) : null;
@@ -112,7 +137,7 @@ const StudentRow = ({
   const hasExistingMark = showExistingMark !== undefined && showExistingMark !== null && marks === '';
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (disabled) return;
+    if (disabled || isNotConducted) return;
     if (e.key === 'Enter' && onEnterPress) {
       e.preventDefault();
       onEnterPress();
@@ -125,50 +150,46 @@ const StudentRow = ({
 
   if (isMobile) {
     return (
-      <div className="bg-white border-b border-gray-100 p-4 last:border-b-0">
+      <div className="bg-white border-b border-gray-100 p-3 last:border-b-0">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2 min-w-0 flex-1">
-            <span className="text-xs font-medium text-gray-400 w-6">{index + 1}</span>
+            <span className="text-xs font-medium text-gray-400 w-5">{index + 1}</span>
             <span className="font-medium text-gray-900 text-sm truncate">{student.name}</span>
           </div>
-          <GradeBadge grade={grade} />
+          {isNotConducted ? (
+            <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded-md text-xs font-mono">N/A</span>
+          ) : (
+            <GradeBadge grade={grade} />
+          )}
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <input
               type="text"
-              value={marks}
-              onChange={e => onMarksChange(student.id, e.target.value)}
+              value={isNotConducted ? 'N/A' : marks}
+              onChange={e => !isNotConducted && onMarksChange(student.id, e.target.value)}
               onKeyDown={handleKeyDown}
               ref={inputRef}
               placeholder={disabled ? "Locked" : hasExistingMark ? `${showExistingMark}` : "0 / X"}
               className={`
-                w-full px-4 py-3 border rounded-lg text-base font-medium uppercase
+                w-full px-3 py-2.5 border rounded-lg text-base font-medium uppercase
                 focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                ${disabled 
-                  ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed' 
-                  : hasExistingMark
-                    ? 'bg-green-50 border-green-300 text-green-700'
-                    : 'border-gray-300'
+                ${isNotConducted 
+                  ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed'
+                  : disabled 
+                    ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed' 
+                    : hasExistingMark
+                      ? 'bg-green-50 border-green-300 text-green-700'
+                      : 'border-gray-300'
                 }
               `}
               inputMode="numeric"
-              disabled={disabled}
+              disabled={disabled || isNotConducted}
             />
-            {!disabled && marks && !isAbsent && marksNum !== null && (
-              <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center gap-1">
-                <span className="text-xs text-gray-500">{marksNum}/{totalMarks}</span>
-              </div>
-            )}
-            {hasExistingMark && (
-              <div className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs text-green-600 font-medium">
-                Saved
-              </div>
-            )}
-            {disabled && (
-              <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                <Lock size={14} className="text-gray-400" />
+            {!disabled && !isNotConducted && marks && !isAbsent && marksNum !== null && (
+              <div className="absolute right-2 top-1/2 transform -translate-y-1/2 text-xs text-gray-500">
+                {marksNum}/{totalMarks}
               </div>
             )}
           </div>
@@ -178,55 +199,51 @@ const StudentRow = ({
   }
 
   return (
-    <tr className={`hover:bg-gray-50/50 transition-colors group ${disabled ? 'opacity-75' : ''}`}>
-      <td className="px-3 py-3 text-xs text-gray-500 font-mono">{index + 1}</td>
-      <td className="px-3 py-3">
-        <div className="font-medium text-gray-900 text-sm truncate max-w-[200px]" title={student.name}>
+    <tr className={`hover:bg-gray-50/50 transition-colors group ${disabled || isNotConducted ? 'opacity-75' : ''}`}>
+      <td className="px-3 py-2.5 text-xs text-gray-500 font-mono">{index + 1}</td>
+      <td className="px-3 py-2.5">
+        <div className="font-medium text-gray-900 text-sm truncate max-w-[180px]" title={student.name}>
           {student.name}
         </div>
         <div className="text-xs text-gray-400 font-mono">{student.studentId.slice(-6)}</div>
       </td>
-      <td className="px-3 py-3">
-        <div className="relative w-28">
+      <td className="px-3 py-2.5">
+        <div className="relative w-24">
           <input
             type="text"
-            value={marks}
-            onChange={e => onMarksChange(student.id, e.target.value)}
+            value={isNotConducted ? 'N/A' : marks}
+            onChange={e => !isNotConducted && onMarksChange(student.id, e.target.value)}
             onKeyDown={handleKeyDown}
             ref={inputRef}
             placeholder={disabled ? "—" : hasExistingMark ? `${showExistingMark}` : "0"}
             className={`
-              w-full px-3 py-1.5 border rounded-lg text-sm font-medium text-center uppercase
+              w-full px-2 py-1.5 border rounded-lg text-sm font-medium text-center uppercase
               focus:ring-2 focus:ring-blue-500 focus:border-transparent
-              ${disabled 
-                ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed' 
-                : hasExistingMark
-                  ? 'bg-green-50 border-green-300 text-green-700'
-                  : 'border-gray-300'
+              ${isNotConducted 
+                ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed'
+                : disabled 
+                  ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed' 
+                  : hasExistingMark
+                    ? 'bg-green-50 border-green-300 text-green-700'
+                    : 'border-gray-300'
               }
             `}
             inputMode="numeric"
-            disabled={disabled}
+            disabled={disabled || isNotConducted}
           />
-          {!disabled && marks && !isAbsent && marksNum !== null && (
-            <div className="absolute right-2 top-1/2 transform -translate-y-1/2 text-[10px] text-gray-400">
+          {!disabled && !isNotConducted && marks && !isAbsent && marksNum !== null && (
+            <div className="absolute right-1 top-1/2 transform -translate-y-1/2 text-[10px] text-gray-400">
               /{totalMarks}
-            </div>
-          )}
-          {hasExistingMark && (
-            <div className="absolute -top-2 -right-2 w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
-              <CheckCircle size={10} className="text-white" />
-            </div>
-          )}
-          {disabled && (
-            <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
-              <Lock size={12} className="text-gray-400" />
             </div>
           )}
         </div>
       </td>
-      <td className="px-3 py-3">
-        <GradeBadge grade={grade} />
+      <td className="px-3 py-2.5">
+        {isNotConducted ? (
+          <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded-md text-xs font-mono">N/A</span>
+        ) : (
+          <GradeBadge grade={grade} />
+        )}
       </td>
     </tr>
   );
@@ -237,14 +254,16 @@ const SubjectProgress = ({
   completion, 
   selectedExamType,
   onExamTypeChange,
-  hasDraft
+  hasDraft,
+  isNotConducted
 }: { 
-  completion: any; 
+  completion: ExtendedSubjectCompletion; 
   selectedExamType: string;
   onExamTypeChange: (type: 'week4' | 'week8' | 'endOfTerm') => void;
   hasDraft?: boolean;
+  isNotConducted?: boolean;
 }) => {
-  const isMobile = useMediaQuery('(max-width: 768px)');
+  const isMobile = useMediaQuery('(max-width: 640px)');
   
   if (!completion) return null;
   
@@ -254,38 +273,38 @@ const SubjectProgress = ({
       label: 'W4', 
       fullLabel: 'Week 4',
       isComplete: completion.week4Complete,
-      count: completion.enteredStudents.week4
+      count: completion.enteredStudents.week4,
+      notConducted: completion.notConducted?.week4 || false
     },
     { 
       id: 'week8', 
       label: 'W8', 
       fullLabel: 'Week 8',
       isComplete: completion.week8Complete,
-      count: completion.enteredStudents.week8
+      count: completion.enteredStudents.week8,
+      notConducted: completion.notConducted?.week8 || false
     },
     { 
       id: 'endOfTerm', 
       label: 'EOT', 
       fullLabel: 'End of Term',
       isComplete: completion.endOfTermComplete,
-      count: completion.enteredStudents.endOfTerm
+      count: completion.enteredStudents.endOfTerm,
+      notConducted: completion.notConducted?.endOfTerm || false
     },
   ];
 
-  // Determine which exam types are available
-  const week4Complete = completion.week4Complete;
-  const week8Complete = completion.week8Complete;
+  const week4Complete = completion.week4Complete || completion.notConducted?.week4;
+  const week8Complete = completion.week8Complete || completion.notConducted?.week8;
   
-  // Week 8 is enabled only if Week 4 is complete
   const isWeek8Enabled = week4Complete;
-  // End of Term is enabled only if Week 8 is complete
   const isEndOfTermEnabled = week8Complete;
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <GraduationCap size={16} className="text-gray-500" />
+    <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <GraduationCap size={16} className="text-gray-500 flex-shrink-0" />
           <span className="text-sm font-medium text-gray-700">
             {completion.subjectName}
           </span>
@@ -300,7 +319,6 @@ const SubjectProgress = ({
         </span>
       </div>
       
-      {/* Progress Bar */}
       <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-4">
         <div 
           className="h-full bg-blue-500 rounded-full transition-all duration-500"
@@ -308,8 +326,7 @@ const SubjectProgress = ({
         />
       </div>
       
-      {/* Exam Type Selector */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
         {examTypes.map((exam) => {
           const isSelected = selectedExamType === exam.id;
           const isLocked = 
@@ -322,7 +339,7 @@ const SubjectProgress = ({
               onClick={() => !isLocked && onExamTypeChange(exam.id as any)}
               disabled={isLocked}
               className={`
-                relative flex flex-col items-center p-2 rounded-lg transition-all
+                relative flex flex-col items-center p-1.5 sm:p-2 rounded-lg transition-all
                 ${isSelected 
                   ? 'bg-blue-50 border-2 border-blue-500' 
                   : 'border-2 border-transparent'
@@ -333,25 +350,24 @@ const SubjectProgress = ({
                 }
               `}
             >
-              <div className="flex items-center gap-1.5 mb-1">
+              <div className="flex items-center gap-1 mb-0.5 sm:mb-1">
                 <span className={`text-xs font-semibold ${
+                  exam.notConducted ? 'text-gray-600' :
                   exam.isComplete ? 'text-green-600' : isSelected ? 'text-blue-600' : 'text-gray-600'
                 }`}>
                   {exam.label}
                 </span>
-                {exam.isComplete && (
-                  <CheckCircle size={12} className="text-green-500" />
-                )}
-                {isLocked && !exam.isComplete && (
-                  <Lock size={10} className="text-gray-400" />
-                )}
+                {exam.notConducted ? (
+                  <Ban size={10} className="text-gray-500 flex-shrink-0" />
+                ) : exam.isComplete ? (
+                  <CheckCircle size={10} className="text-green-500 flex-shrink-0" />
+                ) : isLocked && !exam.isComplete ? (
+                  <Lock size={8} className="text-gray-400 flex-shrink-0" />
+                ) : null}
               </div>
               <span className="text-[10px] text-gray-500">
-                {exam.count}/{completion.totalStudents}
+                {exam.notConducted ? 'N/A' : `${exam.count}/${completion.totalStudents}`}
               </span>
-              {exam.isComplete && (
-                <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full" />
-              )}
             </button>
           );
         })}
@@ -364,12 +380,17 @@ const SubjectProgress = ({
 const DraftCard = ({ draft, onLoad, onDelete }: { draft: SavedDraft; onLoad: () => void; onDelete: () => void }) => {
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md transition-all">
-      <div className="flex items-start justify-between mb-2">
-        <div>
-          <h4 className="font-medium text-gray-900 text-sm">{draft.className} • {draft.subject}</h4>
-          <p className="text-xs text-gray-500">{draft.examType} • {draft.term} {draft.year}</p>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="min-w-0 flex-1">
+          <h4 className="font-medium text-gray-900 text-sm truncate">
+            {draft.className} • {draft.subject}
+          </h4>
+          <p className="text-xs text-gray-500 truncate">
+            {draft.examType} • {draft.term} {draft.year}
+            {draft.isNotConducted && ' • Not Conducted'}
+          </p>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-shrink-0">
           <button
             onClick={onLoad}
             className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -388,18 +409,20 @@ const DraftCard = ({ draft, onLoad, onDelete }: { draft: SavedDraft; onLoad: () 
       </div>
       <div className="flex items-center justify-between text-xs">
         <span className="text-gray-600">
-          {draft.completedCount}/{draft.totalStudents} entered
+          {draft.isNotConducted ? 'Not Conducted' : `${draft.completedCount}/${draft.totalStudents} entered`}
         </span>
         <span className="text-gray-400">
           {new Date(draft.lastModified).toLocaleTimeString()}
         </span>
       </div>
-      <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-        <div 
-          className="h-full bg-yellow-500 rounded-full"
-          style={{ width: `${(draft.completedCount / draft.totalStudents) * 100}%` }}
-        />
-      </div>
+      {!draft.isNotConducted && (
+        <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+          <div 
+            className="h-full bg-yellow-500 rounded-full"
+            style={{ width: `${(draft.completedCount / draft.totalStudents) * 100}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 };
@@ -417,16 +440,14 @@ const MarksPDFPreview = ({
   totalMarks,
   onDownload,
   allExamData,
-  loadingAllData
+  loadingAllData,
+  isNotConducted
 }: any) => {
   if (!isOpen) return null;
 
-  // Create a map of saved marks for quick lookup
   const savedMarksMap = useMemo(() => {
     const map = new Map();
-    
     if (allExamData) {
-      // Add marks from the current exam type
       const currentExamData = allExamData[examType] || [];
       currentExamData.forEach((item: any) => {
         map.set(item.studentId, {
@@ -435,217 +456,198 @@ const MarksPDFPreview = ({
         });
       });
     }
-    
     return map;
   }, [allExamData, examType]);
 
-  // Combine current input marks with saved marks
   const displayStudents = useMemo(() => {
     return students.map((student: StudentResultInput) => {
       const saved = savedMarksMap.get(student.studentId);
       
-      // Priority: 1. Current input marks (if any), 2. Saved marks, 3. Empty
       let displayMarks = student.marks;
       let isFromSaved = false;
       
       if (!displayMarks && saved) {
-        // If no current input but saved marks exist, show saved marks
         displayMarks = saved.marks === -1 ? 'X' : saved.marks.toString();
         isFromSaved = true;
       }
       
       return {
         ...student,
-        displayMarks,
+        displayMarks: isNotConducted ? 'N/A' : displayMarks,
         isFromSaved
       };
     });
-  }, [students, savedMarksMap]);
+  }, [students, savedMarksMap, isNotConducted]);
 
-  const completedCount = displayStudents.filter((s: any) => s.displayMarks && s.displayMarks !== '').length;
+  const completedCount = displayStudents.filter((s: any) => 
+    s.displayMarks && s.displayMarks !== '' && s.displayMarks !== 'N/A'
+  ).length;
+
+  const isMobile = useMediaQuery('(max-width: 640px)');
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="flex min-h-full items-center justify-center p-4">
+      <div className="flex min-h-full items-center justify-center p-2 sm:p-4">
         <div className="relative bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
           
           {/* Header */}
-          <div className="sticky top-0 bg-white border-b border-gray-200 rounded-t-2xl px-6 py-4 flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-gray-900">Mark Schedule Preview</h2>
-              <p className="text-sm text-gray-600 mt-1">
+          <div className="sticky top-0 bg-white border-b border-gray-200 rounded-t-2xl px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-gray-900 truncate">Mark Schedule Preview</h2>
+              <p className="text-xs sm:text-sm text-gray-600 mt-0.5 sm:mt-1 truncate">
                 {classInfo?.name} • {subject} • {examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'} • {term} {year}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {isNotConducted && (
+                <div className="flex items-center gap-1 px-2 py-1 bg-gray-200 rounded-lg">
+                  <Ban size={14} className="text-gray-600" />
+                  <span className="text-xs font-medium text-gray-600">Not Conducted</span>
+                </div>
+              )}
               <button
                 onClick={onDownload}
                 disabled={loadingAllData}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center justify-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 text-sm sm:text-base"
               >
                 {loadingAllData ? (
-                  <Loader2 size={16} className="animate-spin" />
+                  <Loader2 size={14} className="animate-spin" />
                 ) : (
-                  <Download size={16} />
+                  <Download size={14} />
                 )}
-                <span>{loadingAllData ? 'Loading Data...' : 'Download PDF'}</span>
+                <span className="hidden xs:inline">{loadingAllData ? 'Loading...' : 'Download'}</span>
               </button>
               <button
                 onClick={onClose}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                className="p-1.5 sm:p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
-                <XCircle size={20} className="text-gray-500" />
+                <XCircle size={18} className="text-gray-500" />
               </button>
             </div>
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-auto p-6">
-            <div className="min-w-[800px]">
+          <div className="flex-1 overflow-auto p-3 sm:p-6">
+            <div className="min-w-[300px] sm:min-w-[600px]">
               {/* School Header */}
-              <div className="text-center mb-6">
-                <h1 className="text-2xl font-bold text-gray-900">MINISTRY OF EDUCATION</h1>
-                <h2 className="text-xl font-semibold text-gray-800 mt-1">KALABO BOARDING SECONDARY SCHOOL</h2>
-                <h3 className="text-lg font-medium text-blue-600 mt-2">MARK SCHEDULE</h3>
+              <div className="text-center mb-4 sm:mb-6">
+                <h1 className="text-lg sm:text-2xl font-bold text-gray-900">MINISTRY OF EDUCATION</h1>
+                <h2 className="text-base sm:text-xl font-semibold text-gray-800 mt-0.5 sm:mt-1">KALABO BOARDING SECONDARY SCHOOL</h2>
+                <h3 className="text-sm sm:text-lg font-medium text-blue-600 mt-1 sm:mt-2">MARK SCHEDULE</h3>
+                {isNotConducted && (
+                  <div className="mt-2 inline-flex items-center gap-1 px-3 py-1 bg-gray-200 rounded-full">
+                    <Ban size={14} className="text-gray-600" />
+                    <span className="text-xs font-medium text-gray-600">TEST NOT CONDUCTED</span>
+                  </div>
+                )}
               </div>
 
               {/* Info Grid */}
-              <div className="grid grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
-                <div>
-                  <p className="text-xs text-gray-500">Class</p>
-                  <p className="font-medium">{classInfo?.name}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4 mb-4 sm:mb-6 p-3 sm:p-4 bg-gray-50 rounded-lg text-xs sm:text-sm">
+                <div className="min-w-0">
+                  <p className="text-gray-500">Class</p>
+                  <p className="font-medium truncate">{classInfo?.name}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-gray-500">Subject</p>
-                  <p className="font-medium">{subject}</p>
+                <div className="min-w-0">
+                  <p className="text-gray-500">Subject</p>
+                  <p className="font-medium truncate">{subject}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-gray-500">Exam</p>
-                  <p className="font-medium">{examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'}</p>
+                <div className="min-w-0">
+                  <p className="text-gray-500">Exam</p>
+                  <p className="font-medium truncate">{examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-gray-500">Total Marks</p>
-                  <p className="font-medium">{totalMarks}</p>
+                <div className="min-w-0">
+                  <p className="text-gray-500">Marks</p>
+                  <p className="font-medium">{isNotConducted ? 'N/A' : totalMarks}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-gray-500">Term/Year</p>
-                  <p className="font-medium">{term} {year}</p>
+                <div className="min-w-0">
+                  <p className="text-gray-500">Term</p>
+                  <p className="font-medium truncate">{term} {year}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-gray-500">Students</p>
+                <div className="min-w-0">
+                  <p className="text-gray-500">Students</p>
                   <p className="font-medium">{students.length}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-gray-500">Entered</p>
-                  <p className="font-medium text-green-600">{completedCount}</p>
+                <div className="min-w-0">
+                  <p className="text-gray-500">Entered</p>
+                  <p className="font-medium text-green-600">{isNotConducted ? 'N/A' : completedCount}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-gray-500">Teacher</p>
-                  <p className="font-medium">—</p>
+                <div className="min-w-0">
+                  <p className="text-gray-500">Teacher</p>
+                  <p className="font-medium truncate">—</p>
                 </div>
               </div>
 
-              {/* Loading State */}
               {loadingAllData && (
-                <div className="text-center py-8">
-                  <Loader2 className="animate-spin text-blue-600 mx-auto mb-2" size={32} />
-                  <p className="text-gray-600">Fetching all exam data...</p>
-                </div>
-              )}
-
-              {/* Available Exam Data Summary */}
-              {!loadingAllData && allExamData && (
-                <div className="mb-6 p-3 bg-blue-50 rounded-lg">
-                  <h4 className="text-sm font-semibold text-blue-800 mb-2">Available Data for Term Summary:</h4>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <div className="bg-white p-2 rounded border border-blue-100">
-                      <span className="font-medium">Week 4:</span>{' '}
-                      <span className={allExamData.week4?.length ? 'text-green-600' : 'text-gray-400'}>
-                        {allExamData.week4?.length || 0} results
-                      </span>
-                    </div>
-                    <div className="bg-white p-2 rounded border border-blue-100">
-                      <span className="font-medium">Week 8:</span>{' '}
-                      <span className={allExamData.week8?.length ? 'text-green-600' : 'text-gray-400'}>
-                        {allExamData.week8?.length || 0} results
-                      </span>
-                    </div>
-                    <div className="bg-white p-2 rounded border border-blue-100">
-                      <span className="font-medium">End of Term:</span>{' '}
-                      <span className={allExamData.endOfTerm?.length ? 'text-green-600' : 'text-gray-400'}>
-                        {allExamData.endOfTerm?.length || 0} results
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Data Source Indicator */}
-              {!loadingAllData && (
-                <div className="mb-4 text-xs text-gray-500 flex items-center gap-4">
-                  <span className="flex items-center gap-1">
-                    <span className="w-3 h-3 bg-green-100 border border-green-300 rounded"></span> Saved marks
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-3 h-3 bg-white border border-gray-300 rounded"></span> Current input
-                  </span>
+                <div className="text-center py-6 sm:py-8">
+                  <Loader2 className="animate-spin text-blue-600 mx-auto mb-2" size={24} />
+                  <p className="text-sm text-gray-600">Fetching exam data...</p>
                 </div>
               )}
 
               {/* Table */}
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-gray-100">
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 border border-gray-300 w-12">#</th>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 border border-gray-300">Student Name</th>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 border border-gray-300">Student ID</th>
-                    <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300">Marks</th>
-                    <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300">Grade</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {displayStudents.map((student: any, index: number) => {
-                    const marks = student.displayMarks;
-                    const isAbsent = marks?.toLowerCase() === 'x';
-                    const marksNum = marks && !isAbsent ? parseInt(marks) : null;
-                    const percentage = marksNum !== null ? ((marksNum / totalMarks) * 100).toFixed(0) : null;
-                    const grade = marksNum !== null 
-                      ? calculateGrade(parseFloat(percentage || '0'))
-                      : isAbsent ? -1 : null;
+              {!loadingAllData && (
+                <div className="overflow-x-auto -mx-3 sm:-mx-6">
+                  <div className="inline-block min-w-full align-middle px-3 sm:px-6">
+                    <table className="w-full border-collapse text-xs sm:text-sm">
+                      <thead>
+                        <tr className="bg-gray-100">
+                          <th className="px-2 sm:px-3 py-2 text-left font-semibold text-gray-700 border border-gray-300 w-10 sm:w-12">#</th>
+                          <th className="px-2 sm:px-3 py-2 text-left font-semibold text-gray-700 border border-gray-300">Student Name</th>
+                          <th className="px-2 sm:px-3 py-2 text-left font-semibold text-gray-700 border border-gray-300 hidden sm:table-cell">Student ID</th>
+                          <th className="px-2 sm:px-3 py-2 text-center font-semibold text-gray-700 border border-gray-300 w-16 sm:w-20">Marks</th>
+                          <th className="px-2 sm:px-3 py-2 text-center font-semibold text-gray-700 border border-gray-300 w-12 sm:w-16">Grade</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {displayStudents.map((student: any, index: number) => {
+                          const marks = student.displayMarks;
+                          const isAbsent = marks?.toLowerCase() === 'x';
+                          const marksNum = marks && !isAbsent && marks !== 'N/A' ? parseInt(marks) : null;
+                          const percentage = marksNum !== null ? ((marksNum / totalMarks) * 100).toFixed(0) : null;
+                          const grade = marksNum !== null 
+                            ? calculateGrade(parseFloat(percentage || '0'))
+                            : isAbsent ? -1 : null;
 
-                    return (
-                      <tr key={student.id} className={`hover:bg-gray-50 ${student.isFromSaved ? 'bg-green-50/30' : ''}`}>
-                        <td className="px-3 py-2 text-xs text-gray-500 border border-gray-300">{index + 1}</td>
-                        <td className="px-3 py-2 text-sm border border-gray-300">
-                          {student.name}
-                          {student.isFromSaved && (
-                            <span className="ml-2 text-xs text-green-600">(saved)</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-xs font-mono text-gray-600 border border-gray-300">{student.studentId}</td>
-                        <td className="px-3 py-2 text-center border border-gray-300">
-                          {marks ? (
-                            <span className={`font-medium ${isAbsent ? 'text-gray-500 italic' : student.isFromSaved ? 'text-green-700' : ''}`}>
-                              {isAbsent ? 'ABS' : marks}
-                            </span>
-                          ) : (
-                            <span className="text-gray-300">—</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-center border border-gray-300">
-                          {grade !== null && (
-                            <GradeBadge grade={grade} />
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          return (
+                            <tr key={student.id} className={`hover:bg-gray-50 ${student.isFromSaved ? 'bg-green-50/30' : ''}`}>
+                              <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-gray-500 border border-gray-300">{index + 1}</td>
+                              <td className="px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300">
+                                <div className="truncate max-w-[120px] sm:max-w-none" title={student.name}>
+                                  {student.name}
+                                </div>
+                                <div className="text-xs text-gray-500 sm:hidden">{student.studentId.slice(-6)}</div>
+                              </td>
+                              <td className="px-2 sm:px-3 py-1.5 sm:py-2 font-mono text-gray-600 border border-gray-300 hidden sm:table-cell">{student.studentId}</td>
+                              <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-center border border-gray-300">
+                                {marks === 'N/A' ? (
+                                  <span className="text-gray-500 italic">N/A</span>
+                                ) : marks ? (
+                                  <span className={`font-medium ${isAbsent ? 'text-gray-500 italic' : student.isFromSaved ? 'text-green-700' : ''}`}>
+                                    {isAbsent ? 'ABS' : marks}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-300">—</span>
+                                )}
+                              </td>
+                              <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-center border border-gray-300">
+                                {marks === 'N/A' ? (
+                                  <span className="text-gray-500 text-xs">N/A</span>
+                                ) : grade !== null && (
+                                  <GradeBadge grade={grade} />
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
-              {/* Summary */}
-              <div className="mt-4 text-xs text-gray-500 text-right">
+              <div className="mt-3 sm:mt-4 text-[10px] sm:text-xs text-gray-500 text-right">
                 Generated: {new Date().toLocaleString()}
               </div>
             </div>
@@ -660,14 +662,14 @@ const MarksPDFPreview = ({
 const TableSkeleton = () => (
   <div className="bg-white rounded-xl border border-gray-200 overflow-hidden animate-pulse">
     <div className="p-4 border-b border-gray-200 bg-gray-50">
-      <div className="h-5 bg-gray-200 rounded w-48"></div>
+      <div className="h-5 bg-gray-200 rounded w-32 sm:w-48"></div>
     </div>
     <div className="divide-y divide-gray-100">
       {[1, 2, 3, 4, 5].map(i => (
-        <div key={i} className="p-4 flex items-center gap-4">
-          <div className="w-6 h-4 bg-gray-200 rounded"></div>
-          <div className="flex-1 h-4 bg-gray-200 rounded"></div>
-          <div className="w-20 h-8 bg-gray-200 rounded"></div>
+        <div key={i} className="p-3 sm:p-4 flex flex-wrap items-center gap-2 sm:gap-4">
+          <div className="w-5 h-4 bg-gray-200 rounded"></div>
+          <div className="flex-1 h-4 bg-gray-200 rounded min-w-[120px]"></div>
+          <div className="w-16 sm:w-20 h-8 bg-gray-200 rounded"></div>
           <div className="w-10 h-6 bg-gray-200 rounded"></div>
         </div>
       ))}
@@ -685,14 +687,16 @@ const EmptyState = ({
   hasSubject: boolean; 
   hasStudents: boolean;
 }) => {
+  const isMobile = useMediaQuery('(max-width: 640px)');
+  
   if (!hasClass) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-        <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 rounded-full mb-4">
-          <BookOpen className="text-gray-400" size={32} />
+      <div className="bg-white rounded-xl border border-gray-200 p-6 sm:p-12 text-center">
+        <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gray-100 rounded-full mb-3 sm:mb-4">
+          <BookOpen className="text-gray-400" size={isMobile ? 24 : 32} />
         </div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">Select a class to begin</h3>
-        <p className="text-gray-600 max-w-md mx-auto text-sm">
+        <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1 sm:mb-2">Select a class to begin</h3>
+        <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto">
           Choose a class from the dropdown above. Your assigned classes will appear based on your teaching assignments.
         </p>
       </div>
@@ -701,12 +705,12 @@ const EmptyState = ({
   
   if (!hasSubject) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-        <div className="inline-flex items-center justify-center w-20 h-20 bg-yellow-100 rounded-full mb-4">
-          <AlertCircle className="text-yellow-600" size={32} />
+      <div className="bg-white rounded-xl border border-gray-200 p-6 sm:p-12 text-center">
+        <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-yellow-100 rounded-full mb-3 sm:mb-4">
+          <AlertCircle className="text-yellow-600" size={isMobile ? 24 : 32} />
         </div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">No subject selected</h3>
-        <p className="text-gray-600 max-w-md mx-auto text-sm">
+        <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1 sm:mb-2">No subject selected</h3>
+        <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto">
           Please select a subject you're assigned to teach for this class.
         </p>
       </div>
@@ -715,12 +719,12 @@ const EmptyState = ({
   
   if (!hasStudents) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-        <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 rounded-full mb-4">
-          <Users className="text-gray-400" size={32} />
+      <div className="bg-white rounded-xl border border-gray-200 p-6 sm:p-12 text-center">
+        <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gray-100 rounded-full mb-3 sm:mb-4">
+          <Users className="text-gray-400" size={isMobile ? 24 : 32} />
         </div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">No students enrolled</h3>
-        <p className="text-gray-600 max-w-md mx-auto text-sm">
+        <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1 sm:mb-2">No students enrolled</h3>
+        <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto">
           This class doesn't have any enrolled students yet. Contact the administrator to add students.
         </p>
       </div>
@@ -735,17 +739,17 @@ const EditModeIndicator = ({ isEditing, onCancelEdit }: { isEditing: boolean; on
   if (!isEditing) return null;
   
   return (
-    <div className="bg-amber-50 border-l-4 border-amber-500 p-4 mb-4 flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        <Edit3 size={20} className="text-amber-600" />
-        <div>
-          <p className="font-medium text-amber-800">Edit Mode Active</p>
-          <p className="text-sm text-amber-700">You are editing existing results. Changes will overwrite saved data.</p>
+    <div className="bg-amber-50 border-l-4 border-amber-500 p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      <div className="flex items-center gap-2 sm:gap-3">
+        <Edit3 size={18} className="text-amber-600 flex-shrink-0" />
+        <div className="min-w-0">
+          <p className="font-medium text-amber-800 text-sm sm:text-base">Edit Mode Active</p>
+          <p className="text-xs sm:text-sm text-amber-700 truncate">Changes will overwrite saved data.</p>
         </div>
       </div>
       <button
         onClick={onCancelEdit}
-        className="px-3 py-1 bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200 text-sm font-medium"
+        className="px-3 py-1.5 bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200 text-xs sm:text-sm font-medium self-start sm:self-center"
       >
         Cancel Edit
       </button>
@@ -753,47 +757,75 @@ const EditModeIndicator = ({ isEditing, onCancelEdit }: { isEditing: boolean; on
   );
 };
 
+// ==================== NOT CONDUCTED TOGGLE ====================
+const NotConductedToggle = ({ 
+  isNotConducted, 
+  onToggle,
+  disabled,
+  examType
+}: { 
+  isNotConducted: boolean; 
+  onToggle: () => void;
+  disabled?: boolean;
+  examType: string;
+}) => {
+  return (
+    <button
+      onClick={onToggle}
+      disabled={disabled}
+      className={`
+        inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg border transition-all text-sm
+        ${isNotConducted 
+          ? 'bg-gray-700 border-gray-700 text-white hover:bg-gray-800' 
+          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+        }
+        ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+      `}
+      title={isNotConducted ? `Mark ${examType} as conducted` : `Mark ${examType} as not conducted`}
+    >
+      <Ban size={16} />
+      <span className="hidden xs:inline">
+        {isNotConducted ? 'Conducted' : 'Not Conducted'}
+      </span>
+    </button>
+  );
+};
+
 // ==================== MAIN COMPONENT ====================
 export default function ResultsEntry() {
   const { user } = useAuth();
-  const isMobile = useMediaQuery('(max-width: 768px)');
+  const isMobile = useMediaQuery('(max-width: 640px)');
+  const isSmallMobile = useMediaQuery('(max-width: 380px)');
   
-  // Refs for focus management
   const inputElements = useRef<Map<string, HTMLInputElement>>(new Map());
   const tableContainerRef = useRef<HTMLDivElement>(null);
   
-  // Core state
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
   const [examType, setExamType] = useState<'week4' | 'week8' | 'endOfTerm'>('week4');
   const [term, setTerm] = useState('Term 1');
   const [year, setYear] = useState(new Date().getFullYear());
   const [totalMarks, setTotalMarks] = useState(100);
+  const [isNotConducted, setIsNotConducted] = useState(false);
   
-  // Data state
   const [students, setStudents] = useState<StudentResultInput[]>([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [selectedClassData, setSelectedClassData] = useState<any>(null);
   
-  // Draft state
   const [drafts, setDrafts] = useState<SavedDraft[]>([]);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
   
-  // PDF preview state
   const [showPDFPreview, setShowPDFPreview] = useState(false);
   const [allExamData, setAllExamData] = useState<any>(null);
   const [loadingAllData, setLoadingAllData] = useState(false);
 
-  // Editing state
   const [isEditMode, setIsEditMode] = useState(false);
   const [originalResults, setOriginalResults] = useState<Map<string, number>>(new Map());
 
-  // Hooks
   const { classes, isLoading: loadingClasses } = useSchoolClasses({ isActive: true });
   const { assignments, getSubjectsForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.id);
   const { saveResults, isSaving, checkExisting, editResults, isEditing } = useResults();
   
-  // Subject completion
   const {
     completionStatus,
     isLoading: loadingCompletion,
@@ -804,7 +836,7 @@ export default function ResultsEntry() {
     year,
   });
 
-  // Load drafts from localStorage on mount
+  // Load drafts from localStorage
   useEffect(() => {
     const savedDrafts = localStorage.getItem('results_drafts');
     if (savedDrafts) {
@@ -816,13 +848,11 @@ export default function ResultsEntry() {
     }
   }, []);
 
-  // Save drafts to localStorage
   const saveDrafts = useCallback((newDrafts: SavedDraft[]) => {
     setDrafts(newDrafts);
     localStorage.setItem('results_drafts', JSON.stringify(newDrafts));
   }, []);
 
-  // Get assigned classes
   const assignedClasses = useMemo(() => {
     if (!user?.id || !classes.length) return [];
     return classes.filter(cls => 
@@ -831,19 +861,22 @@ export default function ResultsEntry() {
     );
   }, [classes, user?.id]);
 
-  // Get available subjects for selected class
   const availableSubjects = useMemo(() => {
     if (!selectedClass || !user?.id) return [];
     return getSubjectsForClass(selectedClass);
   }, [selectedClass, user?.id, getSubjectsForClass]);
 
-  // Get completion for current subject
   const currentSubjectCompletion = useMemo(() => {
     if (!selectedSubject || !completionStatus.length) return null;
-    return completionStatus.find(s => s.subjectName === selectedSubject);
+    return completionStatus.find((s: any) => s.subjectName === selectedSubject);
   }, [selectedSubject, completionStatus]);
 
-  // Check if current selection has a draft
+  // Check if current exam type is marked as not conducted
+  const isCurrentExamNotConducted = useMemo(() => {
+    if (!currentSubjectCompletion || !currentSubjectCompletion.notConducted) return false;
+    return currentSubjectCompletion.notConducted[examType] || false;
+  }, [currentSubjectCompletion, examType]);
+
   const currentDraft = useMemo(() => {
     return drafts.find(d => 
       d.classId === selectedClass &&
@@ -854,29 +887,41 @@ export default function ResultsEntry() {
     );
   }, [drafts, selectedClass, selectedSubject, examType, term, year]);
 
-  // Load draft data when switching to a draft
+  // Load draft data
   useEffect(() => {
     if (currentDraft && currentDraft.id !== activeDraftId) {
       setStudents(currentDraft.results);
       setTotalMarks(currentDraft.totalMarks);
+      setIsNotConducted(currentDraft.isNotConducted || false);
       setActiveDraftId(currentDraft.id);
     } else if (!currentDraft) {
       setActiveDraftId(null);
+      // Check if this exam type is marked as not conducted in completion status
+      if (isCurrentExamNotConducted) {
+        setIsNotConducted(true);
+      } else {
+        setIsNotConducted(false);
+      }
     }
-  }, [currentDraft, activeDraftId]);
+  }, [currentDraft, activeDraftId, isCurrentExamNotConducted]);
 
-  // LIFECYCLE RULES
   const isExamTypeEnabled = (type: 'week4' | 'week8' | 'endOfTerm') => {
     if (!currentSubjectCompletion) return type === 'week4';
     
+    // If exam type is marked as not conducted, it's considered complete for unlocking purposes
+    const isNotConducted = currentSubjectCompletion.notConducted?.[type] || false;
+    
     if (type === 'week4') return true;
-    if (type === 'week8') return currentSubjectCompletion.week4Complete;
-    if (type === 'endOfTerm') return currentSubjectCompletion.week8Complete;
+    if (type === 'week8') {
+      return currentSubjectCompletion.week4Complete || currentSubjectCompletion.notConducted?.week4 || false;
+    }
+    if (type === 'endOfTerm') {
+      return currentSubjectCompletion.week8Complete || currentSubjectCompletion.notConducted?.week8 || false;
+    }
     
     return false;
   };
 
-  // Auto-select appropriate exam type
   useEffect(() => {
     if (!currentSubjectCompletion) return;
     
@@ -891,14 +936,13 @@ export default function ResultsEntry() {
     }
   }, [currentSubjectCompletion, examType]);
 
-  // Auto-select subject if only one
   useEffect(() => {
     if (availableSubjects.length === 1 && !selectedSubject) {
       setSelectedSubject(availableSubjects[0]);
     }
   }, [availableSubjects, selectedSubject]);
 
-  // Load students when class changes
+  // Load students
   useEffect(() => {
     const loadStudents = async () => {
       if (!selectedClass) {
@@ -946,8 +990,7 @@ export default function ResultsEntry() {
     if (!selectedClass || !selectedSubject || !students.length || !selectedClassData || isEditMode) return;
 
     const filledCount = students.filter(s => s.marks && s.marks !== '').length;
-    if (filledCount === 0) {
-      // If no marks and we have a draft, remove it
+    if (filledCount === 0 && !isNotConducted) {
       if (currentDraft) {
         const newDrafts = drafts.filter(d => d.id !== currentDraft.id);
         saveDrafts(newDrafts);
@@ -969,7 +1012,8 @@ export default function ResultsEntry() {
         results: students.map(s => ({ ...s })),
         lastModified: new Date().toISOString(),
         completedCount: filledCount,
-        totalStudents: students.length
+        totalStudents: students.length,
+        isNotConducted
       };
 
       const existingIndex = drafts.findIndex(d => d.id === draftId);
@@ -979,17 +1023,16 @@ export default function ResultsEntry() {
         newDrafts = [...drafts];
         newDrafts[existingIndex] = newDraft;
       } else {
-        newDrafts = [newDraft, ...drafts].slice(0, 10); // Keep last 10 drafts
+        newDrafts = [newDraft, ...drafts].slice(0, 10);
       }
       
       saveDrafts(newDrafts);
       setActiveDraftId(draftId);
-    }, 2000); // Auto-save after 2 seconds of inactivity
+    }, 2000);
 
     return () => clearTimeout(timer);
-  }, [students, selectedClass, selectedSubject, examType, term, year, totalMarks, selectedClassData, isEditMode]);
+  }, [students, selectedClass, selectedSubject, examType, term, year, totalMarks, selectedClassData, isEditMode, isNotConducted]);
 
-  // Focus management
   const focusNextInput = (currentStudentId: string) => {
     const currentIndex = students.findIndex(s => s.id === currentStudentId);
     if (currentIndex < students.length - 1) {
@@ -999,16 +1042,14 @@ export default function ResultsEntry() {
     }
   };
 
-  // Fetch all exam data when preview opens
+  // Fetch all exam data
   useEffect(() => {
     const fetchAllExamData = async () => {
       if (!showPDFPreview || !selectedClass || !selectedSubject || !checkExisting) return;
       
       setLoadingAllData(true);
-      console.log('📊 Fetching all exam data for PDF...');
       
       try {
-        // Fetch data for all exam types - these return CheckExistingResponse objects
         const week4Response = await checkExisting({
           classId: selectedClass,
           subjectId: selectedSubject,
@@ -1033,36 +1074,18 @@ export default function ResultsEntry() {
           year,
         });
         
-        console.log('✅ Fetched exam data responses:', { 
-          week4: week4Response, 
-          week8: week8Response, 
-          endOfTerm: eotResponse 
-        });
-        
-        // Extract the results array from each response
-        const week4Results = week4Response?.results || [];
-        const week8Results = week8Response?.results || [];
-        const eotResults = eotResponse?.results || [];
-        
-        console.log('✅ Extracted results arrays:', { 
-          week4: week4Results.length, 
-          week8: week8Results.length, 
-          endOfTerm: eotResults.length 
-        });
-        
-        // Transform the data to match what the PDF expects
         const transformedData = {
-          week4: week4Results.map((item: any) => ({
+          week4: (week4Response?.results || []).map((item: any) => ({
             studentId: item.studentId || item.student_id,
             studentName: item.studentName || item.student_name,
             marks: item.marks
           })),
-          week8: week8Results.map((item: any) => ({
+          week8: (week8Response?.results || []).map((item: any) => ({
             studentId: item.studentId || item.student_id,
             studentName: item.studentName || item.student_name,
             marks: item.marks
           })),
-          endOfTerm: eotResults.map((item: any) => ({
+          endOfTerm: (eotResponse?.results || []).map((item: any) => ({
             studentId: item.studentId || item.student_id,
             studentName: item.studentName || item.student_name,
             marks: item.marks
@@ -1072,7 +1095,7 @@ export default function ResultsEntry() {
         setAllExamData(transformedData);
         
       } catch (error) {
-        console.error('❌ Error fetching exam data:', error);
+        console.error('Error fetching exam data:', error);
       } finally {
         setLoadingAllData(false);
       }
@@ -1081,9 +1104,7 @@ export default function ResultsEntry() {
     fetchAllExamData();
   }, [showPDFPreview, selectedClass, selectedSubject, term, year, checkExisting]);
 
-  // Handlers
   const handleMarksChange = (studentId: string, marks: string) => {
-    // Allow only numbers, X, or empty
     if (marks && marks.toLowerCase() !== 'x' && !/^\d*$/.test(marks)) return;
     
     const marksNum = parseInt(marks);
@@ -1094,31 +1115,46 @@ export default function ResultsEntry() {
     ));
   };
 
-  const handleExamTypeChange = (type: 'week4' | 'week8' | 'endOfTerm') => {
-    if (isExamTypeEnabled(type)) {
-      setExamType(type);
-      // Reset edit mode when changing exam type
-      setIsEditMode(false);
+  const handleToggleNotConducted = () => {
+    const newState = !isNotConducted;
+    setIsNotConducted(newState);
+    
+    if (newState) {
+      // Clear all marks when marking as not conducted
+      setStudents(students.map(s => ({ ...s, marks: '' })));
     }
   };
 
-  // Enhanced edit handler - loads existing results
+  const handleExamTypeChange = (type: 'week4' | 'week8' | 'endOfTerm') => {
+    if (isExamTypeEnabled(type)) {
+      setExamType(type);
+      setIsEditMode(false);
+      
+      // Check if this exam type is marked as not conducted
+      if (currentSubjectCompletion?.notConducted?.[type]) {
+        setIsNotConducted(true);
+      } else {
+        setIsNotConducted(false);
+      }
+    }
+  };
+
   const handleEditResults = async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user || !currentSubjectCompletion) return;
 
     try {
-      // Check if this exam type has existing results
       const hasExistingResults = 
         (examType === 'week4' && currentSubjectCompletion.week4Complete) ||
         (examType === 'week8' && currentSubjectCompletion.week8Complete) ||
         (examType === 'endOfTerm' && currentSubjectCompletion.endOfTermComplete);
 
-      if (!hasExistingResults) {
+      const isNotConducted = currentSubjectCompletion.notConducted?.[examType] || false;
+
+      if (!hasExistingResults && !isNotConducted) {
         alert('No results to edit for this exam type.');
         return;
       }
 
-      // Load the existing marks before editing
       const existingResponse = await checkExisting({
         classId: selectedClass,
         subjectId: selectedSubject,
@@ -1128,14 +1164,12 @@ export default function ResultsEntry() {
       });
 
       if (existingResponse && existingResponse.results && existingResponse.results.length > 0) {
-        // Store original marks for potential cancel
         const originalMap = new Map<string, number>();
         existingResponse.results.forEach((r: any) => {
           originalMap.set(r.studentId || r.student_id, r.marks);
         });
         setOriginalResults(originalMap);
 
-        // Pre-fill the marks with existing values
         setStudents(prevStudents => 
           prevStudents.map(student => {
             const existing = existingResponse.results.find((r: any) => 
@@ -1143,13 +1177,12 @@ export default function ResultsEntry() {
             );
             return {
               ...student,
-              marks: existing ? (existing.marks === -1 ? 'X' : existing.marks.toString()) : ''
+              marks: existing ? (existing.marks === -1 ? 'X' : existing.marks.toString()) : '',
             };
           })
         );
       }
 
-      // Now perform the edit operation
       await editResults({
         classId: selectedClass,
         subjectId: selectedSubject,
@@ -1158,10 +1191,8 @@ export default function ResultsEntry() {
         year,
       });
 
-      // Set edit mode active
       setIsEditMode(true);
-      
-      // Refresh completion status
+      setIsNotConducted(false);
       await refetchCompletion();
       
     } catch (error: any) {
@@ -1170,38 +1201,49 @@ export default function ResultsEntry() {
     }
   };
 
-  // Cancel edit mode
   const handleCancelEdit = () => {
     if (confirm('Cancel editing? Any unsaved changes will be lost.')) {
-      // Reload original marks
       setStudents(prevStudents => 
         prevStudents.map(student => {
           const originalMark = originalResults.get(student.studentId);
           return {
             ...student,
-            marks: originalMark !== undefined ? (originalMark === -1 ? 'X' : originalMark.toString()) : ''
+            marks: originalMark !== undefined ? (originalMark === -1 ? 'X' : originalMark.toString()) : '',
           };
         })
       );
       setIsEditMode(false);
       setOriginalResults(new Map());
+      
+      // Restore not conducted state
+      if (currentSubjectCompletion?.notConducted?.[examType]) {
+        setIsNotConducted(true);
+      } else {
+        setIsNotConducted(false);
+      }
     }
   };
 
-  // Enhanced save handler with overwrite for edit mode
   const handleSaveResults = async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
 
-    const results = students
-      .filter(s => s.marks !== '')
-      .map(s => ({
-        studentId: s.studentId,
-        studentName: s.name,
-        marks: s.marks.toLowerCase() === 'x' ? -1 : parseInt(s.marks),
-      }));
+    // If not conducted, save with special value -2 for all students
+    const results = isNotConducted 
+      ? students.map(s => ({
+          studentId: s.studentId,
+          studentName: s.name,
+          marks: -2, // -2 represents N/A (not conducted)
+        }))
+      : students
+          .filter(s => s.marks !== '')
+          .map(s => ({
+            studentId: s.studentId,
+            studentName: s.name,
+            marks: s.marks.toLowerCase() === 'x' ? -1 : parseInt(s.marks),
+          }));
 
-    if (results.length === 0) {
-      alert('Please enter marks for at least one student');
+    if (results.length === 0 && !isNotConducted) {
+      alert('Please enter marks for at least one student or mark as Not Conducted');
       return;
     }
 
@@ -1217,28 +1259,25 @@ export default function ResultsEntry() {
         examName: `${examType} - ${selectedSubject}`,
         term,
         year,
-        totalMarks,
+        totalMarks: isNotConducted ? 0 : totalMarks,
         results,
-        overwrite: isEditMode, // Set to true when in edit mode
+        overwrite: isEditMode,
       });
 
-      // Clear marks and draft on success
       setStudents(students.map(s => ({ ...s, marks: '' })));
       
-      // Remove draft if exists
       if (currentDraft) {
         const newDrafts = drafts.filter(d => d.id !== currentDraft.id);
         saveDrafts(newDrafts);
       }
       
-      // Exit edit mode
       setIsEditMode(false);
       setOriginalResults(new Map());
       
-      // Refresh completion status
-      refetchCompletion();
+      // Keep not conducted state as is since it's now saved
+      await refetchCompletion();
       
-      alert('Results saved successfully!');
+      alert(isNotConducted ? `${examType} marked as Not Conducted successfully!` : 'Results saved successfully!');
       
     } catch (error: any) {
       console.error('Error saving results:', error);
@@ -1254,8 +1293,9 @@ export default function ResultsEntry() {
     setYear(draft.year);
     setTotalMarks(draft.totalMarks);
     setStudents(draft.results);
+    setIsNotConducted(draft.isNotConducted || false);
     setActiveDraftId(draft.id);
-    setIsEditMode(false); // Exit edit mode when loading draft
+    setIsEditMode(false);
   };
 
   const handleDeleteDraft = (draftId: string) => {
@@ -1272,38 +1312,20 @@ export default function ResultsEntry() {
     setShowPDFPreview(true);
   };
 
-  // FIXED: Generate PDF with proper marks data and teacher info
   const handleGeneratePDF = async () => {
     try {
       const { generateMarkSchedulePDF } = await import('@/services/pdf/markSchedulePDF');
       
-      // Get teacher name from user object with proper fallback
       const teacherDisplayName = user?.name || user?.email || 'Teacher';
       
-      // Calculate accurate statistics for logging
-      const studentsWithMarks = students.filter(s => s.marks && s.marks !== '').length;
-      const absentStudents = students.filter(s => s.marks.toLowerCase() === 'x').length;
-      const pendingStudents = students.length - studentsWithMarks - absentStudents;
-      
-      console.log('📊 PDF Statistics:', {
-        totalStudents: students.length,
-        studentsWithMarks,
-        absentStudents,
-        pendingStudents,
-        teacherName: teacherDisplayName
-      });
-
-      // IMPORTANT: Create a fresh array with properly formatted marks for the PDF
       const studentsForPDF = students.map(student => {
         let marksValue = student.marks || '';
         
-        // If marks is empty, check if there's saved data for this exam type
-        if (marksValue === '' && allExamData && allExamData[examType]) {
+        if (marksValue === '' && allExamData && allExamData[examType] && !isNotConducted) {
           const savedMark = allExamData[examType].find(
             (item: any) => item.studentId === student.studentId
           );
           if (savedMark) {
-            // Convert -1 to 'X' for absent, otherwise use the mark as string
             marksValue = savedMark.marks === -1 ? 'X' : savedMark.marks.toString();
           }
         }
@@ -1311,30 +1333,9 @@ export default function ResultsEntry() {
         return {
           name: student.name,
           studentId: student.studentId,
-          marks: marksValue // This will be a string like "75", "X", or ""
+          marks: isNotConducted ? 'N/A' : marksValue
         };
       });
-
-      console.log('📄 Generating PDF with marks data:', {
-        className: selectedClassData?.name,
-        subject: selectedSubject,
-        examType,
-        term,
-        year,
-        totalMarks,
-        teacherName: teacherDisplayName,
-        totalStudents: studentsForPDF.length,
-        marksEntered: studentsForPDF.filter(s => s.marks !== '').length,
-        marksSample: studentsForPDF.slice(0, 3).map(s => ({
-          name: s.name.substring(0, 15),
-          marks: s.marks || '(empty)'
-        }))
-      });
-
-      // Log a warning if no marks are entered
-      if (studentsForPDF.filter(s => s.marks !== '').length === 0) {
-        console.warn('⚠️ No marks entered for any student. PDF will be empty.');
-      }
 
       await generateMarkSchedulePDF({
         className: selectedClassData?.name || '',
@@ -1342,11 +1343,12 @@ export default function ResultsEntry() {
         examType,
         term,
         year,
-        totalMarks,
+        totalMarks: isNotConducted ? 0 : totalMarks,
         students: studentsForPDF,
         teacherName: teacherDisplayName,
         schoolName: 'KALABO BOARDING SECONDARY SCHOOL',
-        allExamData: allExamData || undefined
+        allExamData: allExamData || undefined,
+        isNotConducted
       });
       
       setShowPDFPreview(false);
@@ -1356,87 +1358,34 @@ export default function ResultsEntry() {
     }
   };
 
-  // Stats
   const filledCount = students.filter(s => s.marks && s.marks !== '').length;
   const totalStudents = students.length;
   const completionPercentage = totalStudents > 0 ? Math.round((filledCount / totalStudents) * 100) : 0;
   
-  // Is current exam type locked?
   const isCurrentExamLocked = currentSubjectCompletion 
     ? !isExamTypeEnabled(examType)
     : false;
   
-  // Has this exam type already been completed?
   const isExamCompleted = currentSubjectCompletion
     ? (examType === 'week4' && currentSubjectCompletion.week4Complete) ||
       (examType === 'week8' && currentSubjectCompletion.week8Complete) ||
       (examType === 'endOfTerm' && currentSubjectCompletion.endOfTermComplete)
     : false;
 
-  // Debug function
-  const debugCheckData = async () => {
-    if (!selectedClass || !selectedSubject) {
-      alert('Select class and subject first');
-      return;
-    }
-    
-    console.log('🔍 Debug: Checking existing data...');
-    
-    try {
-      const week4Response = await checkExisting({
-        classId: selectedClass,
-        subjectId: selectedSubject,
-        examType: 'week4',
-        term,
-        year,
-      });
-      
-      const week8Response = await checkExisting({
-        classId: selectedClass,
-        subjectId: selectedSubject,
-        examType: 'week8',
-        term,
-        year,
-      });
-      
-      const eotResponse = await checkExisting({
-        classId: selectedClass,
-        subjectId: selectedSubject,
-        examType: 'endOfTerm',
-        term,
-        year,
-      });
-      
-      console.log('📊 Debug Full Responses:', {
-        week4: week4Response,
-        week8: week8Response,
-        endOfTerm: eotResponse
-      });
-      
-      console.log('📊 Debug Results Arrays:', {
-        week4: week4Response?.results || [],
-        week8: week8Response?.results || [],
-        endOfTerm: eotResponse?.results || []
-      });
-      
-      alert(`Found: 
-        Week4: ${week4Response?.results?.length || 0} results, 
-        Week8: ${week8Response?.results?.length || 0} results, 
-        EOT: ${eotResponse?.results?.length || 0} results`);
-      
-    } catch (error) {
-      console.error('Debug error:', error);
-    }
-  };
+  // Check if any results exist for this exam type
+  const hasExistingResults = currentSubjectCompletion
+    ? (examType === 'week4' && (currentSubjectCompletion.week4Complete || currentSubjectCompletion.notConducted?.week4)) ||
+      (examType === 'week8' && (currentSubjectCompletion.week8Complete || currentSubjectCompletion.notConducted?.week8)) ||
+      (examType === 'endOfTerm' && (currentSubjectCompletion.endOfTermComplete || currentSubjectCompletion.notConducted?.endOfTerm))
+    : false;
 
-  // Loading states
   if (loadingClasses || loadingAssignments) {
     return (
       <DashboardLayout activeTab="results">
-        <div className="p-4 sm:p-6 lg:p-8">
-          <div className="flex flex-col items-center justify-center min-h-[60vh]">
-            <Loader2 className="animate-spin text-blue-600 mb-4" size={48} />
-            <p className="text-gray-600">Loading your classes...</p>
+        <div className="p-3 sm:p-4 lg:p-6">
+          <div className="flex flex-col items-center justify-center min-h-[50vh] sm:min-h-[60vh]">
+            <Loader2 className="animate-spin text-blue-600 mb-3 sm:mb-4" size={32} />
+            <p className="text-sm sm:text-base text-gray-600">Loading your classes...</p>
           </div>
         </div>
       </DashboardLayout>
@@ -1445,93 +1394,97 @@ export default function ResultsEntry() {
 
   return (
     <DashboardLayout activeTab="results">
-      <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+      <div className="p-3 sm:p-4 lg:p-6 space-y-4 sm:space-y-6">
         
-        {/* ===== HEADER ===== */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 tracking-tight truncate">
               Results Entry
             </h1>
-            <p className="text-sm text-gray-600 mt-1">
+            <p className="text-xs sm:text-sm text-gray-600 mt-0.5 sm:mt-1 truncate">
               {selectedClassData?.name || 'Select a class'} • {term} {year}
             </p>
           </div>
           
           {/* Action Buttons */}
           {selectedClass && selectedSubject && students.length > 0 && (
-            <div className="flex flex-col sm:flex-row gap-2">
-              {/* Debug Button - TEMPORARY */}
-              <button
-                onClick={debugCheckData}
-                className="inline-flex items-center justify-center gap-2 bg-gray-500 text-white rounded-xl hover:bg-gray-600 px-3 py-2 text-sm"
-              >
-                Debug Data
-              </button>
+            <div className="flex flex-wrap items-center gap-2">
+              
+              {/* Not Conducted Toggle - Show for all exam types when not in edit mode and not completed */}
+              {!isEditMode && !isExamCompleted && (
+                <NotConductedToggle
+                  isNotConducted={isNotConducted}
+                  onToggle={handleToggleNotConducted}
+                  disabled={isSaving || isEditing}
+                  examType={examType}
+                />
+              )}
 
               {/* Download Button */}
               <button
                 onClick={handleDownloadMarks}
                 className={`
-                  inline-flex items-center justify-center gap-2
+                  inline-flex items-center justify-center gap-1 sm:gap-2
                   bg-green-600 text-white rounded-xl hover:bg-green-700
                   font-medium transition-all active:scale-[0.98]
                   focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2
-                  px-5 py-3 shadow-lg
-                  ${isMobile ? 'w-full' : ''}
+                  px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
+                  ${isSmallMobile ? 'flex-1' : ''}
                 `}
               >
-                <Download size={18} />
-                <span>Download Schedule</span>
+                <Download size={16} />
+                <span className="hidden xs:inline">Download</span>
               </button>
 
-              {/* Edit Button - Show if exam is completed and not in edit mode */}
-              {isExamCompleted && !isEditMode && (
+              {/* Edit Button - Show if exam has existing results and not in edit mode */}
+              {hasExistingResults && !isEditMode && !isNotConducted && (
                 <button
                   onClick={handleEditResults}
                   disabled={isEditing}
                   className={`
-                    inline-flex items-center justify-center gap-2
+                    inline-flex items-center justify-center gap-1 sm:gap-2
                     bg-amber-600 text-white rounded-xl hover:bg-amber-700
                     font-medium transition-all active:scale-[0.98]
                     focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2
                     disabled:opacity-50 disabled:cursor-not-allowed
-                    px-5 py-3 shadow-lg
-                    ${isMobile ? 'w-full' : ''}
+                    px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
+                    ${isSmallMobile ? 'flex-1' : ''}
                   `}
                 >
                   {isEditing ? (
-                    <Loader2 size={18} className="animate-spin" />
+                    <Loader2 size={16} className="animate-spin" />
                   ) : (
-                    <Edit3 size={18} />
+                    <Edit3 size={16} />
                   )}
-                  <span>Edit Results</span>
+                  <span className="hidden xs:inline">Edit</span>
                 </button>
               )}
 
-              {/* Save Button - Show if not completed OR in edit mode */}
-              {(!isExamCompleted || isEditMode) && (
+              {/* Save Button - Show when not completed OR in edit mode OR not conducted */}
+              {(!isExamCompleted || isEditMode || isNotConducted) && (
                 <button
                   onClick={handleSaveResults}
-                  disabled={isSaving || filledCount === 0 || isCurrentExamLocked}
+                  disabled={isSaving || (filledCount === 0 && !isNotConducted) || isCurrentExamLocked}
                   className={`
-                    inline-flex items-center justify-center gap-2
-                    ${isEditMode ? 'bg-amber-600' : 'bg-blue-600'} text-white rounded-xl hover:bg-opacity-90
+                    inline-flex items-center justify-center gap-1 sm:gap-2
+                    ${isEditMode ? 'bg-amber-600' : isNotConducted ? 'bg-gray-700' : 'bg-blue-600'} 
+                    text-white rounded-xl hover:bg-opacity-90
                     font-medium transition-all active:scale-[0.98]
                     focus:outline-none focus:ring-2 focus:ring-offset-2
-                    ${isEditMode ? 'focus:ring-amber-500' : 'focus:ring-blue-500'}
+                    ${isEditMode ? 'focus:ring-amber-500' : isNotConducted ? 'focus:ring-gray-500' : 'focus:ring-blue-500'}
                     disabled:opacity-50 disabled:cursor-not-allowed
-                    px-5 py-3 shadow-lg
-                    ${isMobile ? 'w-full' : ''}
+                    px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
+                    ${isSmallMobile ? 'flex-1' : ''}
                   `}
                 >
                   {isSaving ? (
-                    <Loader2 size={18} className="animate-spin" />
+                    <Loader2 size={16} className="animate-spin" />
                   ) : (
-                    <Save size={18} />
+                    isNotConducted ? <Ban size={16} /> : <Save size={16} />
                   )}
-                  <span>
-                    {isEditMode ? `Update ${filledCount > 0 ? `(${filledCount})` : ''}` : `Save ${filledCount > 0 ? `(${filledCount})` : ''}`}
+                  <span className="hidden xs:inline">
+                    {isEditMode ? 'Update' : isNotConducted ? 'Save as Not Conducted' : 'Save'}
                   </span>
                 </button>
               )}
@@ -1542,15 +1495,15 @@ export default function ResultsEntry() {
         {/* Edit Mode Indicator */}
         <EditModeIndicator isEditing={isEditMode} onCancelEdit={handleCancelEdit} />
 
-        {/* ===== DRAFTS SECTION ===== */}
+        {/* Drafts Section */}
         {drafts.length > 0 && !isEditMode && (
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <History size={16} className="text-gray-500" />
-              <h3 className="text-sm font-medium text-gray-700">Your Drafts</h3>
-              <span className="text-xs text-gray-500">(Auto-saved every 2 seconds)</span>
+          <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4">
+            <div className="flex items-center gap-1 sm:gap-2 mb-2 sm:mb-3">
+              <History size={14} className="text-gray-500 flex-shrink-0" />
+              <h3 className="text-xs sm:text-sm font-medium text-gray-700">Your Drafts</h3>
+              <span className="text-[10px] sm:text-xs text-gray-500">(Auto-saved)</span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
               {drafts.map(draft => (
                 <DraftCard
                   key={draft.id}
@@ -1563,13 +1516,13 @@ export default function ResultsEntry() {
           </div>
         )}
 
-        {/* ===== FILTERS ===== */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Filters */}
+        <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
             
             {/* Class Select */}
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
+            <div className="min-w-0">
+              <label className="block text-[10px] sm:text-xs font-medium text-gray-600 mb-0.5 sm:mb-1">
                 Class <span className="text-red-500">*</span>
               </label>
               <select
@@ -1578,8 +1531,9 @@ export default function ResultsEntry() {
                   setSelectedClass(e.target.value);
                   setSelectedSubject('');
                   setIsEditMode(false);
+                  setIsNotConducted(false);
                 }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
+                className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white truncate"
                 disabled={assignedClasses.length === 0 || isEditMode}
               >
                 <option value="">Select class...</option>
@@ -1592,8 +1546,8 @@ export default function ResultsEntry() {
             </div>
             
             {/* Subject Select */}
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
+            <div className="min-w-0">
+              <label className="block text-[10px] sm:text-xs font-medium text-gray-600 mb-0.5 sm:mb-1">
                 Subject <span className="text-red-500">*</span>
               </label>
               <select
@@ -1601,8 +1555,9 @@ export default function ResultsEntry() {
                 onChange={e => {
                   setSelectedSubject(e.target.value);
                   setIsEditMode(false);
+                  setIsNotConducted(false);
                 }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
+                className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white truncate"
                 disabled={!selectedClass || availableSubjects.length === 0 || isEditMode}
               >
                 <option value="">
@@ -1610,15 +1565,15 @@ export default function ResultsEntry() {
                    availableSubjects.length === 0 ? 'No subjects' : 'Select subject...'}
                 </option>
                 {availableSubjects.map(subject => (
-                  <option key={subject} value={subject}>{subject}</option>
+                  <option key={subject} value={subject} className="truncate">{subject}</option>
                 ))}
               </select>
             </div>
             
             {/* Term & Year */}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
+            <div className="grid grid-cols-2 gap-1 sm:gap-2">
+              <div className="min-w-0">
+                <label className="block text-[10px] sm:text-xs font-medium text-gray-600 mb-0.5 sm:mb-1">
                   Term
                 </label>
                 <select
@@ -1626,8 +1581,9 @@ export default function ResultsEntry() {
                   onChange={e => {
                     setTerm(e.target.value);
                     setIsEditMode(false);
+                    setIsNotConducted(false);
                   }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
+                  className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white"
                   disabled={isEditMode}
                 >
                   <option value="Term 1">T1</option>
@@ -1635,8 +1591,8 @@ export default function ResultsEntry() {
                   <option value="Term 3">T3</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
+              <div className="min-w-0">
+                <label className="block text-[10px] sm:text-xs font-medium text-gray-600 mb-0.5 sm:mb-1">
                   Year
                 </label>
                 <input
@@ -1645,8 +1601,9 @@ export default function ResultsEntry() {
                   onChange={e => {
                     setYear(parseInt(e.target.value) || new Date().getFullYear());
                     setIsEditMode(false);
+                    setIsNotConducted(false);
                   }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm"
                   min="2020"
                   max="2030"
                   disabled={isEditMode}
@@ -1655,34 +1612,35 @@ export default function ResultsEntry() {
             </div>
             
             {/* Total Marks */}
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
+            <div className="min-w-0">
+              <label className="block text-[10px] sm:text-xs font-medium text-gray-600 mb-0.5 sm:mb-1">
                 Total Marks
               </label>
               <input
                 type="number"
                 value={totalMarks}
                 onChange={e => setTotalMarks(parseInt(e.target.value) || 100)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm"
                 min="1"
                 max="500"
-                disabled={isExamCompleted && !isEditMode}
+                disabled={(isExamCompleted && !isEditMode) || isNotConducted}
               />
             </div>
           </div>
         </div>
 
-        {/* ===== SUBJECT PROGRESS ===== */}
+        {/* Subject Progress */}
         {selectedClass && selectedSubject && currentSubjectCompletion && (
           <SubjectProgress 
-            completion={currentSubjectCompletion}
+            completion={currentSubjectCompletion as ExtendedSubjectCompletion}
             selectedExamType={examType}
             onExamTypeChange={handleExamTypeChange}
             hasDraft={!!currentDraft}
+            isNotConducted={isNotConducted}
           />
         )}
 
-        {/* ===== RESULTS ENTRY ===== */}
+        {/* Results Entry */}
         {loadingStudents ? (
           <TableSkeleton />
         ) : (
@@ -1697,48 +1655,55 @@ export default function ResultsEntry() {
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 
                 {/* Header */}
-                <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Users size={16} className="text-gray-500" />
-                    <span className="font-medium text-gray-900 text-sm">
+                <div className="px-3 sm:px-4 py-2 sm:py-3 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1 sm:gap-2 min-w-0">
+                    <Users size={14} className="text-gray-500 flex-shrink-0" />
+                    <span className="font-medium text-gray-900 text-xs sm:text-sm truncate">
                       {selectedClassData?.name} • {selectedSubject}
                     </span>
                     {currentDraft && !isEditMode && (
-                      <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                      <span className="text-[10px] sm:text-xs bg-yellow-100 text-yellow-700 px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap">
                         Draft
                       </span>
                     )}
                     {isEditMode && (
-                      <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+                      <span className="text-[10px] sm:text-xs bg-amber-100 text-amber-700 px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap">
                         Edit Mode
+                      </span>
+                    )}
+                    {isNotConducted && (
+                      <span className="text-[10px] sm:text-xs bg-gray-200 text-gray-700 px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap">
+                        Not Conducted
                       </span>
                     )}
                   </div>
                   
                   {/* Progress */}
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-gray-500">
-                      {filledCount}/{totalStudents}
-                    </span>
-                    <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-blue-500 rounded-full transition-all duration-300"
-                        style={{ width: `${completionPercentage}%` }}
-                      />
+                  {!isNotConducted && (
+                    <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+                      <span className="text-[10px] sm:text-xs text-gray-500">
+                        {filledCount}/{totalStudents}
+                      </span>
+                      <div className="w-16 sm:w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                          style={{ width: `${completionPercentage}%` }}
+                        />
+                      </div>
+                      {filledCount > 0 && !isExamCompleted && !isEditMode && (
+                        <button
+                          onClick={() => {
+                            if (confirm('Clear all entered marks?')) {
+                              setStudents(students.map(s => ({ ...s, marks: '' })));
+                            }
+                          }}
+                          className="text-[10px] sm:text-xs text-gray-500 hover:text-gray-700 hover:underline"
+                        >
+                          Clear
+                        </button>
+                      )}
                     </div>
-                    {filledCount > 0 && !isExamCompleted && !isEditMode && (
-                      <button
-                        onClick={() => {
-                          if (confirm('Clear all entered marks?')) {
-                            setStudents(students.map(s => ({ ...s, marks: '' })));
-                          }
-                        }}
-                        className="text-xs text-gray-500 hover:text-gray-700 hover:underline"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
+                  )}
                 </div>
 
                 {/* Mobile-Optimized Card List */}
@@ -1761,8 +1726,9 @@ export default function ResultsEntry() {
                           }}
                           onEnterPress={() => focusNextInput(student.id)}
                           isMobile={true}
-                          disabled={isExamCompleted && !isEditMode}
+                          disabled={(isExamCompleted && !isEditMode) || isNotConducted}
                           showExistingMark={existingMark}
+                          isNotConducted={isNotConducted}
                         />
                       );
                     })}
@@ -1773,10 +1739,10 @@ export default function ResultsEntry() {
                     <table className="w-full">
                       <thead className="bg-gray-50 text-xs">
                         <tr>
-                          <th className="px-3 py-3 text-left font-medium text-gray-600 w-12">#</th>
-                          <th className="px-3 py-3 text-left font-medium text-gray-600">Student</th>
-                          <th className="px-3 py-3 text-left font-medium text-gray-600">Marks</th>
-                          <th className="px-3 py-3 text-left font-medium text-gray-600">Grade</th>
+                          <th className="px-3 py-2 sm:py-3 text-left font-medium text-gray-600 w-10 sm:w-12">#</th>
+                          <th className="px-3 py-2 sm:py-3 text-left font-medium text-gray-600">Student</th>
+                          <th className="px-3 py-2 sm:py-3 text-left font-medium text-gray-600">Marks</th>
+                          <th className="px-3 py-2 sm:py-3 text-left font-medium text-gray-600">Grade</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -1797,8 +1763,9 @@ export default function ResultsEntry() {
                               }}
                               onEnterPress={() => focusNextInput(student.id)}
                               isMobile={false}
-                              disabled={isExamCompleted && !isEditMode}
+                              disabled={(isExamCompleted && !isEditMode) || isNotConducted}
                               showExistingMark={existingMark}
+                              isNotConducted={isNotConducted}
                             />
                           );
                         })}
@@ -1808,34 +1775,41 @@ export default function ResultsEntry() {
                 )}
                 
                 {/* Status Messages */}
-                {!isExamCompleted && !isCurrentExamLocked && !isEditMode && (
-                  <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 text-xs text-gray-500 flex items-center gap-4">
-                    <span>⏎ Enter: next student</span>
+                {!isExamCompleted && !isCurrentExamLocked && !isEditMode && !isNotConducted && (
+                  <div className="px-3 sm:px-4 py-2 bg-gray-50 border-t border-gray-200 text-[10px] sm:text-xs text-gray-500 flex flex-wrap items-center gap-2 sm:gap-4">
+                    <span>⏎ Enter: next</span>
                     <span>X: absent</span>
                     <span>0-{totalMarks}: marks</span>
-                    <span className="ml-auto">Auto-saved every 2s</span>
+                    <span className="ml-auto">Auto-saved</span>
+                  </div>
+                )}
+                
+                {isNotConducted && (
+                  <div className="px-3 sm:px-4 py-3 bg-gray-100 border-t border-gray-200 text-xs sm:text-sm text-gray-700 flex items-center gap-2">
+                    <Ban size={16} />
+                    <span>✗ This test has been marked as <strong>Not Conducted</strong>. No marks will be considered for reports.</span>
                   </div>
                 )}
                 
                 {isEditMode && (
-                  <div className="px-4 py-3 bg-amber-50 border-t border-amber-200 text-sm text-amber-700 flex items-center justify-between">
+                  <div className="px-3 sm:px-4 py-3 bg-amber-50 border-t border-amber-200 text-xs sm:text-sm text-amber-700 flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <Edit3 size={16} />
-                      <span>✎ Editing existing results. Changes will overwrite saved data.</span>
+                      <span>✎ Editing existing results.</span>
                     </div>
                   </div>
                 )}
                 
-                {isExamCompleted && !isEditMode && (
-                  <div className="px-4 py-3 bg-green-50 border-t border-green-200 text-sm text-green-700 flex items-center justify-between">
+                {isExamCompleted && !isEditMode && !isNotConducted && (
+                  <div className="px-3 sm:px-4 py-3 bg-green-50 border-t border-green-200 text-xs sm:text-sm text-green-700 flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <CheckCircle size={16} />
-                      <span>✓ {examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'} results are complete</span>
+                      <span>✓ Results are complete</span>
                     </div>
                     <button
                       onClick={handleEditResults}
                       disabled={isEditing}
-                      className="text-xs bg-green-100 hover:bg-green-200 px-3 py-1 rounded-full transition-colors flex items-center gap-1"
+                      className="text-xs bg-green-100 hover:bg-green-200 px-2 sm:px-3 py-1 rounded-full transition-colors flex items-center gap-1"
                     >
                       <Edit3 size={12} />
                       <span>Edit</span>
@@ -1844,7 +1818,7 @@ export default function ResultsEntry() {
                 )}
                 
                 {isCurrentExamLocked && !isExamCompleted && (
-                  <div className="px-4 py-3 bg-yellow-50 border-t border-yellow-200 text-sm text-yellow-700 flex items-center gap-2">
+                  <div className="px-3 sm:px-4 py-3 bg-yellow-50 border-t border-yellow-200 text-xs sm:text-sm text-yellow-700 flex items-center gap-2">
                     <Lock size={16} />
                     <span>🔒 Complete previous exam type to unlock</span>
                   </div>
@@ -1854,14 +1828,14 @@ export default function ResultsEntry() {
           </>
         )}
 
-        {/* ===== NO CLASSES STATE ===== */}
+        {/* No Classes State */}
         {!loadingClasses && assignedClasses.length === 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-yellow-100 rounded-full mb-4">
-              <BookOpen className="text-yellow-600" size={32} />
+          <div className="bg-white rounded-xl border border-gray-200 p-6 sm:p-12 text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-yellow-100 rounded-full mb-3 sm:mb-4">
+              <BookOpen className="text-yellow-600" size={isMobile ? 24 : 32} />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No Classes Assigned</h3>
-            <p className="text-gray-600 max-w-md mx-auto text-sm">
+            <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1 sm:mb-2">No Classes Assigned</h3>
+            <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto">
               You haven't been assigned to any classes yet. Contact your administrator to get teaching assignments.
             </p>
           </div>
@@ -1882,6 +1856,7 @@ export default function ResultsEntry() {
         onDownload={handleGeneratePDF}
         allExamData={allExamData}
         loadingAllData={loadingAllData}
+        isNotConducted={isNotConducted}
       />
     </DashboardLayout>
   );

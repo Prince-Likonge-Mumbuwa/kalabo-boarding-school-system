@@ -1,6 +1,6 @@
 // @/services/resultsService.ts
 // COMPLETE REWRITE - ISACTIVE FILTER ELIMINATED
-// Version 6.3.0 - Added enteredStudentIds and savedMarks to SubjectCompletionStatus
+// Version 6.4.0 - Added notConducted status to SubjectCompletionStatus
 
 import {
   collection,
@@ -34,13 +34,13 @@ export interface StudentResult {
   teacherName: string;
   examType: 'week4' | 'week8' | 'endOfTerm';
   examName: string;
-  marks: number;
+  marks: number; // -1 for absent, -2 for not conducted
   totalMarks: number;
   percentage: number;
   grade: number; // Grade for this specific exam
   term: string;
   year: number;
-  status: 'entered' | 'absent' | 'not_entered';
+  status: 'entered' | 'absent' | 'not_entered' | 'not_conducted';
   createdAt: string;
   updatedAt: string;
   customStudentId?: string; // For reference/debugging
@@ -105,9 +105,9 @@ export interface StudentProgress {
     subjectId: string;
     subjectName: string;
     teacherName: string;
-    week4: { status: 'complete' | 'missing' | 'absent'; marks?: number };
-    week8: { status: 'complete' | 'missing' | 'absent'; marks?: number };
-    endOfTerm: { status: 'complete' | 'missing' | 'absent'; marks?: number };
+    week4: { status: 'complete' | 'missing' | 'absent' | 'not_conducted'; marks?: number };
+    week8: { status: 'complete' | 'missing' | 'absent' | 'not_conducted'; marks?: number };
+    endOfTerm: { status: 'complete' | 'missing' | 'absent' | 'not_conducted'; marks?: number };
     averagePercentage?: number; // Average of available scores
     subjectProgress: number;
     grade?: number;
@@ -128,6 +128,11 @@ export interface ReportReadinessCheck {
     subjectId: string;
     teacherName: string;
     missingExamTypes: string[];
+  }>;
+  notConductedExams?: Array<{
+    subject: string;
+    subjectId: string;
+    examType: string;
   }>;
 }
 
@@ -165,15 +170,21 @@ export interface SubjectCompletionStatus {
     week8: number;
     endOfTerm: number;
   };
-  // ADDED: Student IDs that have marks for each exam type (for lookup)
+  // Student IDs that have marks for each exam type (for lookup)
   enteredStudentIds: {
     week4: string[];
     week8: string[];
     endOfTerm: string[];
   };
-  // ADDED: Saved marks for quick lookup when editing
+  // Saved marks for quick lookup when editing
   savedMarks?: {
-    [studentId: string]: number; // -1 for absent
+    [studentId: string]: number; // -1 for absent, -2 for not conducted
+  };
+  // Not conducted status for each exam type
+  notConducted?: {
+    week4: boolean;
+    week8: boolean;
+    endOfTerm: boolean;
   };
 }
 
@@ -673,7 +684,7 @@ class ResultsService {
       results: Array<{
         studentId: string; // Can be custom ID or document ID
         studentName: string;
-        marks: number;
+        marks: number; // -1 for absent, -2 for not conducted
       }>;
     },
     options?: { overwrite?: boolean }
@@ -716,9 +727,27 @@ class ResultsService {
           continue;
         }
 
-        const percentage = result.marks < 0 ? -1 : Math.round((result.marks / data.totalMarks) * 100);
-        const grade = calculateGrade(percentage);
-        const status: StudentResult['status'] = result.marks < 0 ? 'absent' : 'entered';
+        // Calculate percentage based on marks
+        let percentage = -1;
+        let grade = -1;
+        let status: StudentResult['status'] = 'not_entered';
+        
+        if (result.marks === -2) {
+          // Not conducted
+          status = 'not_conducted';
+          percentage = -1;
+          grade = -1;
+        } else if (result.marks === -1) {
+          // Absent
+          status = 'absent';
+          percentage = -1;
+          grade = -1;
+        } else if (result.marks >= 0) {
+          // Normal marks
+          percentage = Math.round((result.marks / data.totalMarks) * 100);
+          grade = calculateGrade(percentage);
+          status = 'entered';
+        }
 
         const resultData: StudentResult = {
           id: this.generateResultId(
@@ -780,9 +809,19 @@ class ResultsService {
     totalMarks: number
   ): Promise<StudentResult | null> {
     try {
-      const percentage = marks < 0 ? -1 : Math.round((marks / totalMarks) * 100);
-      const grade = calculateGrade(percentage);
-      const status: StudentResult['status'] = marks < 0 ? 'absent' : 'entered';
+      let percentage = -1;
+      let grade = -1;
+      let status: StudentResult['status'] = 'not_entered';
+      
+      if (marks === -2) {
+        status = 'not_conducted';
+      } else if (marks === -1) {
+        status = 'absent';
+      } else if (marks >= 0) {
+        percentage = Math.round((marks / totalMarks) * 100);
+        grade = calculateGrade(percentage);
+        status = 'entered';
+      }
       
       const docRef = doc(this.resultsCollection, resultId);
       await updateDoc(docRef, {
@@ -803,8 +842,7 @@ class ResultsService {
   }
 
   /**
-   * Edit results - unlock for editing (placeholder for now)
-   * This can be expanded later if needed
+   * Edit results - unlock for editing
    */
   async editResults(data: {
     classId: string;
@@ -838,7 +876,7 @@ class ResultsService {
 
   /**
    * Get progress for all students in a class
-   * FIXED: Progress bars now work correctly
+   * FIXED: Progress bars now work correctly with not conducted status
    */
   async getStudentProgress(
     classId: string,
@@ -897,17 +935,33 @@ class ResultsService {
           const week8Result = subjectResults.find(r => r.examType === 'week8');
           const endOfTermResult = subjectResults.find(r => r.examType === 'endOfTerm');
           
-          // Calculate completion
-          const week4Complete = !!week4Result;
-          const week8Complete = !!week8Result;
-          const endOfTermComplete = !!endOfTermResult;
+          // Determine status for each exam
+          const week4Status = week4Result 
+            ? (week4Result.status === 'absent' ? 'absent' : 
+               week4Result.status === 'not_conducted' ? 'not_conducted' : 'complete')
+            : 'missing';
+            
+          const week8Status = week8Result 
+            ? (week8Result.status === 'absent' ? 'absent' : 
+               week8Result.status === 'not_conducted' ? 'not_conducted' : 'complete')
+            : 'missing';
+            
+          const endOfTermStatus = endOfTermResult 
+            ? (endOfTermResult.status === 'absent' ? 'absent' : 
+               endOfTermResult.status === 'not_conducted' ? 'not_conducted' : 'complete')
+            : 'missing';
+          
+          // Calculate completion (treat not_conducted as complete for progress)
+          const week4Complete = week4Status !== 'missing';
+          const week8Complete = week8Status !== 'missing';
+          const endOfTermComplete = endOfTermStatus !== 'missing';
           
           const completedExams = [week4Complete, week8Complete, endOfTermComplete].filter(Boolean).length;
           const subjectProgress = Math.round((completedExams / 3) * 100);
           
           if (subjectProgress === 100) totalSubjectsCompleted++;
           
-          // Collect available scores for average calculation
+          // Collect available scores for average calculation (exclude not_conducted and absent)
           const availableScores = [];
           if (week4Result?.percentage >= 0) availableScores.push(week4Result.percentage);
           if (week8Result?.percentage >= 0) availableScores.push(week8Result.percentage);
@@ -917,10 +971,9 @@ class ResultsService {
             ? Math.round(availableScores.reduce((a, b) => a + b, 0) / availableScores.length)
             : undefined;
           
-          // For overall percentage, use endOfTerm if available, otherwise average
-          const subjectOverallScore = endOfTermResult?.percentage ?? averagePercentage ?? 0;
-          if (subjectOverallScore > 0) {
-            totalPercentage += subjectOverallScore;
+          // For overall percentage, use average if available
+          if (averagePercentage && averagePercentage > 0) {
+            totalPercentage += averagePercentage;
             subjectsWithScores++;
           }
           
@@ -929,21 +982,15 @@ class ResultsService {
             subjectName: subject.name,
             teacherName: teacherAssignment?.teacherName || 'Not assigned',
             week4: {
-              status: week4Result 
-                ? (week4Result.status === 'absent' ? 'absent' : 'complete') 
-                : 'missing',
+              status: week4Status,
               marks: week4Result?.percentage
             },
             week8: {
-              status: week8Result 
-                ? (week8Result.status === 'absent' ? 'absent' : 'complete') 
-                : 'missing',
+              status: week8Status,
               marks: week8Result?.percentage
             },
             endOfTerm: {
-              status: endOfTermResult 
-                ? (endOfTermResult.status === 'absent' ? 'absent' : 'complete') 
-                : 'missing',
+              status: endOfTermStatus,
               marks: endOfTermResult?.percentage
             },
             averagePercentage,
@@ -994,7 +1041,7 @@ class ResultsService {
 
   /**
    * Generate a single report card
-   * FIXED: Grade calculation now uses average of all exams
+   * FIXED: Grade calculation now uses average of all exams, handles not conducted
    */
   async generateReportCard(
     inputStudentId: string, // Can be custom ID or document ID
@@ -1050,6 +1097,9 @@ class ResultsService {
         week4: number;
         week8: number;
         endOfTerm: number;
+        week4Status?: string;
+        week8Status?: string;
+        endOfTermStatus?: string;
       }>();
       
       results.forEach(result => {
@@ -1069,9 +1119,15 @@ class ResultsService {
 
         const subject = subjectMap.get(subjectId)!;
         
-        if (result.examType === 'week4') subject.week4 = result.percentage;
-        if (result.examType === 'week8') subject.week8 = result.percentage;
-        if (result.examType === 'endOfTerm') subject.endOfTerm = result.percentage;
+        if (result.examType === 'week4') {
+          subject.week4 = result.marks === -2 ? -2 : result.percentage;
+        }
+        if (result.examType === 'week8') {
+          subject.week8 = result.marks === -2 ? -2 : result.percentage;
+        }
+        if (result.examType === 'endOfTerm') {
+          subject.endOfTerm = result.marks === -2 ? -2 : result.percentage;
+        }
       });
 
       // Build subjects array with averages and grades
@@ -1087,7 +1143,7 @@ class ResultsService {
 
         const isComplete = missingExams.length === 0;
         
-        // Calculate average from available scores
+        // Calculate average from available scores (exclude not conducted and absent)
         const availableScores = [];
         if (subjectData.week4 >= 0) availableScores.push(subjectData.week4);
         if (subjectData.week8 >= 0) availableScores.push(subjectData.week8);
@@ -1103,7 +1159,8 @@ class ResultsService {
         const comment = this.generateSubjectComment(
           grade,
           averagePercentage,
-          missingExams
+          missingExams,
+          subjectData.week4 === -2 || subjectData.week8 === -2 || subjectData.endOfTerm === -2
         );
 
         subjects.push({
@@ -1287,6 +1344,9 @@ class ResultsService {
         hasWeek4: boolean;
         hasWeek8: boolean;
         hasEndOfTerm: boolean;
+        isNotConductedWeek4?: boolean;
+        isNotConductedWeek8?: boolean;
+        isNotConductedEndOfTerm?: boolean;
         teacherName: string;
       }>();
 
@@ -1296,6 +1356,9 @@ class ResultsService {
           hasWeek4: false,
           hasWeek8: false,
           hasEndOfTerm: false,
+          isNotConductedWeek4: false,
+          isNotConductedWeek8: false,
+          isNotConductedEndOfTerm: false,
           teacherName: 'Not assigned',
         });
       });
@@ -1304,20 +1367,32 @@ class ResultsService {
         if (subjectMap.has(result.subjectId)) {
           const subject = subjectMap.get(result.subjectId)!;
           subject.teacherName = result.teacherName;
-          if (result.examType === 'week4') subject.hasWeek4 = true;
-          if (result.examType === 'week8') subject.hasWeek8 = true;
-          if (result.examType === 'endOfTerm') subject.hasEndOfTerm = true;
+          
+          if (result.examType === 'week4') {
+            subject.hasWeek4 = true;
+            subject.isNotConductedWeek4 = result.marks === -2;
+          }
+          if (result.examType === 'week8') {
+            subject.hasWeek8 = true;
+            subject.isNotConductedWeek8 = result.marks === -2;
+          }
+          if (result.examType === 'endOfTerm') {
+            subject.hasEndOfTerm = true;
+            subject.isNotConductedEndOfTerm = result.marks === -2;
+          }
         }
       });
 
       const missingData: ReportReadinessCheck['missingData'] = [];
+      const notConductedExams: Array<{ subject: string; subjectId: string; examType: string }> = [];
       let completeSubjects = 0;
       
       subjectMap.forEach((subject, subjectId) => {
         const missing: string[] = [];
-        if (!subject.hasWeek4) missing.push('Week 4');
-        if (!subject.hasWeek8) missing.push('Week 8');
-        if (!subject.hasEndOfTerm) missing.push('End of Term');
+        
+        if (!subject.hasWeek4 && !subject.isNotConductedWeek4) missing.push('Week 4');
+        if (!subject.hasWeek8 && !subject.isNotConductedWeek8) missing.push('Week 8');
+        if (!subject.hasEndOfTerm && !subject.isNotConductedEndOfTerm) missing.push('End of Term');
         
         if (missing.length > 0) {
           missingData.push({
@@ -1329,6 +1404,17 @@ class ResultsService {
         } else {
           completeSubjects++;
         }
+
+        // Track not conducted exams
+        if (subject.isNotConductedWeek4) {
+          notConductedExams.push({ subject: subject.name, subjectId, examType: 'Week 4' });
+        }
+        if (subject.isNotConductedWeek8) {
+          notConductedExams.push({ subject: subject.name, subjectId, examType: 'Week 8' });
+        }
+        if (subject.isNotConductedEndOfTerm) {
+          notConductedExams.push({ subject: subject.name, subjectId, examType: 'End of Term' });
+        }
       });
 
       return {
@@ -1338,6 +1424,7 @@ class ResultsService {
         totalSubjects: subjectMap.size,
         completeSubjects,
         missingData,
+        notConductedExams,
       };
     } catch (error) {
       console.error('❌ Error validating report readiness:', error);
@@ -1403,7 +1490,7 @@ class ResultsService {
 
   /**
    * Get completion status for all subjects in a class
-   * UPDATED: Now includes enteredStudentIds and savedMarks
+   * UPDATED: Now includes enteredStudentIds, savedMarks, and notConducted status
    */
   async getSubjectCompletionStatus(
     classId: string,
@@ -1439,6 +1526,9 @@ class ResultsService {
         week4Marks: Map<string, number>; // For saved marks
         week8Marks: Map<string, number>;
         endOfTermMarks: Map<string, number>;
+        week4NotConducted?: boolean; // Track if week4 is marked as not conducted
+        week8NotConducted?: boolean;
+        endOfTermNotConducted?: boolean;
       }>();
 
       results.forEach(result => {
@@ -1454,19 +1544,32 @@ class ResultsService {
             week4Marks: new Map(),
             week8Marks: new Map(),
             endOfTermMarks: new Map(),
+            week4NotConducted: false,
+            week8NotConducted: false,
+            endOfTermNotConducted: false,
           });
         }
         const subject = subjectMap.get(key)!;
         
         if (result.examType === 'week4') {
+          // If marks === -2, it's "not conducted" for this student
+          if (result.marks === -2) {
+            subject.week4NotConducted = true;
+          }
           subject.week4Students.add(result.studentId);
           subject.week4Marks.set(result.studentId, result.marks);
         }
         if (result.examType === 'week8') {
+          if (result.marks === -2) {
+            subject.week8NotConducted = true;
+          }
           subject.week8Students.add(result.studentId);
           subject.week8Marks.set(result.studentId, result.marks);
         }
         if (result.examType === 'endOfTerm') {
+          if (result.marks === -2) {
+            subject.endOfTermNotConducted = true;
+          }
           subject.endOfTermStudents.add(result.studentId);
           subject.endOfTermMarks.set(result.studentId, result.marks);
         }
@@ -1485,6 +1588,9 @@ class ResultsService {
             week4Marks: new Map(),
             week8Marks: new Map(),
             endOfTermMarks: new Map(),
+            week4NotConducted: false,
+            week8NotConducted: false,
+            endOfTermNotConducted: false,
           });
         }
       });
@@ -1492,17 +1598,25 @@ class ResultsService {
       const totalStudents = await this.getLearnerCountInClass(classId);
       
       return Array.from(subjectMap.entries()).map(([subjectId, data]) => {
-        const week4Complete = data.week4Students.size >= totalStudents;
-        const week8Complete = data.week8Students.size >= totalStudents;
-        const endOfTermComplete = data.endOfTermStudents.size >= totalStudents;
+        // Check if ALL marks for an exam type are -2 (not conducted)
+        const week4NotConducted = data.week4NotConducted || 
+          (data.week4Students.size > 0 && Array.from(data.week4Marks.values()).every(mark => mark === -2));
+        const week8NotConducted = data.week8NotConducted ||
+          (data.week8Students.size > 0 && Array.from(data.week8Marks.values()).every(mark => mark === -2));
+        const endOfTermNotConducted = data.endOfTermNotConducted ||
+          (data.endOfTermStudents.size > 0 && Array.from(data.endOfTermMarks.values()).every(mark => mark === -2));
+
+        // For completion status, if an exam is not conducted, consider it complete
+        const week4Complete = week4NotConducted || data.week4Students.size >= totalStudents;
+        const week8Complete = week8NotConducted || data.week8Students.size >= totalStudents;
+        const endOfTermComplete = endOfTermNotConducted || data.endOfTermStudents.size >= totalStudents;
+        
         const completeCount = [week4Complete, week8Complete, endOfTermComplete].filter(Boolean).length;
         const percentComplete = totalStudents > 0 ? Math.round((completeCount / 3) * 100) : 0;
         
         // Create savedMarks map combining all exam types
         const savedMarks: { [studentId: string]: number } = {};
         
-        // For editing, we need to know which student has marks for which exam
-        // But for simplicity, we'll combine all marks - the component will check by exam type
         data.week4Marks.forEach((marks, studentId) => {
           savedMarks[studentId] = marks;
         });
@@ -1532,13 +1646,17 @@ class ResultsService {
             week8: data.week8Students.size,
             endOfTerm: data.endOfTermStudents.size,
           },
-          // NEW FIELDS
           enteredStudentIds: {
             week4: Array.from(data.week4Students),
             week8: Array.from(data.week8Students),
             endOfTerm: Array.from(data.endOfTermStudents),
           },
           savedMarks,
+          notConducted: {
+            week4: week4NotConducted,
+            week8: week8NotConducted,
+            endOfTerm: endOfTermNotConducted,
+          },
         };
       });
     } catch (error) {
@@ -1886,7 +2004,7 @@ class ResultsService {
     
     console.log(`📊 Found ${results.length} results:`);
     results.forEach(r => {
-      console.log(`   - ${r.subjectName} (${r.examType}): ${r.percentage}%`);
+      console.log(`   - ${r.subjectName} (${r.examType}): ${r.marks === -2 ? 'N/A' : (r.marks === -1 ? 'ABS' : r.percentage + '%')}`);
     });
   }
 
@@ -1903,9 +2021,18 @@ class ResultsService {
     return `${studentDocumentId}_${subjectId}_${examType}_${cleanTerm}_${year}`;
   }
 
-  private generateSubjectComment(grade: number, averagePercentage: number, missingExams: string[]): string {
+  private generateSubjectComment(
+    grade: number, 
+    averagePercentage: number, 
+    missingExams: string[],
+    hasNotConducted: boolean = false
+  ): string {
     if (missingExams.length > 0) {
       return `Missing: ${missingExams.join(', ')}. ${averagePercentage >= 0 ? `Average: ${averagePercentage}%.` : ''}`;
+    }
+    
+    if (hasNotConducted) {
+      return 'Some assessments were not conducted.';
     }
     
     if (averagePercentage < 0) return 'No assessment data available.';

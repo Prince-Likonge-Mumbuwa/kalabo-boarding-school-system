@@ -1,4 +1,4 @@
-// @/types/results.ts
+// @/types/results.ts - UPDATED WITH NOT CONDUCTED PROPERTY
 
 // ==================== RESULTS TYPES ====================
 export interface StudentResult {
@@ -9,7 +9,7 @@ export interface StudentResult {
   subjectName: string;
   examType: 'week4' | 'week8' | 'endOfTerm';
   examName: string;
-  marks: number; // -1 for absent
+  marks: number; // -1 for absent, -2 for not conducted
   percentage?: number;
   grade?: number;
   term: string;
@@ -19,7 +19,7 @@ export interface StudentResult {
   classId: string;
   className: string;
   totalMarks: number;
-  status?: 'complete' | 'absent' | 'missing';
+  status?: 'complete' | 'absent' | 'missing' | 'not_conducted';
   submittedAt: Date;
   updatedAt?: Date;
 }
@@ -34,6 +34,13 @@ export interface SubjectCompletionStatus {
   week4Complete: boolean;
   week8Complete: boolean;
   endOfTermComplete: boolean;
+  
+  // Not conducted status flags (NEW)
+  notConducted?: {
+    week4: boolean;
+    week8: boolean;
+    endOfTerm: boolean;
+  };
   
   // Count of students with marks entered
   enteredStudents: {
@@ -51,7 +58,7 @@ export interface SubjectCompletionStatus {
   
   // Saved marks for quick lookup when editing
   savedMarks?: {
-    [studentId: string]: number; // -1 for absent
+    [studentId: string]: number; // -1 for absent, -2 for not conducted
   };
   
   // Overall progress percentage
@@ -75,9 +82,9 @@ export interface ReportCardData {
   subjects: Array<{
     subjectId: string;
     subjectName: string;
-    week4: number;
-    week8: number;
-    endOfTerm: number;
+    week4: number; // -1 for absent, -2 for not conducted
+    week8: number; // -1 for absent, -2 for not conducted
+    endOfTerm: number; // -1 for absent, -2 for not conducted
     grade: number;
     gradeDescription: string;
   }>;
@@ -101,6 +108,10 @@ export interface ReportReadinessCheck {
     subject: string;
     examType: string;
   }>;
+  notConductedExams?: Array<{  // NEW
+    subject: string;
+    examType: string;
+  }>;
   totalSubjects: number;
   completedSubjects: number;
   completionPercentage: number;
@@ -119,6 +130,7 @@ export interface ClassReportReadiness {
     studentName: string;
     isReady: boolean;
     missingSubjects: number;
+    notConductedExams?: number; // NEW
   }>;
 }
 
@@ -151,14 +163,15 @@ export interface StudentProgress {
     subjectId: string;
     subjectName: string;
     teacherName: string;
-    week4: { status: 'complete' | 'missing' | 'absent'; marks?: number };
-    week8: { status: 'complete' | 'missing' | 'absent'; marks?: number };
-    endOfTerm: { status: 'complete' | 'missing' | 'absent'; marks?: number };
+    week4: { status: 'complete' | 'missing' | 'absent' | 'not_conducted'; marks?: number }; // UPDATED
+    week8: { status: 'complete' | 'missing' | 'absent' | 'not_conducted'; marks?: number }; // UPDATED
+    endOfTerm: { status: 'complete' | 'missing' | 'absent' | 'not_conducted'; marks?: number }; // UPDATED
     subjectProgress: number;
     grade?: number;
   }>;
   missingSubjects: number;
   totalSubjects: number;
+  notConductedExams?: number; // NEW
 }
 
 // ==================== REQUEST/RESPONSE TYPES ====================
@@ -177,7 +190,7 @@ export interface SaveResultsRequest {
   results: Array<{
     studentId: string;
     studentName: string;
-    marks: number;
+    marks: number; // -1 for absent, -2 for not conducted
   }>;
   overwrite?: boolean;
 }
@@ -228,6 +241,7 @@ export interface ResultsFilter {
   year?: number;
   fromDate?: Date;
   toDate?: Date;
+  includeNotConducted?: boolean; // NEW
 }
 
 // ==================== ANALYTICS TYPES ====================
@@ -245,6 +259,7 @@ export interface PerformanceTrendItem {
   averagePercentage: number;
   passRate: number;
   studentCount: number;
+  notConducted?: boolean; // NEW
 }
 
 export interface SubjectAnalysisItem {
@@ -258,6 +273,7 @@ export interface SubjectAnalysisItem {
   failRate: number;
   studentCount: number;
   classCount: number;
+  notConductedCount?: number; // NEW
 }
 
 export interface ClassComparisonItem {
@@ -267,4 +283,5 @@ export interface ClassComparisonItem {
   passRate: number;
   studentCount: number;
   subjectCount: number;
+  notConductedExams?: number; // NEW
 }
