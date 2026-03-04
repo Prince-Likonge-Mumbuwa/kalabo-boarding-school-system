@@ -58,7 +58,7 @@ interface FieldMapping {
   sample: string;
 }
 
-// Available system fields for mapping
+// Available system fields for mapping - REMOVED alternative guardian, preferred name, previous school, medical notes, allergies
 const SYSTEM_FIELDS = [
   { value: 'fullName', label: 'Full Name *', required: true },
   { value: 'gender', label: 'Gender *', required: true },
@@ -67,13 +67,7 @@ const SYSTEM_FIELDS = [
   { value: 'guardian', label: 'Guardian Name', required: false },
   { value: 'guardianPhone', label: 'Guardian Phone', required: false },
   { value: 'sponsor', label: 'Sponsor', required: false },
-  { value: 'birthYear', label: 'Birth Year', required: false },
-  { value: 'preferredName', label: 'Preferred Name', required: false },
-  { value: 'alternativeGuardian', label: 'Alternative Guardian', required: false },
-  { value: 'alternativeGuardianPhone', label: 'Alternative Guardian Phone', required: false },
-  { value: 'previousSchool', label: 'Previous School', required: false },
-  { value: 'medicalNotes', label: 'Medical Notes', required: false },
-  { value: 'allergies', label: 'Allergies', required: false }
+  { value: 'birthYear', label: 'Birth Year', required: false }
 ];
 
 export const IndividualLearnerModal = ({
@@ -281,15 +275,10 @@ export const IndividualLearnerModal = ({
           className,
         };
 
-        // Apply mappings
+        // Apply mappings - only for fields that exist in our simplified SYSTEM_FIELDS
         fieldMappings.forEach(mapping => {
           if (mapping.csvField && mapping.systemField) {
             let value = row[mapping.csvField];
-            
-            // Handle special cases
-            if (mapping.systemField === 'allergies' && value) {
-              value = value.split(',').map((a: string) => a.trim());
-            }
             
             // Handle gender normalization
             if (mapping.systemField === 'gender' && value) {
@@ -431,7 +420,7 @@ export const IndividualLearnerModal = ({
         setCsvData(data);
         setCsvHeaders(headers);
         
-        // Initialize field mappings
+        // Initialize field mappings with simplified SYSTEM_FIELDS
         const initialMappings: FieldMapping[] = SYSTEM_FIELDS.map(systemField => ({
           csvField: '',
           systemField: systemField.value,
@@ -496,6 +485,7 @@ export const IndividualLearnerModal = ({
   };
 
   const downloadTemplate = () => {
+    // Updated template to only include simplified fields
     const headers = SYSTEM_FIELDS.map(f => f.label.replace(' *', ''));
     const sampleRow = [
       'John Doe',
@@ -505,13 +495,7 @@ export const IndividualLearnerModal = ({
       'Mary Doe',
       '0971234567',
       'Government Bursary',
-      '2015',
-      'Johnny',
-      'Peter Doe',
-      '0977654321',
-      'Lusaka Primary School',
-      'None',
-      'None'
+      '2015'
     ];
     
     // Create CSV content
