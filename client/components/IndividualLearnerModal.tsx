@@ -21,7 +21,6 @@ import {
   HelpCircle,
   FileText
 } from 'lucide-react';
-import csv from 'csv-parser';
 
 interface IndividualLearnerModalProps {
   isOpen: boolean;
@@ -58,7 +57,7 @@ interface FieldMapping {
   sample: string;
 }
 
-// Available system fields for mapping - REMOVED alternative guardian, preferred name, previous school, medical notes, allergies
+// Available system fields for mapping
 const SYSTEM_FIELDS = [
   { value: 'fullName', label: 'Full Name *', required: true },
   { value: 'gender', label: 'Gender *', required: true },
@@ -252,11 +251,6 @@ export const IndividualLearnerModal = ({
   };
 
   const handleBulkSubmit = async () => {
-    if (!onSubmitBulk) {
-      setBulkImportErrors(['Bulk import is not configured']);
-      return;
-    }
-
     if (!isMappingValid) {
       setBulkImportErrors(['Please map required fields before importing']);
       return;
@@ -268,14 +262,10 @@ export const IndividualLearnerModal = ({
 
     try {
       // Transform CSV data using field mappings
-      const transformedStudents = csvData.map((row, index) => {
-        const student: any = {
-          // Add class info
-          classId,
-          className,
-        };
+      const transformedStudents = csvData.map((row) => {
+        const student: any = {};
 
-        // Apply mappings - only for fields that exist in our simplified SYSTEM_FIELDS
+        // Apply mappings
         fieldMappings.forEach(mapping => {
           if (mapping.csvField && mapping.systemField) {
             let value = row[mapping.csvField];
@@ -290,30 +280,71 @@ export const IndividualLearnerModal = ({
               }
             }
             
+            // Handle birthYear as number
+            if (mapping.systemField === 'birthYear' && value) {
+              value = parseInt(value) || currentYear - 10;
+            }
+            
             student[mapping.systemField] = value;
           }
         });
 
         // Add default values for missing fields
         if (!student.gender) {
-          student.gender = 'male'; // Default to male if not specified
+          student.gender = 'male';
+        }
+        
+        if (!student.birthYear) {
+          student.birthYear = currentYear - 10;
         }
 
         return student;
       });
 
-      // Update progress
-      setImportProgress(50);
+      setImportProgress(30);
 
-      // Submit bulk data
-      const result = await onSubmitBulk(transformedStudents);
+      let successCount = 0;
       
-      setImportProgress(100);
-      
-      if (result.success) {
-        console.log(`✅ Successfully imported ${result.count} learners`);
-        resetBulkImport();
-        onClose();
+      // If onSubmitBulk is provided, use it
+      if (onSubmitBulk) {
+        const result = await onSubmitBulk(transformedStudents);
+        setImportProgress(100);
+        
+        if (result.success) {
+          console.log(`✅ Successfully imported ${result.count} learners`);
+          resetBulkImport();
+          onClose();
+        }
+      } else {
+        // Fallback: submit one by one using onSubmit
+        for (let i = 0; i < transformedStudents.length; i++) {
+          const student = transformedStudents[i];
+          try {
+            await onSubmit({
+              fullName: student.fullName || '',
+              address: student.address || '',
+              dateOfFirstEntry: student.dateOfFirstEntry || '',
+              gender: student.gender || 'male',
+              guardian: student.guardian || '',
+              sponsor: student.sponsor || '',
+              guardianPhone: student.guardianPhone || '',
+              birthYear: student.birthYear || currentYear - 10,
+            });
+            successCount++;
+          } catch (error) {
+            console.error(`Failed to import student at row ${i + 1}:`, error);
+            setBulkImportErrors(prev => [...prev, `Failed to import row ${i + 1}: ${student.fullName || 'Unknown'}`]);
+          }
+          
+          // Update progress
+          setImportProgress(Math.round(((i + 1) / transformedStudents.length) * 100));
+        }
+        
+        if (successCount > 0) {
+          console.log(`✅ Successfully imported ${successCount} out of ${transformedStudents.length} learners`);
+          resetBulkImport();
+          onClose();
+        }
       }
     } catch (error) {
       console.error('Error in bulk import:', error);
@@ -343,13 +374,12 @@ export const IndividualLearnerModal = ({
     setErrors({});
   };
 
-  // Custom CSV parser using csv-parser in the browser
+  // Custom CSV parser
   const parseCSV = (file: File): Promise<{ data: any[]; headers: string[] }> => {
     return new Promise((resolve, reject) => {
       const results: any[] = [];
       const headers: string[] = [];
       
-      // Create a reader to read the file as text
       const reader = new FileReader();
       
       reader.onload = (event) => {
@@ -366,26 +396,8 @@ export const IndividualLearnerModal = ({
           for (let i = 1; i < lines.length; i++) {
             const line = lines[i].trim();
             if (line) {
-              // Handle quoted values properly
-              const values: string[] = [];
-              let inQuote = false;
-              let currentValue = '';
-              
-              for (let j = 0; j < line.length; j++) {
-                const char = line[j];
-                
-                if (char === '"') {
-                  inQuote = !inQuote;
-                } else if (char === ',' && !inQuote) {
-                  values.push(currentValue.replace(/^["']|["']$/g, ''));
-                  currentValue = '';
-                } else {
-                  currentValue += char;
-                }
-              }
-              
-              // Push the last value
-              values.push(currentValue.replace(/^["']|["']$/g, ''));
+              // Simple CSV parsing (for production, consider using a proper CSV parser)
+              const values = line.split(',').map(v => v.trim().replace(/^["']|["']$/g, ''));
               
               // Create object with headers as keys
               const row: any = {};
@@ -420,7 +432,7 @@ export const IndividualLearnerModal = ({
         setCsvData(data);
         setCsvHeaders(headers);
         
-        // Initialize field mappings with simplified SYSTEM_FIELDS
+        // Initialize field mappings
         const initialMappings: FieldMapping[] = SYSTEM_FIELDS.map(systemField => ({
           csvField: '',
           systemField: systemField.value,
@@ -468,7 +480,7 @@ export const IndividualLearnerModal = ({
     }
     
     setMappingErrors(errors);
-    setIsMappingValid(errors.length === 0 && mappings.some(m => m.csvField));
+    setIsMappingValid(errors.length === 0);
   };
 
   const handleMappingChange = (systemField: string, csvField: string) => {
@@ -485,7 +497,6 @@ export const IndividualLearnerModal = ({
   };
 
   const downloadTemplate = () => {
-    // Updated template to only include simplified fields
     const headers = SYSTEM_FIELDS.map(f => f.label.replace(' *', ''));
     const sampleRow = [
       'John Doe',
@@ -498,7 +509,6 @@ export const IndividualLearnerModal = ({
       '2015'
     ];
     
-    // Create CSV content
     const csvContent = [
       headers.join(','),
       sampleRow.map(cell => `"${cell}"`).join(',')
@@ -520,7 +530,7 @@ export const IndividualLearnerModal = ({
 
   const handleBirthYearChange = (value: string) => {
     const num = parseInt(value);
-    if (value === '' || (!isNaN(num) && num >= 1000 && num <= 9999)) {
+    if (value === '' || (!isNaN(num) && num >= 1900 && num <= currentYear)) {
       setFormData(prev => ({ ...prev, birthYear: value === '' ? '' : num }));
     }
   };
@@ -541,7 +551,7 @@ export const IndividualLearnerModal = ({
         ref={modalRef}
         className="relative bg-white rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[98vh] sm:max-h-[95vh]"
       >
-        {/* Header - Fixed at top */}
+        {/* Header */}
         <div className="p-4 sm:p-6 border-b border-gray-200 bg-white rounded-t-2xl flex-shrink-0">
           <div className="flex items-center justify-between mb-2">
             <div className="min-w-0 flex-1">
@@ -557,9 +567,10 @@ export const IndividualLearnerModal = ({
             </button>
           </div>
 
-          {/* Tabs - Responsive */}
+          {/* Tabs */}
           <div className="flex gap-1 sm:gap-2 mt-3 sm:mt-4 border-b border-gray-200">
             <button
+              type="button"
               onClick={() => setActiveTab('single')}
               className={`px-3 sm:px-4 py-2 font-medium text-xs sm:text-sm transition-colors relative flex-1 sm:flex-none ${
                 activeTab === 'single'
@@ -570,6 +581,7 @@ export const IndividualLearnerModal = ({
               Single Entry
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('bulk')}
               className={`px-3 sm:px-4 py-2 font-medium text-xs sm:text-sm transition-colors relative flex-1 sm:flex-none ${
                 activeTab === 'bulk'
@@ -581,7 +593,7 @@ export const IndividualLearnerModal = ({
             </button>
           </div>
           
-          {/* Student ID Preview - Only show in single mode */}
+          {/* Student ID Preview */}
           {activeTab === 'single' && previewStudentId && (
             <div className="mt-3 sm:mt-4 p-2 sm:p-3 bg-blue-50 rounded-lg border border-blue-100">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -590,6 +602,7 @@ export const IndividualLearnerModal = ({
                   <p className="text-base sm:text-lg font-mono font-bold text-blue-800 break-all">{previewStudentId}</p>
                 </div>
                 <button
+                  type="button"
                   onClick={copyStudentIdPreview}
                   className="p-1.5 sm:p-2 bg-white rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors self-start sm:self-center"
                   title="Copy ID"
@@ -612,12 +625,12 @@ export const IndividualLearnerModal = ({
           )}
         </div>
 
-        {/* Form - Scrollable body */}
+        {/* Form Body */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-6">
           {activeTab === 'single' ? (
-            /* Single Entry Form - Responsive */
+            /* Single Entry Form */
             <div className="space-y-4 sm:space-y-5">
-              {/* Required Fields Section */}
+              {/* Required Fields */}
               <div className="space-y-4 sm:space-y-5">
                 <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                   <span className="w-1 h-4 bg-blue-600 rounded-full"></span>
@@ -645,7 +658,7 @@ export const IndividualLearnerModal = ({
                   {errors.fullName && <p className="mt-1 text-xs sm:text-sm text-red-600">{errors.fullName}</p>}
                 </div>
 
-                {/* Gender - Responsive buttons */}
+                {/* Gender */}
                 <div>
                   <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">
                     <div className="flex items-center gap-1 sm:gap-2">
@@ -691,7 +704,7 @@ export const IndividualLearnerModal = ({
                 </div>
               </div>
 
-              {/* Other Fields - All optional */}
+              {/* Other Fields */}
               <div className="space-y-3 sm:space-y-4 pt-3 sm:pt-4">
                 <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                   <span className="w-1 h-4 bg-gray-400 rounded-full"></span>
@@ -716,7 +729,7 @@ export const IndividualLearnerModal = ({
                   />
                 </div>
 
-                {/* Date of First Entry & Birth Year - Stack on mobile, grid on larger screens */}
+                {/* Date of First Entry & Birth Year */}
                 <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                   <div className="flex-1">
                     <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">
@@ -743,7 +756,7 @@ export const IndividualLearnerModal = ({
                     </label>
                     <input
                       type="number"
-                      min="1990"
+                      min="1900"
                       max={currentYear}
                       placeholder={`e.g., ${currentYear - 10}`}
                       value={formData.birthYear}
@@ -754,7 +767,7 @@ export const IndividualLearnerModal = ({
                   </div>
                 </div>
 
-                {/* Guardian & Sponsor - Stack on mobile, grid on larger screens */}
+                {/* Guardian & Sponsor */}
                 <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                   <div className="flex-1">
                     <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">
@@ -838,7 +851,7 @@ export const IndividualLearnerModal = ({
                   </button>
                 </div>
 
-                {/* Advanced Fields - Responsive */}
+                {/* Advanced Fields */}
                 {showAdvanced && (
                   <div className="space-y-3 sm:space-y-4 pt-2 sm:pt-3 border-t border-gray-100">
                     {/* Preferred Name */}
@@ -856,7 +869,7 @@ export const IndividualLearnerModal = ({
                       />
                     </div>
 
-                    {/* Alternative Guardian - Stack on mobile, grid on larger screens */}
+                    {/* Alternative Guardian */}
                     <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                       <div className="flex-1">
                         <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">
@@ -940,7 +953,7 @@ export const IndividualLearnerModal = ({
               </div>
             </div>
           ) : (
-            /* Bulk Import Form - Responsive */
+            /* Bulk Import Form */
             <div className="space-y-4 sm:space-y-6">
               {/* Upload Section */}
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 sm:p-6">
@@ -980,7 +993,7 @@ export const IndividualLearnerModal = ({
                 </button>
               </div>
 
-              {/* Field Mapping Section - Responsive */}
+              {/* Field Mapping Section */}
               {csvHeaders.length > 0 && (
                 <div className="space-y-3 sm:space-y-4">
                   <div className="flex items-center justify-between">
@@ -1000,7 +1013,7 @@ export const IndividualLearnerModal = ({
                     </div>
                   )}
 
-                  {/* Mapping Table - Scrollable on mobile */}
+                  {/* Mapping Table */}
                   <div className="border rounded-lg overflow-x-auto">
                     <table className="min-w-full divide-y divide-gray-200">
                       <thead className="bg-gray-50">
@@ -1055,7 +1068,7 @@ export const IndividualLearnerModal = ({
                     </div>
                   )}
 
-                  {/* Data Preview - Horizontal scroll on mobile */}
+                  {/* Data Preview */}
                   {bulkPreviewData.length > 0 && (
                     <div className="space-y-2">
                       <h4 className="text-xs sm:text-sm font-medium text-gray-700">Preview (First 5 rows)</h4>
@@ -1119,7 +1132,7 @@ export const IndividualLearnerModal = ({
           )}
         </form>
 
-        {/* Form Actions - Fixed at bottom */}
+        {/* Footer Actions */}
         <div className="p-4 sm:p-6 border-t border-gray-200 bg-gray-50 rounded-b-2xl flex-shrink-0">
           <div className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-3">
             <button
@@ -1131,6 +1144,7 @@ export const IndividualLearnerModal = ({
               Cancel
             </button>
             <button
+              type="submit"
               onClick={handleSubmit}
               disabled={isLoading || isImporting || (activeTab === 'bulk' && (!csvData.length || !isMappingValid))}
               className="px-4 py-2.5 sm:py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm disabled:opacity-50 flex items-center justify-center transition-colors w-full sm:w-auto"
