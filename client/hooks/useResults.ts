@@ -1,5 +1,5 @@
-// @/hooks/useResults.ts - Updated with student progress tracking and edit functionality
-// Version 2.2.0 - Added editResults and isEditing properties
+// @/hooks/useResults.ts - FIXED VERSION with correct progress calculation
+// Version 2.3.1 - Fixed student progress calculation to properly handle not_conducted status
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
@@ -156,13 +156,13 @@ export const useResults = (options?: {
       queryClient.invalidateQueries({ queryKey: ['subjectAnalysis'] });
       queryClient.invalidateQueries({ queryKey: ['subjectCompletion'] });
       queryClient.invalidateQueries({ queryKey: ['reportReadiness'] });
+      queryClient.invalidateQueries({ queryKey: ['examResults'] });
     },
     onError: (error) => {
       console.error('❌ Failed to save results:', error);
     },
   });
 
-  // NEW: Edit results mutation (unlock for editing)
   const editResultsMutation = useMutation({
     mutationFn: (data: {
       classId: string;
@@ -174,10 +174,10 @@ export const useResults = (options?: {
     onSuccess: (data, variables) => {
       console.log(`✅ Unlocked results for editing:`, variables);
       
-      // Invalidate relevant queries
       queryClient.invalidateQueries({ queryKey: ['results'] });
       queryClient.invalidateQueries({ queryKey: ['subjectCompletion', variables.classId, variables.term, variables.year] });
       queryClient.invalidateQueries({ queryKey: ['studentProgress'] });
+      queryClient.invalidateQueries({ queryKey: ['examResults'] });
     },
     onError: (error) => {
       console.error('❌ Failed to unlock results for editing:', error);
@@ -195,11 +195,10 @@ export const useResults = (options?: {
       queryClient.invalidateQueries({ queryKey: ['analytics'] });
       queryClient.invalidateQueries({ queryKey: ['reportCards'] });
       queryClient.invalidateQueries({ queryKey: ['studentProgress'] });
+      queryClient.invalidateQueries({ queryKey: ['examResults'] });
     },
   });
 
-  // ==================== GENERATE REPORT CARD MUTATION ====================
-  
   const generateReportCardMutation = useMutation({
     mutationFn: ({
       studentId,
@@ -218,7 +217,6 @@ export const useResults = (options?: {
     onSuccess: (data, variables) => {
       if (data) {
         console.log(`✅ Generated report card for ${data.studentName}`);
-        // Update the cache with the new report card
         queryClient.setQueryData(
           ['reportCard', variables.studentId, variables.term, variables.year, variables.options?.includeIncomplete, variables.options?.markMissing],
           data
@@ -227,8 +225,6 @@ export const useResults = (options?: {
     },
   });
 
-  // ==================== GENERATE CLASS REPORT CARDS MUTATION ====================
-  
   const generateClassReportCardsMutation = useMutation({
     mutationFn: ({
       classId,
@@ -246,7 +242,6 @@ export const useResults = (options?: {
     }) => resultsService.generateClassReportCards(classId, term, year, options),
     onSuccess: (data, variables) => {
       console.log(`✅ Generated ${data.reportCards.length} class report cards`);
-      // Invalidate class report cards query
       queryClient.invalidateQueries({ 
         queryKey: ['reportCards', 'class', variables.classId, variables.term, variables.year] 
       });
@@ -269,11 +264,9 @@ export const useResults = (options?: {
     isSaving: saveResultsMutation.isPending,
     isUpdating: updateResultMutation.isPending,
     
-    // NEW: Edit results properties
     editResults: editResultsMutation.mutateAsync,
     isEditing: editResultsMutation.isPending,
     
-    // Generate report card methods
     generateReportCard: generateReportCardMutation.mutateAsync,
     generateClassReportCards: generateClassReportCardsMutation.mutateAsync,
     isGeneratingReport: generateReportCardMutation.isPending || generateClassReportCardsMutation.isPending,
@@ -287,7 +280,7 @@ export const useResults = (options?: {
 };
 
 // ==================== FIXED STUDENT PROGRESS HOOK ====================
-// Now follows the same pattern as useResultsAnalytics - fetches raw data and aggregates in memory
+// Now correctly handles not_conducted status and uses service for calculation
 
 export const useStudentProgress = (options: {
   classId?: string;
@@ -320,162 +313,55 @@ export const useStudentProgress = (options: {
         year: options.year,
       });
       
-      // STEP 1: Fetch RAW results first (like analysis files do)
-      const rawResults = await resultsService.getAllResults({
-        classId: options.classId,
-        term: options.term,
-        year: options.year,
-      });
+      // FIXED: Use the service's getStudentProgress method instead of reimplementing
+      // This ensures consistency with how progress is calculated elsewhere
+      const serviceProgress = await resultsService.getStudentProgress(
+        options.classId,
+        options.term,
+        options.year
+      );
       
-      console.log(`✅ Found ${rawResults.length} raw result entries`);
+      console.log(`✅ Found ${serviceProgress.length} students with progress data`);
       
-      // STEP 2: Get all learners in the class to ensure we have all students
-      const learners = await resultsService.getLearnersInClass(options.classId);
-      
-      console.log(`✅ Found ${learners.length} learners in class`);
-
-      // STEP 3: Get expected subjects from teacher assignments
-      const expectedSubjects = await resultsService.getExpectedSubjectsForClass(options.classId);
-      
-      console.log(`✅ Found ${expectedSubjects.length} expected subjects`);
-
-      // If no learners, return empty array
-      if (learners.length === 0) {
-        return {
-          students: [],
-          summary: {
-            total: 0,
-            complete: 0,
-            incomplete: 0,
-            averageCompletion: 0,
-            passCount: 0,
-            failCount: 0,
-            pendingCount: 0,
-          }
-        };
-      }
-
-      // STEP 4: Group raw results by student
-      const resultsByStudent = new Map<string, StudentResult[]>();
-      
-      rawResults.forEach(result => {
-        if (!resultsByStudent.has(result.studentId)) {
-          resultsByStudent.set(result.studentId, []);
-        }
-        resultsByStudent.get(result.studentId)!.push(result);
-      });
-
-      // STEP 5: Build progress for each learner (including those with no results)
-      const students: StudentProgress[] = [];
-      
-      for (const learner of learners) {
-        const studentResults = resultsByStudent.get(learner.id) || [];
-        
-        // Build subject progress for this student
-        const subjects: StudentProgress['subjects'] = [];
-        let totalSubjectsCompleted = 0;
-        let totalPercentage = 0;
-        let subjectsWithScores = 0;
-        
-        // Process each expected subject
-        for (const subject of expectedSubjects) {
-          const subjectResults = studentResults.filter(r => r.subjectId === subject.id);
-          
-          // Get teacher info from assignments
-          const assignments = await resultsService.getTeacherAssignmentsForClass(options.classId);
-          const teacherAssignment = assignments.find(a => a.subjectId === subject.id);
-          
-          // Check each exam type
-          const week4Result = subjectResults.find(r => r.examType === 'week4');
-          const week8Result = subjectResults.find(r => r.examType === 'week8');
-          const endOfTermResult = subjectResults.find(r => r.examType === 'endOfTerm');
-          
-          // Calculate subject completion (how many exams have data)
-          let completedExams = 0;
-          if (week4Result && week4Result.percentage >= 0) completedExams++;
-          if (week8Result && week8Result.percentage >= 0) completedExams++;
-          if (endOfTermResult && endOfTermResult.percentage >= 0) completedExams++;
-          
-          const subjectProgress = Math.round((completedExams / 3) * 100);
-          if (subjectProgress === 100) totalSubjectsCompleted++;
-          
-          // Track overall percentage using end of term if available
-          if (endOfTermResult && endOfTermResult.percentage >= 0) {
-            totalPercentage += endOfTermResult.percentage;
-            subjectsWithScores++;
-          }
-          
-          subjects.push({
-            subjectId: subject.id,
-            subjectName: subject.name,
-            teacherName: teacherAssignment?.teacherName || 'Not assigned',
-            week4: {
-              status: week4Result 
-                ? (week4Result.status === 'absent' ? 'absent' : 'complete') 
-                : 'missing',
-              marks: week4Result?.percentage
-            },
-            week8: {
-              status: week8Result 
-                ? (week8Result.status === 'absent' ? 'absent' : 'complete') 
-                : 'missing',
-              marks: week8Result?.percentage
-            },
-            endOfTerm: {
-              status: endOfTermResult 
-                ? (endOfTermResult.status === 'absent' ? 'absent' : 'complete') 
-                : 'missing',
-              marks: endOfTermResult?.percentage
-            },
-            subjectProgress,
-            grade: endOfTermResult?.grade
-          });
-        }
-        
-        // Calculate overall stats
-        const overallPercentage = subjectsWithScores > 0 
-          ? Math.round(totalPercentage / subjectsWithScores) 
-          : 0;
-        
-        const overallGrade = overallPercentage > 0 ? calculateGrade(overallPercentage) : -1;
-        
-        const completionPercentage = expectedSubjects.length > 0
-          ? Math.round((totalSubjectsCompleted / expectedSubjects.length) * 100)
-          : 0;
-        
-        const isComplete = totalSubjectsCompleted === expectedSubjects.length && expectedSubjects.length > 0;
-        
-        // Get class name from learner data
-        const className = learner.data.className || 
-                         (await resultsService.getClassData(options.classId))?.name || 
-                         'Unknown';
-        
-        const form = learner.data.form || 
-                    learner.data.level?.toString() || 
-                    (await resultsService.getClassData(options.classId))?.level?.toString() || 
-                    '1';
-        
-        students.push({
-          studentId: learner.id,
-          studentName: learner.name,
-          className,
-          classId: options.classId,
-          form,
-          overallPercentage,
-          overallGrade,
-          status: overallPercentage >= 50 ? 'pass' : (overallPercentage > 0 ? 'fail' : 'pending'),
-          isComplete,
-          completionPercentage,
-          subjects,
-          missingSubjects: expectedSubjects.length - totalSubjectsCompleted,
-          totalSubjects: expectedSubjects.length
-        });
-      }
+      // Transform service progress to match our hook's expected format
+      const students: StudentProgress[] = serviceProgress.map(s => ({
+        studentId: s.studentId,
+        studentName: s.studentName,
+        className: s.className,
+        classId: s.classId,
+        form: s.form,
+        overallPercentage: s.overallPercentage,
+        overallGrade: s.overallGrade,
+        status: s.status,
+        isComplete: s.isComplete,
+        completionPercentage: s.completionPercentage,
+        subjects: s.subjects.map(subject => ({
+          subjectId: subject.subjectId,
+          subjectName: subject.subjectName,
+          teacherName: subject.teacherName,
+          week4: {
+            status: subject.week4.status,
+            marks: subject.week4.marks
+          },
+          week8: {
+            status: subject.week8.status,
+            marks: subject.week8.marks
+          },
+          endOfTerm: {
+            status: subject.endOfTerm.status,
+            marks: subject.endOfTerm.marks
+          },
+          subjectProgress: subject.subjectProgress,
+          grade: subject.grade
+        })),
+        missingSubjects: s.missingSubjects,
+        totalSubjects: s.totalSubjects
+      }));
       
       // Sort by student name
       const sortedStudents = students.sort((a, b) => a.studentName.localeCompare(b.studentName));
       
-      // Calculate summary statistics (like analysis files do)
+      // Calculate summary statistics
       const summary: StudentProgressSummary = {
         total: sortedStudents.length,
         complete: sortedStudents.filter(s => s.isComplete).length,
@@ -488,7 +374,6 @@ export const useStudentProgress = (options: {
         pendingCount: sortedStudents.filter(s => s.status === 'pending').length,
       };
       
-      console.log(`✅ Processed ${sortedStudents.length} students with progress data`);
       console.log('📊 Summary:', summary);
       
       return {
@@ -535,6 +420,90 @@ export const useStudentProgress = (options: {
     getIncompleteStudents: (): StudentProgress[] => {
       return progressQuery.data?.students.filter(s => !s.isComplete) ?? [];
     },
+  };
+};
+
+// ==================== EXAM RESULTS HOOK ====================
+
+export const useExamResults = (options: {
+  classId?: string;
+  subjectId?: string;
+  term: string;
+  year: number;
+}) => {
+  const resultsQuery = useQuery({
+    queryKey: ['examResults', options.classId, options.subjectId, options.term, options.year],
+    queryFn: async () => {
+      if (!options.classId || !options.subjectId) {
+        return {
+          week4: [],
+          week8: [],
+          endOfTerm: [],
+        };
+      }
+      
+      console.log('📊 Fetching exam results for:', {
+        classId: options.classId,
+        subjectId: options.subjectId,
+        term: options.term,
+        year: options.year,
+      });
+      
+      const allResults = await resultsService.getAllResults({
+        classId: options.classId,
+        subjectId: options.subjectId,
+        term: options.term,
+        year: options.year,
+      });
+      
+      console.log(`✅ Found ${allResults.length} total results for this class/subject`);
+      
+      const week4 = allResults.filter(r => r.examType === 'week4');
+      const week8 = allResults.filter(r => r.examType === 'week8');
+      const endOfTerm = allResults.filter(r => r.examType === 'endOfTerm');
+      
+      console.log('📊 Results by exam type:', {
+        week4: week4.length,
+        week8: week8.length,
+        endOfTerm: endOfTerm.length,
+      });
+      
+      const week4Map = new Map(week4.map(r => [r.studentId, r]));
+      const week8Map = new Map(week8.map(r => [r.studentId, r]));
+      const endOfTermMap = new Map(endOfTerm.map(r => [r.studentId, r]));
+      
+      return {
+        week4,
+        week8,
+        endOfTerm,
+        week4Map,
+        week8Map,
+        endOfTermMap,
+        getStudentMark: (studentId: string, examType: 'week4' | 'week8' | 'endOfTerm'): number | null => {
+          const map = examType === 'week4' ? week4Map : examType === 'week8' ? week8Map : endOfTermMap;
+          const result = map.get(studentId);
+          return result ? result.marks : null;
+        },
+        hasStudentResult: (studentId: string, examType: 'week4' | 'week8' | 'endOfTerm'): boolean => {
+          const map = examType === 'week4' ? week4Map : examType === 'week8' ? week8Map : endOfTermMap;
+          return map.has(studentId);
+        },
+        getExamResults: (examType: 'week4' | 'week8' | 'endOfTerm'): StudentResult[] => {
+          return examType === 'week4' ? week4 : examType === 'week8' ? week8 : endOfTerm;
+        },
+      };
+    },
+    enabled: !!options.classId && !!options.subjectId,
+    staleTime: 2 * 60 * 1000,
+  });
+
+  return {
+    examData: resultsQuery.data,
+    isLoading: resultsQuery.isLoading,
+    isFetching: resultsQuery.isFetching,
+    isError: resultsQuery.isError,
+    error: resultsQuery.error,
+    refetch: resultsQuery.refetch,
   };
 };
 
@@ -727,7 +696,7 @@ export const useResultsAnalytics = (options?: {
   };
 };
 
-// ==================== REPORT CARDS HOOK (DEPRECATED - Use useStudentProgress instead) ====================
+// ==================== REPORT CARDS HOOK (DEPRECATED) ====================
 
 export const useReportCards = (options: {
   studentId?: string;

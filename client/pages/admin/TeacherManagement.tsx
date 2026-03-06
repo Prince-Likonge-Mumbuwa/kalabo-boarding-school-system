@@ -25,7 +25,9 @@ import {
   PowerOff,
   RefreshCw,
   CheckCircle,
-  XCircle
+  XCircle,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
 
@@ -51,6 +53,9 @@ export default function TeacherManagement() {
     removeTeacherFromClass,
     updateTeacherStatus,
     refetchTeachers,
+    // Add these if your updated hook provides them
+    teacherAssignments,
+    getTeacherSubjectsForClass,
   } = useSchoolTeachers();
   
   const { 
@@ -66,9 +71,11 @@ export default function TeacherManagement() {
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [selectedTeacher, setSelectedTeacher] = useState<any>(null);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
-  const [selectedSubject, setSelectedSubject] = useState<string>('');
+  const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
+  const [currentSubject, setCurrentSubject] = useState<string>('');
   const [isFormTeacher, setIsFormTeacher] = useState(false);
   const [showActionsFor, setShowActionsFor] = useState<string | null>(null);
+  const [assignmentType, setAssignmentType] = useState<'subject' | 'form-only'>('subject');
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
@@ -129,15 +136,37 @@ export default function TeacherManagement() {
     }
   };
 
-  // Handle teacher assignment
+  // Handle adding a subject to the list
+  const handleAddSubject = () => {
+    if (!currentSubject) {
+      alert('Please select a subject');
+      return;
+    }
+
+    if (selectedSubjects.includes(currentSubject)) {
+      alert('This subject has already been added');
+      return;
+    }
+
+    setSelectedSubjects([...selectedSubjects, currentSubject]);
+    setCurrentSubject('');
+  };
+
+  // Handle removing a subject from the list
+  const handleRemoveSubject = (subjectToRemove: string) => {
+    setSelectedSubjects(selectedSubjects.filter(s => s !== subjectToRemove));
+  };
+
+  // FIXED: Handle teacher assignment - matches your service which expects single subject
   const handleAssignTeacher = async () => {
     if (!selectedTeacher || !selectedClassId) {
       alert('Please select both a teacher and a class');
       return;
     }
 
-    if (!selectedSubject) {
-      alert('Please select a subject that this teacher will teach to this class');
+    // For subject assignments, at least one subject is required
+    if (assignmentType === 'subject' && selectedSubjects.length === 0) {
+      alert('Please add at least one subject that this teacher will teach to this class');
       return;
     }
 
@@ -153,19 +182,36 @@ export default function TeacherManagement() {
     }
 
     try {
-      await assignTeacherToClass({
-        teacherId: selectedTeacher.id,
-        classId: selectedClassId,
-        subject: selectedSubject,
-        isFormTeacher
-      });
+      if (assignmentType === 'subject' && selectedSubjects.length > 0) {
+        // Your service expects a single subject per call
+        // So we need to make multiple calls for multiple subjects
+        for (const subject of selectedSubjects) {
+          await assignTeacherToClass({
+            teacherId: selectedTeacher.id,
+            classId: selectedClassId,
+            subject: subject, // Use 'subject' not 'subjects'
+            isFormTeacher: isFormTeacher // You might want to only set this on the first/last subject
+          });
+        }
+      } else {
+        // Form-only assignment - your service still requires a subject
+        // Use a placeholder like "Form Teacher" or create a dedicated method
+        await assignTeacherToClass({
+          teacherId: selectedTeacher.id,
+          classId: selectedClassId,
+          subject: 'Form Teacher', // Placeholder subject
+          isFormTeacher: true // Force form teacher to true
+        });
+      }
       
-      alert(`${selectedTeacher.name} assigned to ${selectedClass.name} for ${selectedSubject}${isFormTeacher ? ' as Form Teacher' : ''} successfully!`);
-      setShowAssignmentModal(false);
-      setSelectedTeacher(null);
-      setSelectedClassId('');
-      setSelectedSubject('');
-      setIsFormTeacher(false);
+      const subjectsText = selectedSubjects.length > 0 
+        ? `for ${selectedSubjects.join(', ')}` 
+        : '';
+      
+      alert(`${selectedTeacher.name} assigned to ${selectedClass.name} ${subjectsText}${isFormTeacher ? ' as Form Teacher' : ''} successfully!`);
+      
+      // Reset modal state
+      resetAssignmentModal();
       
     } catch (error: any) {
       console.error('Assignment error:', error);
@@ -223,6 +269,29 @@ export default function TeacherManagement() {
     return assignedClass?.name || 'Unknown Class';
   };
 
+  // FIXED: Get assigned subjects for a teacher in a class
+  const getAssignedSubjects = (teacherId: string): string[] => {
+    // If your hook provides teacherAssignments, use that
+    if (teacherAssignments) {
+      return teacherAssignments
+        .filter(a => a.teacherId === teacherId)
+        .map(a => a.subject);
+    }
+    
+    // Fallback: try to get from teacher object if available
+    const teacher = teachers.find(t => t.id === teacherId);
+    
+    // Check if there's a way to get subjects from the teacher object
+    // This depends on your data structure
+    if (teacher && teacher.assignedClassId) {
+      // You might need to fetch this from an API or context
+      // For now, return empty array
+      return [];
+    }
+    
+    return [];
+  };
+
   // Get status badge configuration
   const getStatusConfig = (status: string) => {
     switch(status) {
@@ -244,6 +313,17 @@ export default function TeacherManagement() {
     setSearchTerm('');
     setStatusFilter('all');
     setShowMobileFilters(false);
+  };
+
+  // Reset assignment modal
+  const resetAssignmentModal = () => {
+    setShowAssignmentModal(false);
+    setSelectedTeacher(null);
+    setSelectedClassId('');
+    setSelectedSubjects([]);
+    setCurrentSubject('');
+    setIsFormTeacher(false);
+    setAssignmentType('subject');
   };
 
   // Error state
@@ -323,7 +403,7 @@ export default function TeacherManagement() {
                 <button
                   onClick={() => {
                     setSelectedTeacher(null);
-                    setSelectedSubject('');
+                    setSelectedSubjects([]);
                     setShowAssignmentModal(true);
                   }}
                   disabled={isAssigningTeacher}
@@ -544,6 +624,7 @@ export default function TeacherManagement() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
               {filteredTeachers.map((teacher) => {
                 const assignedClassName = getAssignedClassName(teacher.id);
+                const assignedSubjects = getAssignedSubjects(teacher.id);
                 const teacherStatus = teacher.status || 'active';
                 const StatusIcon = getStatusConfig(teacherStatus).icon;
                 
@@ -672,18 +753,35 @@ export default function TeacherManagement() {
                       )}
                     </div>
 
-                    {/* Assignment Status */}
+                    {/* Assignment Status - UPDATED to show multiple subjects */}
                     <div className="border-t border-gray-100 pt-4">
                       {assignedClassName ? (
                         <div>
-                          <p className="text-xs text-gray-500 mb-1.5">Currently teaching</p>
-                          <div className="flex items-center justify-between">
+                          <p className="text-xs text-gray-500 mb-1.5">Currently assigned to</p>
+                          <div className="space-y-2">
                             <div className="flex items-center gap-2 min-w-0">
                               <GraduationCap size={14} className="text-gray-400 flex-shrink-0" />
                               <span className="font-medium text-gray-900 text-sm truncate">
                                 {assignedClassName}
                               </span>
                             </div>
+                            
+                            {/* Show multiple subjects if available */}
+                            {assignedSubjects.length > 0 && (
+                              <div className="pl-6">
+                                <p className="text-xs text-gray-500 mb-1">Teaching subjects:</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {assignedSubjects.map((subject, idx) => (
+                                    <span 
+                                      key={idx}
+                                      className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full"
+                                    >
+                                      {subject}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       ) : (
@@ -693,7 +791,7 @@ export default function TeacherManagement() {
                             <button
                               onClick={() => {
                                 setSelectedTeacher(teacher);
-                                setSelectedSubject('');
+                                setSelectedSubjects([]);
                                 setShowAssignmentModal(true);
                               }}
                               className="text-xs text-blue-600 hover:text-blue-800 font-medium 
@@ -748,33 +846,27 @@ export default function TeacherManagement() {
         </div>
       </DashboardLayout>
 
-      {/* ===== ASSIGNMENT MODAL ===== */}
+      {/* ===== ASSIGNMENT MODAL - UPDATED FOR MULTIPLE SUBJECTS ===== */}
       {showAssignmentModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={() => setShowAssignmentModal(false)} />
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={resetAssignmentModal} />
           
           <div className="flex min-h-full items-center justify-center p-3 sm:p-4">
-            <div className="relative bg-white rounded-2xl w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="relative bg-white rounded-2xl w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
               
               {/* Modal Header */}
-              <div className="p-5 sm:p-6 border-b border-gray-200">
+              <div className="p-5 sm:p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <h2 className="text-xl font-bold text-gray-900 truncate">
                       {selectedTeacher ? `Assign ${selectedTeacher.name.split(' ')[0]}` : 'Assign Teacher'}
                     </h2>
                     <p className="text-sm text-gray-600 mt-1">
-                      {selectedTeacher ? 'Choose class and subject' : 'Select a teacher to assign'}
+                      {selectedTeacher ? 'Choose assignment type, class, and subjects' : 'Select a teacher to assign'}
                     </p>
                   </div>
                   <button
-                    onClick={() => {
-                      setShowAssignmentModal(false);
-                      setSelectedTeacher(null);
-                      setSelectedClassId('');
-                      setSelectedSubject('');
-                      setIsFormTeacher(false);
-                    }}
+                    onClick={resetAssignmentModal}
                     className="p-2 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0"
                   >
                     <X size={18} className="text-gray-600" />
@@ -798,7 +890,9 @@ export default function TeacherManagement() {
                       onChange={(e) => {
                         const teacher = teachers.find(t => t.id === e.target.value);
                         setSelectedTeacher(teacher || null);
-                        setSelectedSubject('');
+                        setSelectedSubjects([]);
+                        setCurrentSubject('');
+                        setAssignmentType('subject');
                       }}
                     >
                       <option value="">Choose a teacher...</option>
@@ -817,10 +911,71 @@ export default function TeacherManagement() {
                     <p className="text-xs text-blue-700 font-medium mb-1">Selected Teacher</p>
                     <p className="text-sm font-semibold text-gray-900">{selectedTeacher.name}</p>
                     {selectedTeacher.subjects?.length > 0 && (
-                      <p className="text-xs text-blue-700 mt-1.5">
-                        Subjects: {selectedTeacher.subjects.join(', ')}
-                      </p>
+                      <div className="mt-2">
+                        <p className="text-xs text-blue-700 mb-1">Available subjects:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {selectedTeacher.subjects.map((subject: string) => (
+                            <span 
+                              key={subject}
+                              className="text-xs px-2 py-0.5 bg-white text-blue-700 rounded-full border border-blue-200"
+                            >
+                              {subject}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
                     )}
+                  </div>
+                )}
+
+                {/* Assignment Type Selection */}
+                {selectedTeacher && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Assignment Type <span className="text-red-500">*</span>
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAssignmentType('subject');
+                          setSelectedSubjects([]);
+                          setCurrentSubject('');
+                        }}
+                        className={`
+                          px-4 py-2.5 text-sm font-medium rounded-lg border transition-all
+                          ${assignmentType === 'subject'
+                            ? 'bg-blue-50 border-blue-300 text-blue-700 ring-1 ring-blue-200'
+                            : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                          }
+                        `}
+                      >
+                        Subject Teacher
+                        <span className="block text-xs mt-0.5 text-gray-500">
+                          Teach specific subjects
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAssignmentType('form-only');
+                          setSelectedSubjects([]);
+                          setCurrentSubject('');
+                        }}
+                        className={`
+                          px-4 py-2.5 text-sm font-medium rounded-lg border transition-all
+                          ${assignmentType === 'form-only'
+                            ? 'bg-purple-50 border-purple-300 text-purple-700 ring-1 ring-purple-200'
+                            : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                          }
+                        `}
+                      >
+                        Form Teacher Only
+                        <span className="block text-xs mt-0.5 text-gray-500">
+                          Class management only
+                        </span>
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -845,34 +1000,77 @@ export default function TeacherManagement() {
                   </select>
                 </div>
 
-                {/* Subject Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Select Subject to Teach <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={selectedSubject}
-                    onChange={(e) => setSelectedSubject(e.target.value)}
-                    disabled={!selectedTeacher || !selectedTeacher.subjects?.length}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg 
-                             focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                             text-sm bg-white hover:border-gray-400 transition-colors
-                             disabled:bg-gray-100 disabled:cursor-not-allowed"
-                  >
-                    <option value="">Choose a subject...</option>
-                    {selectedTeacher?.subjects?.map(subject => (
-                      <option key={subject} value={subject}>
-                        {subject}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedTeacher && (!selectedTeacher.subjects || selectedTeacher.subjects.length === 0) && (
-                    <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1">
-                      <AlertCircle size={12} />
-                      This teacher has no subjects listed
-                    </p>
-                  )}
-                </div>
+                {/* Subject Selection - Multiple subjects for subject teacher assignments */}
+                {assignmentType === 'subject' && selectedTeacher && (
+                  <div className="space-y-3">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Subjects to Teach <span className="text-red-500">*</span>
+                    </label>
+                    
+                    {/* Selected Subjects List */}
+                    {selectedSubjects.length > 0 && (
+                      <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                        <p className="text-xs font-medium text-gray-500">Selected subjects:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedSubjects.map((subject) => (
+                            <span
+                              key={subject}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-800 rounded-lg text-sm"
+                            >
+                              {subject}
+                              <button
+                                onClick={() => handleRemoveSubject(subject)}
+                                className="hover:bg-blue-200 rounded p-0.5"
+                              >
+                                <X size={14} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Add Subject Dropdown */}
+                    {selectedTeacher.subjects && selectedTeacher.subjects.length > 0 && (
+                      <div className="flex gap-2">
+                        <select
+                          value={currentSubject}
+                          onChange={(e) => setCurrentSubject(e.target.value)}
+                          className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg 
+                                   focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                                   text-sm bg-white hover:border-gray-400 transition-colors"
+                        >
+                          <option value="">Choose a subject...</option>
+                          {selectedTeacher.subjects
+                            .filter((subject: string) => !selectedSubjects.includes(subject))
+                            .map((subject: string) => (
+                              <option key={subject} value={subject}>
+                                {subject}
+                              </option>
+                            ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={handleAddSubject}
+                          disabled={!currentSubject}
+                          className="px-4 py-2.5 bg-blue-600 text-white rounded-lg 
+                                   hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed
+                                   flex items-center gap-1 transition-colors"
+                        >
+                          <Plus size={16} />
+                          Add
+                        </button>
+                      </div>
+                    )}
+
+                    {selectedTeacher.subjects && selectedTeacher.subjects.length === 0 && (
+                      <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1">
+                        <AlertCircle size={12} />
+                        This teacher has no subjects listed. Consider assigning as Form Teacher only.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Form Teacher Option */}
                 <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
@@ -886,7 +1084,9 @@ export default function TeacherManagement() {
                   <label htmlFor="formTeacher" className="text-sm text-gray-700">
                     Assign as <span className="font-medium">Form Teacher</span>
                     <span className="text-xs text-gray-500 block mt-0.5">
-                      Responsible for overall class management
+                      {assignmentType === 'form-only' 
+                        ? 'This will be the primary role (already selected as Form Teacher Only)'
+                        : 'Responsible for overall class management in addition to teaching'}
                     </span>
                   </label>
                 </div>
@@ -896,13 +1096,7 @@ export default function TeacherManagement() {
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
-                      onClick={() => {
-                        setShowAssignmentModal(false);
-                        setSelectedTeacher(null);
-                        setSelectedClassId('');
-                        setSelectedSubject('');
-                        setIsFormTeacher(false);
-                      }}
+                      onClick={resetAssignmentModal}
                       className="px-4 py-2.5 border border-gray-300 text-gray-700 
                                rounded-lg hover:bg-gray-50 font-medium 
                                transition-colors text-sm"
@@ -911,7 +1105,12 @@ export default function TeacherManagement() {
                     </button>
                     <button
                       onClick={handleAssignTeacher}
-                      disabled={!selectedTeacher || !selectedClassId || !selectedSubject || isAssigningTeacher}
+                      disabled={
+                        !selectedTeacher || 
+                        !selectedClassId || 
+                        (assignmentType === 'subject' && selectedSubjects.length === 0) || 
+                        isAssigningTeacher
+                      }
                       className="px-4 py-2.5 bg-blue-600 text-white rounded-lg 
                                hover:bg-blue-700 font-medium disabled:opacity-50 
                                disabled:cursor-not-allowed flex items-center justify-center
@@ -925,7 +1124,9 @@ export default function TeacherManagement() {
                       ) : (
                         <>
                           <UserCheck size={16} />
-                          Assign Teacher
+                          {assignmentType === 'subject' 
+                            ? `Assign (${selectedSubjects.length} subject${selectedSubjects.length !== 1 ? 's' : ''})` 
+                            : 'Assign as Form Teacher'}
                         </>
                       )}
                     </button>

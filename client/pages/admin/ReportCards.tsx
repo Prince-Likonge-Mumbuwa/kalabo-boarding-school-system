@@ -1,4 +1,4 @@
-// @/pages/admin/ReportCards.tsx - UPDATED WITH FIXED TYPES AND PROGRESS BAR
+// @/pages/admin/ReportCards.tsx - UPDATED WITH FIXED PROGRESS BARS
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -154,7 +154,7 @@ const StatusBadge = ({ status }: { status: 'pass' | 'fail' | 'pending' }) => {
   );
 };
 
-// ==================== PROGRESS BAR ====================
+// ==================== FIXED PROGRESS BAR ====================
 const ProgressBar = ({ progress, size = 'md', showLabel = true }: { progress: number; size?: 'sm' | 'md' | 'lg'; showLabel?: boolean }) => {
   // FIXED: Ensure progress is a valid number between 0-100
   const validProgress = Math.min(100, Math.max(0, progress || 0));
@@ -269,7 +269,7 @@ const StudentCard = ({ student, onClick }: StudentCardProps) => {
   );
 };
 
-// ==================== MOBILE CARD VIEW ====================
+// ==================== MOBILE SUBJECT CARD ====================
 const MobileSubjectCard = ({ subject }: { subject: ReportCardSubject }) => {
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-3 mb-2">
@@ -313,7 +313,7 @@ const MobileSubjectCard = ({ subject }: { subject: ReportCardSubject }) => {
   );
 };
 
-// ==================== TABULAR REPORT MODAL ====================
+// ==================== REPORT MODAL ====================
 interface ReportModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -330,7 +330,6 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading }: ReportMo
     try {
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
       const pdfBytes = await generateReportCardPDF(report);
-      // FIXED: Convert Uint8Array to Blob properly
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -846,22 +845,26 @@ export default function ReportCards() {
     }
   }, [classes, user, assignments, selectedClass]);
 
-  // Transform service students to local StudentProgress type with gender
+  // ==================== FIXED TRANSFORMATION ====================
+  // Now uses service-calculated completionPercentage and correct missingSubjects logic
   const transformedStudents = useMemo((): StudentProgress[] => {
     if (!students || students.length === 0) return [];
     
     return students.map((student: any) => {
-      // Ensure completionPercentage is calculated correctly
-      const totalSubjects = student.totalSubjects || 0;
-      const completedSubjects = student.subjects?.filter((s: any) => 
-        s.week4?.status !== 'missing' && 
-        s.week8?.status !== 'missing' && 
-        s.endOfTerm?.status !== 'missing'
-      ).length || 0;
+      // Use the completionPercentage directly from the service instead of recalculating
+      // This ensures consistency with how progress is calculated in the backend
+      const completionPercentage = student.completionPercentage || 0;
       
-      const completionPercentage = totalSubjects > 0 
-        ? Math.round((completedSubjects / totalSubjects) * 100) 
-        : 0;
+      // Calculate missing subjects using the same logic as the service
+      const missingSubjects = student.subjects?.filter((s: any) => {
+        // A subject is incomplete if ANY exam type is missing AND not marked as not_conducted
+        const week4Missing = s.week4?.status === 'missing';
+        const week8Missing = s.week8?.status === 'missing';
+        const endOfTermMissing = s.endOfTerm?.status === 'missing';
+        
+        // If any exam is missing, count as incomplete
+        return week4Missing || week8Missing || endOfTermMissing;
+      }).length || 0;
 
       return {
         studentId: student.studentId || '',
@@ -873,19 +876,28 @@ export default function ReportCards() {
         overallGrade: student.overallGrade || 0,
         status: student.status || 'pending',
         isComplete: student.isComplete || false,
-        completionPercentage: completionPercentage, // FIXED: Use calculated value
+        completionPercentage: completionPercentage, // Use service-calculated value
         subjects: Array.isArray(student.subjects) ? student.subjects.map((subject: any) => ({
           subjectId: subject.subjectId || '',
           subjectName: subject.subjectName || '',
           teacherName: subject.teacherName || '',
-          week4: subject.week4 || { status: 'missing' },
-          week8: subject.week8 || { status: 'missing' },
-          endOfTerm: subject.endOfTerm || { status: 'missing' },
+          week4: {
+            status: subject.week4?.status || 'missing',
+            marks: subject.week4?.marks
+          },
+          week8: {
+            status: subject.week8?.status || 'missing',
+            marks: subject.week8?.marks
+          },
+          endOfTerm: {
+            status: subject.endOfTerm?.status || 'missing',
+            marks: subject.endOfTerm?.marks
+          },
           subjectProgress: subject.subjectProgress || 0,
           grade: subject.grade
         })) : [],
-        missingSubjects: student.missingSubjects || 0,
-        totalSubjects: totalSubjects,
+        missingSubjects: missingSubjects,
+        totalSubjects: student.totalSubjects || 0,
         gender: studentGenderMap.get(student.studentId) || 'Not specified'
       };
     });
@@ -925,7 +937,6 @@ export default function ReportCards() {
               });
 
               if (report) {
-                // FIXED: Transform service ReportCardData to local ReportCardData
                 const transformedReport: ReportCardData = {
                   id: report.id,
                   studentId: report.studentId,
@@ -933,7 +944,7 @@ export default function ReportCards() {
                   className: report.className,
                   classId: report.classId,
                   form: report.form,
-                  grade: report.overallGrade, // Map overallGrade to grade
+                  grade: report.overallGrade,
                   position: report.position,
                   gender: report.gender || studentGenderMap.get(student.studentId) || 'Not specified',
                   totalMarks: report.totalMarks,
@@ -1028,7 +1039,6 @@ export default function ReportCards() {
         }
 
         try {
-          // FIXED: Transform service ReportCardData to local ReportCardData for PDF generation
           const localReport: ReportCardData = {
             id: report.id,
             studentId: report.studentId,
@@ -1064,7 +1074,6 @@ export default function ReportCards() {
           };
 
           const pdfBytes = await generateReportCardPDF(localReport);
-          // FIXED: Properly convert Uint8Array to Blob
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
           const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a');
@@ -1157,7 +1166,6 @@ export default function ReportCards() {
       const { generateClassResultsMatrixPDF } = await import('@/services/pdf/classResultsMatrixPDFLib');
       const pdfBytes = await generateClassResultsMatrixPDF(matrixData);
 
-      // FIXED: Properly convert Uint8Array to Blob
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
