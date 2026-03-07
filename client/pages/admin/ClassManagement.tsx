@@ -18,9 +18,24 @@ import {
   AlertCircle,
   ChevronDown,
   X,
+  Trash2,
+  Edit,
+  MoreVertical,
+  Download,
+  CheckSquare,
+  Square,
+  Check,
+  UserMinus,
+  UserPlus,
+  RefreshCw,
+  Copy,
+  Archive,
+  Filter,
+  Grid,
+  List,
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
-import { Class } from '@/types/school';
+import { Class, Learner } from '@/types/school';
 
 // Import modal components
 import { CreateClassModal } from '@/components/CreateClassModal';
@@ -31,6 +46,9 @@ import { TeachersListView } from '@/components/TeachersListView';
 import { SuccessModal } from '@/components/SuccessModal';
 import { EditLearnerModal } from '@/components/EditLearnerModal';
 import { PDFDownloadModal } from '@/components/PDFDownloadModal';
+import { BulkActionsModal } from '@/components/BulkActionsModal';
+import { ConfirmationModal } from '@/components/ConfirmationModal';
+import { EditClassModal } from '@/components/EditClassModal';
 
 // Type assertion for classes with stats
 type ClassWithStats = Class & {
@@ -49,6 +67,13 @@ type ClassWithStats = Class & {
   };
 };
 
+// Selection item type
+type SelectableItem = {
+  id: string;
+  type: 'class' | 'learner';
+  data: any;
+};
+
 export default function ClassManagement() {
   const { user } = useAuth();
   const isUserAdmin = user?.userType === 'admin';
@@ -59,9 +84,16 @@ export default function ClassManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [yearFilter, setYearFilter] = useState<number | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
+  // State for selection mode
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<SelectableItem[]>([]);
+  const [selectAll, setSelectAll] = useState(false);
 
   // State for modals
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditClassModal, setShowEditClassModal] = useState(false);
   const [showCSVImportModal, setShowCSVImportModal] = useState(false);
   const [showIndividualLearnerModal, setShowIndividualLearnerModal] = useState(false);
   const [showLearnersListModal, setShowLearnersListModal] = useState(false);
@@ -69,11 +101,29 @@ export default function ClassManagement() {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showEditLearnerModal, setShowEditLearnerModal] = useState(false);
   const [showPDFModal, setShowPDFModal] = useState(false);
+  const [showBulkActionsModal, setShowBulkActionsModal] = useState(false);
+  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
+  
+  // State for confirmation modal
+  const [confirmationConfig, setConfirmationConfig] = useState<{
+    title: string;
+    message: string;
+    type: 'delete' | 'archive' | 'transfer' | 'hardDelete';
+    onConfirm: () => Promise<void>;
+    confirmText?: string;
+    cancelText?: string;
+  } | null>(null);
   
   // State for selected items
   const [selectedClass, setSelectedClass] = useState<ClassWithStats | null>(null);
   const [selectedLearner, setSelectedLearner] = useState<any>(null);
   const [csvImportType, setCSVImportType] = useState<'learners' | 'classes'>('classes');
+  
+  // State for bulk transfer
+  const [bulkTransferData, setBulkTransferData] = useState<{
+    learnerIds: string[];
+    fromClassId: string;
+  } | null>(null);
   
   // State for success modal data
   const [successData, setSuccessData] = useState<{
@@ -82,9 +132,10 @@ export default function ClassManagement() {
     studentId?: string;
     studentName?: string;
     className?: string;
-    actionType: 'add' | 'import' | 'update' | 'edit';
+    actionType: 'add' | 'import' | 'update' | 'edit' | 'delete' | 'bulk' | 'hardDelete';
     importedCount?: number;
     studentIds?: string[];
+    deletedCount?: number;
   } | null>(null);
 
   // Build filters object
@@ -109,8 +160,13 @@ export default function ClassManagement() {
     error: classesErrorMessage,
     isCreatingClass,
     isImportingClasses,
+    isUpdatingClass,
+    isDeletingClass,
     createClass,
     bulkImportClasses,
+    updateClass,
+    deleteClass,
+    refreshLearnerStats,
     refetch: refetchClasses,
     previewNextStudentId
   } = useSchoolClasses(filters);
@@ -123,12 +179,15 @@ export default function ClassManagement() {
     isLoading: learnersLoading,
     isAddingLearner,
     isImportingLearners,
-    // Temporarily comment out until hook is updated
-    // isUpdatingLearner,
+    isUpdatingLearner,
+    isRemovingLearner,
+    isHardDeletingLearner,
     addEnhancedLearner,
     bulkImportLearners,
     removeLearner,
-    // updateLearner,
+    hardDeleteLearner,
+    updateLearner,
+    transferLearner,
     refetch: refetchLearners
   } = useSchoolLearners(selectedClass?.id);
 
@@ -152,6 +211,48 @@ export default function ClassManagement() {
   const totalLearners = useMemo(() => {
     return classesWithStats.reduce((sum, cls) => sum + cls.students, 0);
   }, [classesWithStats]);
+
+  // Selection handlers
+  const toggleSelectionMode = () => {
+    setSelectionMode(!selectionMode);
+    setSelectedItems([]);
+    setSelectAll(false);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectAll) {
+      setSelectedItems([]);
+    } else {
+      const allSelectable = filteredClasses.map(cls => ({
+        id: cls.id,
+        type: 'class' as const,
+        data: cls
+      }));
+      setSelectedItems(allSelectable);
+    }
+    setSelectAll(!selectAll);
+  };
+
+  const toggleSelectItem = (item: SelectableItem) => {
+    setSelectedItems(prev => {
+      const exists = prev.some(i => i.id === item.id && i.type === item.type);
+      if (exists) {
+        const newItems = prev.filter(i => !(i.id === item.id && i.type === item.type));
+        setSelectAll(newItems.length === filteredClasses.length);
+        return newItems;
+      } else {
+        const newItems = [...prev, item];
+        setSelectAll(newItems.length === filteredClasses.length);
+        return newItems;
+      }
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedItems([]);
+    setSelectAll(false);
+    setSelectionMode(false);
+  };
 
   // Handle viewing class learners
   const handleViewClassLearners = (classId: string) => {
@@ -191,6 +292,137 @@ export default function ClassManagement() {
       console.error('Error creating class:', error);
       alert(`Error: ${error.message || 'Failed to create class'}`);
     }
+  };
+
+  // Handle class update
+  const handleUpdateClass = async (classId: string, updates: Partial<Class>) => {
+    try {
+      if (!isUserAdmin) {
+        alert('Only administrators can update classes.');
+        return;
+      }
+
+      await updateClass({ classId, updates });
+      
+      // Refresh learner stats if needed
+      if (updates.type || updates.level || updates.section) {
+        await refreshLearnerStats(classId);
+      }
+      
+      setSuccessData({
+        title: 'Class Updated Successfully!',
+        message: `Class has been updated.`,
+        actionType: 'edit',
+      });
+      setShowSuccessModal(true);
+      setShowEditClassModal(false);
+      setSelectedClass(null);
+      
+    } catch (error: any) {
+      console.error('Error updating class:', error);
+      alert(`Error: ${error.message || 'Failed to update class'}`);
+    }
+  };
+
+  // Handle class deletion (hard delete)
+  const handleDeleteClass = async (classId: string, className: string) => {
+    try {
+      if (!isUserAdmin) {
+        alert('Only administrators can delete classes.');
+        return;
+      }
+
+      // Check if class has learners
+      const classToDelete = classesWithStats.find(c => c.id === classId);
+      if (classToDelete && classToDelete.students > 0) {
+        alert(`Cannot delete ${className} because it has ${classToDelete.students} learners. Please transfer or delete all learners first.`);
+        return;
+      }
+
+      setConfirmationConfig({
+        title: 'Delete Class',
+        message: `Are you sure you want to permanently delete ${className}? This action cannot be undone.`,
+        type: 'hardDelete',
+        confirmText: 'Delete Permanently',
+        cancelText: 'Cancel',
+        onConfirm: async () => {
+          try {
+            await deleteClass(classId);
+            
+            setSuccessData({
+              title: 'Class Deleted',
+              message: `${className} has been permanently deleted.`,
+              actionType: 'hardDelete',
+            });
+            setShowSuccessModal(true);
+            setShowConfirmationModal(false);
+            await refetchClasses();
+          } catch (error: any) {
+            console.error('Error deleting class:', error);
+            alert(error.message || 'Failed to delete class. Please try again.');
+          }
+        }
+      });
+      setShowConfirmationModal(true);
+      
+    } catch (error: any) {
+      console.error('Error deleting class:', error);
+      alert(`Error: ${error.message || 'Failed to delete class'}`);
+    }
+  };
+
+  // Bulk delete classes
+  const handleBulkDeleteClasses = async () => {
+    const classItems = selectedItems.filter(item => item.type === 'class');
+    
+    if (classItems.length === 0) return;
+    
+    // Check if any selected class has learners
+    const classesWithLearners = classItems.filter(item => item.data.students > 0);
+    
+    if (classesWithLearners.length > 0) {
+      alert(`${classesWithLearners.length} selected class(es) have learners. Please transfer or delete learners first.`);
+      return;
+    }
+
+    setConfirmationConfig({
+      title: 'Delete Multiple Classes',
+      message: `Are you sure you want to permanently delete ${classItems.length} class(es)? This action cannot be undone.`,
+      type: 'hardDelete',
+      confirmText: 'Delete Permanently',
+      cancelText: 'Cancel',
+      onConfirm: async () => {
+        try {
+          let successCount = 0;
+          let errorCount = 0;
+          
+          for (const item of classItems) {
+            try {
+              await deleteClass(item.id);
+              successCount++;
+            } catch (error) {
+              console.error(`Failed to delete class ${item.id}:`, error);
+              errorCount++;
+            }
+          }
+          
+          setSuccessData({
+            title: 'Classes Deleted',
+            message: `${successCount} class(es) deleted successfully.${errorCount > 0 ? ` ${errorCount} failed.` : ''}`,
+            actionType: 'bulk',
+            deletedCount: successCount
+          });
+          setShowSuccessModal(true);
+          setShowConfirmationModal(false);
+          clearSelection();
+          await refetchClasses();
+        } catch (error) {
+          console.error('Error bulk deleting classes:', error);
+          alert('Failed to delete some classes. Please try again.');
+        }
+      }
+    });
+    setShowConfirmationModal(true);
   };
 
   // Handle CSV import
@@ -237,7 +469,7 @@ export default function ClassManagement() {
     }
   };
 
-  // Handle individual learner addition - FIXED return type
+  // Handle individual learner addition
   const handleAddIndividualLearner = async (data: { 
     fullName: string;
     address: string;
@@ -278,11 +510,8 @@ export default function ClassManagement() {
     }
   };
 
-  // Handle learner update - Temporarily disabled
+  // Handle learner update
   const handleUpdateLearner = async (learnerId: string, data: any) => {
-    alert('Edit functionality is being updated. Please try again later.');
-    // Comment out until hook is updated
-    /*
     try {
       await updateLearner({ learnerId, updates: data });
       
@@ -301,33 +530,215 @@ export default function ClassManagement() {
       console.error('Update learner error:', error);
       alert(`Error: ${error.message || 'Failed to update learner'}`);
     }
-    */
   };
 
-  // Handle learner removal
+  // Handle learner removal (soft delete - archive)
   const handleRemoveLearner = async (learnerId: string) => {
     if (!selectedClass) return;
     
     const learner = classLearners.find(l => l.id === learnerId);
     const learnerName = learner?.fullName || learner?.name || 'this learner';
     
-    if (!confirm(`Remove ${learnerName} from ${selectedClass.name}?`)) {
-      return;
-    }
+    setConfirmationConfig({
+      title: 'Archive Learner',
+      message: `Are you sure you want to archive ${learnerName}? They will be removed from ${selectedClass.name} but their data will be preserved.`,
+      type: 'archive',
+      confirmText: 'Archive',
+      cancelText: 'Cancel',
+      onConfirm: async () => {
+        try {
+          await removeLearner({ learnerId, classId: selectedClass.id });
+          
+          setSuccessData({
+            title: 'Learner Archived',
+            message: `${learnerName} has been archived from ${selectedClass.name}.`,
+            actionType: 'update',
+          });
+          setShowSuccessModal(true);
+          setShowConfirmationModal(false);
+          await refetchLearners();
+          await refreshLearnerStats(selectedClass.id);
+        } catch (error: any) {
+          console.error('Archive learner error:', error);
+          alert(`Error: ${error.message || 'Failed to archive learner'}`);
+        }
+      }
+    });
+    setShowConfirmationModal(true);
+  };
 
-    try {
-      await removeLearner({ learnerId, classId: selectedClass.id });
-      
-      setSuccessData({
-        title: 'Learner Removed',
-        message: `${learnerName} has been removed from ${selectedClass.name}.`,
-        actionType: 'update'
-      });
-      setShowSuccessModal(true);
-    } catch (error: any) {
-      console.error('Remove learner error:', error);
-      alert(`Error: ${error.message || 'Failed to remove learner'}`);
-    }
+  // Handle learner hard delete (permanent)
+  const handleHardDeleteLearner = async (learnerId: string) => {
+    if (!selectedClass) return;
+    
+    const learner = classLearners.find(l => l.id === learnerId);
+    const learnerName = learner?.fullName || learner?.name || 'this learner';
+    
+    setConfirmationConfig({
+      title: 'Permanently Delete Learner',
+      message: `Are you sure you want to permanently delete ${learnerName}? This action cannot be undone.`,
+      type: 'hardDelete',
+      confirmText: 'Delete Permanently',
+      cancelText: 'Cancel',
+      onConfirm: async () => {
+        try {
+          await hardDeleteLearner({ learnerId, classId: selectedClass.id });
+          
+          setSuccessData({
+            title: 'Learner Deleted',
+            message: `${learnerName} has been permanently deleted.`,
+            actionType: 'hardDelete',
+          });
+          setShowSuccessModal(true);
+          setShowConfirmationModal(false);
+          await refetchLearners();
+          await refreshLearnerStats(selectedClass.id);
+        } catch (error: any) {
+          console.error('Hard delete learner error:', error);
+          alert(`Error: ${error.message || 'Failed to delete learner'}`);
+        }
+      }
+    });
+    setShowConfirmationModal(true);
+  };
+
+  // Bulk delete learners (hard delete)
+  const handleBulkDeleteLearners = async (learnerIds: string[]) => {
+    if (!selectedClass) return;
+    
+    setConfirmationConfig({
+      title: 'Permanently Delete Multiple Learners',
+      message: `Are you sure you want to permanently delete ${learnerIds.length} learners from ${selectedClass.name}? This action cannot be undone.`,
+      type: 'hardDelete',
+      confirmText: 'Delete Permanently',
+      cancelText: 'Cancel',
+      onConfirm: async () => {
+        try {
+          let successCount = 0;
+          let errorCount = 0;
+          
+          for (const learnerId of learnerIds) {
+            try {
+              await hardDeleteLearner({ learnerId, classId: selectedClass.id });
+              successCount++;
+            } catch (error) {
+              console.error(`Failed to delete learner ${learnerId}:`, error);
+              errorCount++;
+            }
+          }
+          
+          setSuccessData({
+            title: 'Learners Deleted',
+            message: `${successCount} learners deleted successfully.${errorCount > 0 ? ` ${errorCount} failed.` : ''}`,
+            actionType: 'bulk',
+            deletedCount: successCount
+          });
+          setShowSuccessModal(true);
+          setShowConfirmationModal(false);
+          await refetchLearners();
+          await refreshLearnerStats(selectedClass.id);
+        } catch (error: any) {
+          console.error('Bulk delete learners error:', error);
+          alert(`Error: ${error.message || 'Failed to delete learners'}`);
+        }
+      }
+    });
+    setShowConfirmationModal(true);
+  };
+
+  // Bulk archive learners
+  const handleBulkArchiveLearners = async (learnerIds: string[]) => {
+    if (!selectedClass) return;
+    
+    setConfirmationConfig({
+      title: 'Archive Multiple Learners',
+      message: `Are you sure you want to archive ${learnerIds.length} learners from ${selectedClass.name}?`,
+      type: 'archive',
+      confirmText: 'Archive',
+      cancelText: 'Cancel',
+      onConfirm: async () => {
+        try {
+          let successCount = 0;
+          let errorCount = 0;
+          
+          for (const learnerId of learnerIds) {
+            try {
+              await removeLearner({ learnerId, classId: selectedClass.id });
+              successCount++;
+            } catch (error) {
+              console.error(`Failed to archive learner ${learnerId}:`, error);
+              errorCount++;
+            }
+          }
+          
+          setSuccessData({
+            title: 'Learners Archived',
+            message: `${successCount} learners archived successfully.${errorCount > 0 ? ` ${errorCount} failed.` : ''}`,
+            actionType: 'bulk',
+            deletedCount: successCount
+          });
+          setShowSuccessModal(true);
+          setShowConfirmationModal(false);
+          await refetchLearners();
+          await refreshLearnerStats(selectedClass.id);
+        } catch (error: any) {
+          console.error('Bulk archive learners error:', error);
+          alert(`Error: ${error.message || 'Failed to archive learners'}`);
+        }
+      }
+    });
+    setShowConfirmationModal(true);
+  };
+
+  // Handle bulk transfer learners
+  const handleBulkTransferLearners = async (learnerIds: string[], targetClassId: string) => {
+    if (!selectedClass) return;
+    
+    const targetClass = classesWithStats.find(c => c.id === targetClassId);
+    
+    setConfirmationConfig({
+      title: 'Transfer Learners',
+      message: `Are you sure you want to transfer ${learnerIds.length} learners from ${selectedClass.name} to ${targetClass?.name}?`,
+      type: 'transfer',
+      confirmText: 'Transfer',
+      cancelText: 'Cancel',
+      onConfirm: async () => {
+        try {
+          let successCount = 0;
+          let errorCount = 0;
+          
+          for (const learnerId of learnerIds) {
+            try {
+              await transferLearner({
+                learnerId,
+                fromClassId: selectedClass.id,
+                toClassId: targetClassId
+              });
+              successCount++;
+            } catch (error) {
+              console.error(`Failed to transfer learner ${learnerId}:`, error);
+              errorCount++;
+            }
+          }
+          
+          setSuccessData({
+            title: 'Learners Transferred',
+            message: `${successCount} learners transferred to ${targetClass?.name}.${errorCount > 0 ? ` ${errorCount} failed.` : ''}`,
+            actionType: 'bulk',
+          });
+          setShowSuccessModal(true);
+          setShowConfirmationModal(false);
+          setShowBulkActionsModal(false);
+          await refetchLearners();
+          await refreshLearnerStats(selectedClass.id);
+          await refreshLearnerStats(targetClassId);
+        } catch (error: any) {
+          console.error('Bulk transfer learners error:', error);
+          alert(`Error: ${error.message || 'Failed to transfer learners'}`);
+        }
+      }
+    });
+    setShowConfirmationModal(true);
   };
 
   // Handle edit learner click
@@ -404,7 +815,7 @@ export default function ClassManagement() {
     );
   }
 
-  // Loading state
+  // Loading state (keep existing skeleton loading)
   if (classesLoading) {
     return (
       <DashboardLayout activeTab="classes">
@@ -479,6 +890,44 @@ export default function ClassManagement() {
               {/* Admin Actions - Adaptive */}
               {isUserAdmin && (
                 <div className="flex items-center gap-2 sm:gap-3">
+                  {/* Selection Mode Toggle */}
+                  <button
+                    onClick={toggleSelectionMode}
+                    className={`
+                      inline-flex items-center justify-center
+                      border border-gray-300 text-gray-700 rounded-xl
+                      hover:bg-gray-50 font-medium transition-all
+                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
+                      ${isMobile 
+                        ? 'p-2.5' 
+                        : 'px-4 py-2.5 gap-2'
+                      }
+                      ${selectionMode ? 'bg-blue-50 border-blue-300 text-blue-700' : ''}
+                    `}
+                    title={isMobile ? (selectionMode ? 'Exit selection' : 'Select classes') : undefined}
+                  >
+                    {selectionMode ? <CheckSquare size={isMobile ? 18 : 16} /> : <Square size={isMobile ? 18 : 16} />}
+                    {!isMobile && (selectionMode ? 'Exit Selection' : 'Select')}
+                  </button>
+
+                  {/* View Mode Toggle (Desktop) */}
+                  {!isMobile && (
+                    <div className="flex border border-gray-300 rounded-xl overflow-hidden">
+                      <button
+                        onClick={() => setViewMode('grid')}
+                        className={`p-2.5 ${viewMode === 'grid' ? 'bg-blue-50 text-blue-700' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                      >
+                        <Grid size={16} />
+                      </button>
+                      <button
+                        onClick={() => setViewMode('list')}
+                        className={`p-2.5 ${viewMode === 'list' ? 'bg-blue-50 text-blue-700' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                      >
+                        <List size={16} />
+                      </button>
+                    </div>
+                  )}
+
                   <button
                     onClick={() => {
                       setCSVImportType('classes');
@@ -532,6 +981,33 @@ export default function ClassManagement() {
                 </div>
               )}
             </div>
+
+            {/* Selection Mode Bar */}
+            {selectionMode && selectedItems.length > 0 && (
+              <div className="mt-4 bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-2">
+                  <Check className="text-blue-600" size={18} />
+                  <span className="text-sm font-medium text-blue-700">
+                    {selectedItems.length} item{selectedItems.length !== 1 ? 's' : ''} selected
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleBulkDeleteClasses}
+                    className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 text-sm font-medium flex items-center gap-1.5"
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                  <button
+                    onClick={clearSelection}
+                    className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ===== FILTERS SECTION ===== */}
@@ -561,7 +1037,7 @@ export default function ClassManagement() {
               </button>
             )}
 
-            {/* Filter Content - Always visible on desktop, toggle on mobile */}
+            {/* Filter Content */}
             <div className={`
               ${isMobile ? 'px-4 pb-4' : 'p-4'}
               ${isMobile && !showMobileFilters ? 'hidden' : 'block'}
@@ -640,105 +1116,274 @@ export default function ClassManagement() {
             </div>
           </div>
 
-          {/* ===== CLASSES GRID ===== */}
+          {/* ===== CLASSES GRID/LIST ===== */}
           {filteredClasses.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
-              {filteredClasses.map((cls) => (
-                <div
-                  key={cls.id}
-                  className="group bg-white rounded-xl border border-gray-200 p-5 
-                           shadow-sm hover:shadow-lg transition-all duration-300 
-                           hover:border-gray-300 hover:-translate-y-0.5"
-                >
-                  {/* Class Header */}
-                  <div className="mb-3">
-                    <div className="flex items-start justify-between">
-                      <h3 className="font-bold text-lg text-gray-900 truncate flex-1">
-                        {cls.name}
-                      </h3>
-                      <div className="flex items-center gap-1 ml-2">
-                        {cls.type === 'grade' && (
-                          <span className="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full font-medium">
-                            Grade
-                          </span>
-                        )}
-                        {cls.type === 'form' && (
-                          <span className="text-xs px-2 py-1 bg-purple-100 text-purple-800 rounded-full font-medium">
-                            Form
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Year {cls.year}
-                    </p>
-                    {cls.learnerStats?.classPrefix && (
-                      <p className="text-xs font-mono text-gray-500 mt-1">
-                        ID Prefix: {cls.learnerStats.classPrefix}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Stats */}
-                  <div className="mb-4 p-3 bg-gray-50/80 rounded-lg border border-gray-100">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <Users size={16} className="text-gray-500" />
-                        <span className="text-sm text-gray-700">Learners</span>
-                      </div>
-                      <span className="font-semibold text-gray-900 text-lg">
-                        {cls.students}
-                      </span>
-                    </div>
-                    
-                    {/* Gender Stats */}
-                    {cls.genderStats && (
-                      <div className="flex justify-between text-xs text-gray-600">
-                        <span>Boys: {cls.genderStats.boys}</span>
-                        <span>Girls: {cls.genderStats.girls}</span>
-                      </div>
-                    )}
-                    
-                    {/* Next Student ID Preview */}
-                    {cls.learnerStats?.classPrefix && (
-                      <div className="mt-2 text-xs font-mono bg-blue-50 text-blue-700 p-1 rounded">
-                        Next ID: {getNextStudentIdPreview(cls)}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleViewClassLearners(cls.id)}
-                      className="flex-1 py-2.5 bg-blue-50 text-blue-700 
-                               rounded-lg hover:bg-blue-100 
-                               font-medium text-sm flex items-center justify-center gap-2 
-                               transition-all hover:shadow-sm active:scale-[0.98]
-                               focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+            viewMode === 'grid' ? (
+              /* Grid View */
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
+                {filteredClasses.map((cls) => {
+                  const isSelected = selectedItems.some(item => item.id === cls.id && item.type === 'class');
+                  
+                  return (
+                    <div
+                      key={cls.id}
+                      className={`
+                        group bg-white rounded-xl border p-5 transition-all duration-300 
+                        hover:shadow-lg hover:-translate-y-0.5 relative
+                        ${isSelected 
+                          ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50/30' 
+                          : 'border-gray-200 hover:border-gray-300'
+                        }
+                      `}
                     >
-                      <Eye size={15} />
-                      <span className={isMobile && !isTablet ? 'hidden sm:inline' : ''}>
-                        Learners
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => handleViewClassTeachers(cls.id)}
-                      className="flex-1 py-2.5 bg-purple-50 text-purple-700 
-                               rounded-lg hover:bg-purple-100 
-                               font-medium text-sm flex items-center justify-center gap-2 
-                               transition-all hover:shadow-sm active:scale-[0.98]
-                               focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1"
-                    >
-                      <GraduationCap size={15} />
-                      <span className={isMobile && !isTablet ? 'hidden sm:inline' : ''}>
-                        Teachers
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                      {/* Selection Checkbox (visible in selection mode) */}
+                      {selectionMode && (
+                        <div className="absolute top-3 left-3 z-10">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleSelectItem({ id: cls.id, type: 'class', data: cls });
+                            }}
+                            className={`
+                              w-5 h-5 rounded border flex items-center justify-center
+                              ${isSelected 
+                                ? 'bg-blue-600 border-blue-600 text-white' 
+                                : 'bg-white border-gray-300 hover:border-blue-500'
+                              }
+                            `}
+                          >
+                            {isSelected && <Check size={14} />}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Class Header */}
+                      <div className={`mb-3 ${selectionMode ? 'ml-6' : ''}`}>
+                        <div className="flex items-start justify-between">
+                          <h3 className="font-bold text-lg text-gray-900 truncate flex-1">
+                            {cls.name}
+                          </h3>
+                          <div className="flex items-center gap-1 ml-2">
+                            {cls.type === 'grade' && (
+                              <span className="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full font-medium">
+                                Grade
+                              </span>
+                            )}
+                            {cls.type === 'form' && (
+                              <span className="text-xs px-2 py-1 bg-purple-100 text-purple-800 rounded-full font-medium">
+                                Form
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Year {cls.year}
+                        </p>
+                        {cls.learnerStats?.classPrefix && (
+                          <p className="text-xs font-mono text-gray-500 mt-1">
+                            ID Prefix: {cls.learnerStats.classPrefix}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Stats */}
+                      <div className="mb-4 p-3 bg-gray-50/80 rounded-lg border border-gray-100">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Users size={16} className="text-gray-500" />
+                            <span className="text-sm text-gray-700">Learners</span>
+                          </div>
+                          <span className="font-semibold text-gray-900 text-lg">
+                            {cls.students}
+                          </span>
+                        </div>
+                        
+                        {/* Gender Stats */}
+                        {cls.genderStats && (
+                          <div className="flex justify-between text-xs text-gray-600">
+                            <span>Boys: {cls.genderStats.boys}</span>
+                            <span>Girls: {cls.genderStats.girls}</span>
+                          </div>
+                        )}
+                        
+                        {/* Next Student ID Preview */}
+                        {cls.learnerStats?.classPrefix && (
+                          <div className="mt-2 text-xs font-mono bg-blue-50 text-blue-700 p-1 rounded">
+                            Next ID: {getNextStudentIdPreview(cls)}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleViewClassLearners(cls.id)}
+                          className="flex-1 py-2.5 bg-blue-50 text-blue-700 
+                                   rounded-lg hover:bg-blue-100 
+                                   font-medium text-sm flex items-center justify-center gap-2 
+                                   transition-all hover:shadow-sm active:scale-[0.98]
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                        >
+                          <Eye size={15} />
+                          <span className={isMobile && !isTablet ? 'hidden sm:inline' : ''}>
+                            Learners
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => handleViewClassTeachers(cls.id)}
+                          className="flex-1 py-2.5 bg-purple-50 text-purple-700 
+                                   rounded-lg hover:bg-purple-100 
+                                   font-medium text-sm flex items-center justify-center gap-2 
+                                   transition-all hover:shadow-sm active:scale-[0.98]
+                                   focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1"
+                        >
+                          <GraduationCap size={15} />
+                          <span className={isMobile && !isTablet ? 'hidden sm:inline' : ''}>
+                            Teachers
+                          </span>
+                        </button>
+                      </div>
+
+                      {/* Admin Actions (Edit/Delete) */}
+                      {isUserAdmin && !selectionMode && (
+                        <div className="mt-2 pt-2 border-t border-gray-100 flex justify-end gap-1">
+                          <button
+                            onClick={() => {
+                              setSelectedClass(cls);
+                              setShowEditClassModal(true);
+                            }}
+                            className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="Edit class"
+                          >
+                            <Edit size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteClass(cls.id, cls.name)}
+                            disabled={isDeletingClass}
+                            className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                            title="Delete class"
+                          >
+                            {isDeletingClass ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              /* List View */
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      {selectionMode && (
+                        <th className="px-6 py-3 text-left">
+                          <button
+                            onClick={toggleSelectAll}
+                            className="w-5 h-5 rounded border border-gray-300 bg-white flex items-center justify-center"
+                          >
+                            {selectAll && <Check size={14} className="text-blue-600" />}
+                          </button>
+                        </th>
+                      )}
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Class</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Year</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Learners</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID Prefix</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {filteredClasses.map((cls) => {
+                      const isSelected = selectedItems.some(item => item.id === cls.id && item.type === 'class');
+                      
+                      return (
+                        <tr key={cls.id} className={`hover:bg-gray-50 ${isSelected ? 'bg-blue-50/30' : ''}`}>
+                          {selectionMode && (
+                            <td className="px-6 py-4">
+                              <button
+                                onClick={() => toggleSelectItem({ id: cls.id, type: 'class', data: cls })}
+                                className={`
+                                  w-5 h-5 rounded border flex items-center justify-center
+                                  ${isSelected 
+                                    ? 'bg-blue-600 border-blue-600 text-white' 
+                                    : 'bg-white border-gray-300 hover:border-blue-500'
+                                  }
+                                `}
+                              >
+                                {isSelected && <Check size={14} />}
+                              </button>
+                            </td>
+                          )}
+                          <td className="px-6 py-4 font-medium text-gray-900">{cls.name}</td>
+                          <td className="px-6 py-4 text-gray-600">{cls.year}</td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2 py-1 text-xs rounded-full ${
+                              cls.type === 'grade' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
+                            }`}>
+                              {cls.type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{cls.students}</span>
+                              {cls.genderStats && (
+                                <span className="text-xs text-gray-500">
+                                  ({cls.genderStats.boys} boys, {cls.genderStats.girls} girls)
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 font-mono text-sm text-gray-600">
+                            {cls.learnerStats?.classPrefix || '-'}
+                          </td>
+                          <td className="px-6 py-4 text-right space-x-2">
+                            <button
+                              onClick={() => handleViewClassLearners(cls.id)}
+                              className="text-blue-600 hover:text-blue-800 p-1"
+                              title="View learners"
+                            >
+                              <Eye size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleViewClassTeachers(cls.id)}
+                              className="text-purple-600 hover:text-purple-800 p-1"
+                              title="View teachers"
+                            >
+                              <GraduationCap size={16} />
+                            </button>
+                            {isUserAdmin && (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setSelectedClass(cls);
+                                    setShowEditClassModal(true);
+                                  }}
+                                  className="text-gray-600 hover:text-blue-600 p-1"
+                                  title="Edit class"
+                                >
+                                  <Edit size={16} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteClass(cls.id, cls.name)}
+                                  disabled={isDeletingClass}
+                                  className="text-gray-600 hover:text-red-600 p-1 disabled:opacity-50"
+                                  title="Delete class"
+                                >
+                                  {isDeletingClass ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
           ) : (
             /* ===== EMPTY STATE ===== */
             <div className="text-center py-16 sm:py-20 bg-white rounded-2xl border border-gray-200 shadow-sm">
@@ -797,6 +1442,19 @@ export default function ClassManagement() {
         isLoading={isCreatingClass}
       />
 
+      {selectedClass && (
+        <EditClassModal
+          isOpen={showEditClassModal}
+          onClose={() => {
+            setShowEditClassModal(false);
+            setSelectedClass(null);
+          }}
+          onUpdate={(updates) => handleUpdateClass(selectedClass.id, updates)}
+          classData={selectedClass}
+          isLoading={isUpdatingClass}
+        />
+      )}
+
       <CSVImportModal
         isOpen={showCSVImportModal}
         onClose={() => {
@@ -832,8 +1490,16 @@ export default function ClassManagement() {
             setShowLearnersListModal(false);
             setShowIndividualLearnerModal(true);
           }}
-          // onEditLearner={handleEditLearner} // Temporarily disabled
+          onEditLearner={handleEditLearner}
           onRemoveLearner={handleRemoveLearner}
+          onHardDeleteLearner={handleHardDeleteLearner}
+          onBulkDelete={handleBulkDeleteLearners}
+          onBulkArchive={handleBulkArchiveLearners}
+          onBulkTransfer={(learnerIds) => {
+            setBulkTransferData({ learnerIds, fromClassId: selectedClass.id });
+            setShowLearnersListModal(false);
+            setShowBulkActionsModal(true);
+          }}
           onDownloadPDF={() => {
             setShowLearnersListModal(false);
             setShowPDFModal(true);
@@ -862,7 +1528,7 @@ export default function ClassManagement() {
           onSubmit={(data) => handleUpdateLearner(selectedLearner.id, data)}
           learner={selectedLearner}
           className={selectedClass.name}
-          isLoading={false} // Temporarily set to false
+          isLoading={isUpdatingLearner}
         />
       )}
 
@@ -876,6 +1542,34 @@ export default function ClassManagement() {
         />
       )}
 
+      {selectedClass && showBulkActionsModal && bulkTransferData && (
+        <BulkActionsModal
+          isOpen={showBulkActionsModal}
+          onClose={() => {
+            setShowBulkActionsModal(false);
+            setBulkTransferData(null);
+          }}
+          onTransfer={(targetClassId) => 
+            handleBulkTransferLearners(bulkTransferData.learnerIds, targetClassId)
+          }
+          classes={classesWithStats}
+          currentClass={selectedClass}
+          learnerCount={bulkTransferData.learnerIds.length}
+        />
+      )}
+
+      <ConfirmationModal
+        isOpen={showConfirmationModal}
+        onClose={() => setShowConfirmationModal(false)}
+        onConfirm={confirmationConfig?.onConfirm || (async () => {})}
+        title={confirmationConfig?.title || 'Confirm Action'}
+        message={confirmationConfig?.message || 'Are you sure you want to proceed?'}
+        type={confirmationConfig?.type || 'delete'}
+        confirmText={confirmationConfig?.confirmText}
+        cancelText={confirmationConfig?.cancelText}
+        isLoading={isRemovingLearner || isHardDeletingLearner || isDeletingClass}
+      />
+
       <SuccessModal
         isOpen={showSuccessModal}
         onClose={() => setShowSuccessModal(false)}
@@ -887,6 +1581,7 @@ export default function ClassManagement() {
         actionType={successData?.actionType || 'add'}
         importedCount={successData?.importedCount}
         studentIds={successData?.studentIds}
+        deletedCount={successData?.deletedCount}
       />
     </>
   );

@@ -1,4 +1,4 @@
-// @/services/schoolService.ts - COMPREHENSIVE UPDATE
+// @/services/schoolService.ts - COMPREHENSIVE UPDATE WITH HARD DELETE METHODS
 import {
   collection,
   query,
@@ -450,6 +450,55 @@ const classService = {
       });
     } catch (error) {
       console.error('Error archiving class:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * HARD DELETE a class (permanent)
+   * Note: This will fail if class has learners. Learners must be deleted/transferred first.
+   */
+  deleteClass: async (classId: string): Promise<void> => {
+    try {
+      // First check if class has any learners
+      const learners = await learnerService.getLearnersByClass(classId);
+      
+      if (learners.length > 0) {
+        throw new Error(`Cannot delete class with ${learners.length} learners. Please delete or transfer all learners first.`);
+      }
+      
+      // Check if class has any teacher assignments
+      const assignments = await classService.getTeacherAssignmentsByClass(classId);
+      
+      if (assignments.length > 0) {
+        // Remove all teacher assignments first
+        const batch = writeBatch(db);
+        
+        // Delete all teacher assignments for this class
+        for (const assignment of assignments) {
+          const assignmentRef = doc(db, 'teacher_assignments', assignment.id);
+          batch.delete(assignmentRef);
+        }
+        
+        // Also update teacher documents
+        for (const assignment of assignments) {
+          const teacherRef = doc(db, 'users', assignment.teacherId);
+          batch.update(teacherRef, {
+            assignedClasses: arrayRemove(classId),
+            updatedAt: serverTimestamp()
+          });
+        }
+        
+        await batch.commit();
+      }
+      
+      // Finally delete the class document
+      const classRef = doc(db, 'classes', classId);
+      await deleteDoc(classRef);
+      
+      console.log(`✅ Class ${classId} permanently deleted`);
+    } catch (error) {
+      console.error('Error deleting class:', error);
       throw error;
     }
   },
@@ -1130,7 +1179,7 @@ const learnerService = {
   },
 
   /**
-   * Remove a learner (archive)
+   * Remove a learner (archive/soft delete)
    */
   removeLearner: async (learnerId: string, classId: string): Promise<void> => {
     const batch = writeBatch(db);
@@ -1152,9 +1201,35 @@ const learnerService = {
       });
       
       await batch.commit();
-      console.log(`✅ Removed learner ${learnerId} from class ${classId}`);
+      console.log(`✅ Removed (archived) learner ${learnerId} from class ${classId}`);
     } catch (error) {
       console.error('Error removing learner:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * HARD DELETE a learner (permanent)
+   */
+  hardDeleteLearner: async (learnerId: string, classId: string): Promise<void> => {
+    const batch = writeBatch(db);
+    
+    try {
+      // First update class count
+      const classRef = doc(db, 'classes', classId);
+      batch.update(classRef, {
+        students: firestoreIncrement(-1),
+        updatedAt: serverTimestamp()
+      });
+      
+      // Then permanently delete the learner document
+      const learnerRef = doc(db, 'learners', learnerId);
+      batch.delete(learnerRef);
+      
+      await batch.commit();
+      console.log(`✅ Learner ${learnerId} permanently deleted from class ${classId}`);
+    } catch (error) {
+      console.error('Error hard deleting learner:', error);
       throw error;
     }
   },
@@ -1209,7 +1284,7 @@ const learnerService = {
   },
 
   /**
-   * Update a learner's information (NEW METHOD)
+   * Update a learner's information
    */
   updateLearner: async (learnerId: string, updates: Partial<Learner>): Promise<void> => {
     try {
@@ -1660,26 +1735,25 @@ const teacherService = {
       throw error;
     }
   },
-  // Add this to the teacherService object in schoolService.ts
 
-/**
- * Update teacher status (active, inactive, on_leave, transferred)
- */
-updateTeacherStatus: async (teacherId: string, status: 'active' | 'inactive' | 'on_leave' | 'transferred'): Promise<void> => {
-  try {
-    const teacherRef = doc(db, 'users', teacherId);
-    
-    await updateDoc(teacherRef, {
-      status,
-      updatedAt: serverTimestamp()
-    });
-    
-    console.log(`✅ Updated teacher ${teacherId} status to ${status}`);
-  } catch (error) {
-    console.error('Error updating teacher status:', error);
-    throw error;
-  }
-},
+  /**
+   * Update teacher status (active, inactive, on_leave, transferred)
+   */
+  updateTeacherStatus: async (teacherId: string, status: 'active' | 'inactive' | 'on_leave' | 'transferred'): Promise<void> => {
+    try {
+      const teacherRef = doc(db, 'users', teacherId);
+      
+      await updateDoc(teacherRef, {
+        status,
+        updatedAt: serverTimestamp()
+      });
+      
+      console.log(`✅ Updated teacher ${teacherId} status to ${status}`);
+    } catch (error) {
+      console.error('Error updating teacher status:', error);
+      throw error;
+    }
+  },
 
   /**
    * Remove a teacher from a class
@@ -1994,7 +2068,6 @@ const resultsAnalysisService = {
 };
 
 // ==================== EXPORT ALL SERVICES ====================
-// Note: generateSequentialStudentId and generateClassPrefix are already exported with 'export const' above
 export {
   classService,
   learnerService,

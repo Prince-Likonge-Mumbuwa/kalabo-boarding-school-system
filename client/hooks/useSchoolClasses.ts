@@ -1,4 +1,4 @@
-// @/hooks/useSchoolClasses.ts - UPDATED FOR ENHANCED LEARNER SYSTEM
+// @/hooks/useSchoolClasses.ts - UPDATED FOR ENHANCED LEARNER SYSTEM WITH HARD DELETE
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   classService, 
@@ -289,6 +289,41 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     },
   });
 
+  // NEW MUTATION: Hard delete class
+  const deleteClassMutation = useMutation({
+    mutationFn: async (classId: string) => {
+      return classService.deleteClass(classId);
+    },
+    onMutate: async (classId) => {
+      await queryClient.cancelQueries({ queryKey: ['classes'] });
+      
+      const previousClasses = queryClient.getQueryData(['classes', filters]);
+
+      // Optimistically remove the class from the cache
+      queryClient.setQueryData(['classes', filters], (old: EnhancedClass[] = []) => {
+        return old.filter(cls => cls.id !== classId);
+      });
+
+      return { previousClasses };
+    },
+    onError: (error, classId, context) => {
+      if (context?.previousClasses) {
+        queryClient.setQueryData(['classes', filters], context.previousClasses);
+      }
+      console.error('Failed to delete class:', error);
+    },
+    onSuccess: (_, classId) => {
+      console.log(`✅ Class ${classId} permanently deleted`);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ 
+        queryKey: ['classes'],
+        refetchType: 'active'
+      });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
+    },
+  });
+
   // Mutation: Refresh teacher assignments for a class
   const refreshAssignmentsMutation = useMutation({
     mutationFn: async (classId: string) => {
@@ -400,6 +435,7 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     isCreatingClass: createClassMutation.isPending,
     isImportingClasses: bulkImportClassesMutation.isPending,
     isUpdatingClass: updateClassMutation.isPending,
+    isDeletingClass: deleteClassMutation.isPending,
     isRefreshingAssignments: refreshAssignmentsMutation.isPending,
     isRefreshingLearnerStats: refreshLearnerStatsMutation.isPending,
     
@@ -407,6 +443,7 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     createClass: createClassMutation.mutateAsync,
     bulkImportClasses: bulkImportClassesMutation.mutateAsync,
     updateClass: updateClassMutation.mutateAsync,
+    deleteClass: deleteClassMutation.mutateAsync,
     refreshAssignments: refreshAssignmentsMutation.mutateAsync,
     refreshLearnerStats: refreshLearnerStatsMutation.mutateAsync,
     

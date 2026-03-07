@@ -214,7 +214,7 @@ export const useSchoolLearners = (classId?: string) => {
     },
   });
 
-  // Mutation: Remove learner
+  // Mutation: Remove learner (soft delete / archive)
   const removeLearnerMutation = useMutation({
     mutationFn: ({ learnerId, classId }: { learnerId: string; classId: string }) =>
       learnerService.removeLearner(learnerId, classId),
@@ -223,6 +223,49 @@ export const useSchoolLearners = (classId?: string) => {
       queryClient.invalidateQueries({ queryKey: ['allLearners'] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
+      console.log(`✅ Learner archived successfully`);
+    },
+  });
+
+  // NEW MUTATION: Hard delete learner (permanent)
+  const hardDeleteLearnerMutation = useMutation({
+    mutationFn: ({ learnerId, classId }: { learnerId: string; classId: string }) =>
+      learnerService.hardDeleteLearner(learnerId, classId),
+    onMutate: async ({ learnerId, classId }) => {
+      await queryClient.cancelQueries({ queryKey: ['learners', classId] });
+      await queryClient.cancelQueries({ queryKey: ['allLearners'] });
+
+      // Snapshot the previous values
+      const previousClassLearners = queryClient.getQueryData(['learners', classId]);
+      const previousAllLearners = queryClient.getQueryData(['allLearners']);
+
+      // Optimistically remove the learner from the cache
+      queryClient.setQueryData(['learners', classId], (old: Learner[] = []) => {
+        return old.filter(l => l.id !== learnerId);
+      });
+
+      queryClient.setQueryData(['allLearners'], (old: Learner[] = []) => {
+        return old.filter(l => l.id !== learnerId);
+      });
+
+      return { previousClassLearners, previousAllLearners };
+    },
+    onError: (error, variables, context) => {
+      // Rollback on error
+      if (context?.previousClassLearners) {
+        queryClient.setQueryData(['learners', variables.classId], context.previousClassLearners);
+      }
+      if (context?.previousAllLearners) {
+        queryClient.setQueryData(['allLearners'], context.previousAllLearners);
+      }
+      console.error('❌ Error hard deleting learner:', error);
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['learners', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['allLearners'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
+      console.log(`✅ Learner permanently deleted`);
     },
   });
 
@@ -284,6 +327,7 @@ export const useSchoolLearners = (classId?: string) => {
     isImportingLearners: bulkImportLearnersMutation.isPending,
     isTransferringLearner: transferLearnerMutation.isPending,
     isRemovingLearner: removeLearnerMutation.isPending,
+    isHardDeletingLearner: hardDeleteLearnerMutation.isPending,
     isSearching: searchLearnersQuery.isPending,
     isFiltering: filterLearnersQuery.isPending,
     isUpdatingGender: updateLearnerGenderMutation.isPending,
@@ -295,7 +339,8 @@ export const useSchoolLearners = (classId?: string) => {
     addLearner: addLearnerMutation.mutateAsync, // Keep for backward compatibility
     bulkImportLearners: bulkImportLearnersMutation.mutateAsync,
     transferLearner: transferLearnerMutation.mutateAsync,
-    removeLearner: removeLearnerMutation.mutateAsync,
+    removeLearner: removeLearnerMutation.mutateAsync, // Soft delete (archive)
+    hardDeleteLearner: hardDeleteLearnerMutation.mutateAsync, // Permanent delete
     searchLearners: searchLearnersQuery.mutateAsync,
     filterLearners: filterLearnersQuery.mutateAsync,
     updateLearnerGender: updateLearnerGenderMutation.mutateAsync,

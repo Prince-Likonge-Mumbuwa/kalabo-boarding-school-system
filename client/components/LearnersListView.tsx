@@ -16,7 +16,14 @@ import {
   AlertCircle,
   Hash,
   ChevronRight,
-  Download
+  Download,
+  Edit,
+  Archive,
+  CheckSquare,
+  Square,
+  Check,
+  ArrowRight,
+  AlertTriangle
 } from 'lucide-react';
 import { Learner } from '@/types/school';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -29,7 +36,11 @@ interface LearnersListViewProps {
   isLoading: boolean;
   onAddLearner: () => void;
   onEditLearner?: (learner: Learner) => void;
-  onRemoveLearner: (learnerId: string) => Promise<void>;
+  onRemoveLearner: (learnerId: string) => Promise<void>; // Archive
+  onHardDeleteLearner?: (learnerId: string) => Promise<void>; // Permanent delete
+  onBulkDelete?: (learnerIds: string[]) => Promise<void>; // Bulk permanent delete
+  onBulkArchive?: (learnerIds: string[]) => Promise<void>; // Bulk archive
+  onBulkTransfer?: (learnerIds: string[]) => void;
   onDownloadPDF?: () => void;
   onClose: () => void;
 }
@@ -70,6 +81,69 @@ const AgeBadge = ({ age }: { age: number }) => {
   );
 };
 
+// ==================== CONFIRMATION MODAL ====================
+const ConfirmationModal = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  title,
+  message,
+  type = 'archive'
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  message: string;
+  type?: 'archive' | 'permanent';
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-black/30" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className={`p-2 rounded-full ${
+            type === 'permanent' ? 'bg-red-100' : 'bg-yellow-100'
+          }`}>
+            {type === 'permanent' ? (
+              <AlertTriangle className="text-red-600" size={24} />
+            ) : (
+              <Archive className="text-yellow-600" size={24} />
+            )}
+          </div>
+          <h3 className="text-lg font-semibold">{title}</h3>
+        </div>
+        
+        <p className="text-gray-600 mb-6">{message}</p>
+        
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              onConfirm();
+              onClose();
+            }}
+            className={`flex-1 py-2.5 text-white rounded-lg transition-colors ${
+              type === 'permanent' 
+                ? 'bg-red-600 hover:bg-red-700' 
+                : 'bg-yellow-600 hover:bg-yellow-700'
+            }`}
+          >
+            {type === 'permanent' ? 'Delete Permanently' : 'Archive'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const LearnersListView = ({
   classId,
   className,
@@ -78,6 +152,10 @@ export const LearnersListView = ({
   onAddLearner,
   onEditLearner,
   onRemoveLearner,
+  onHardDeleteLearner,
+  onBulkDelete,
+  onBulkArchive,
+  onBulkTransfer,
   onDownloadPDF,
   onClose
 }: LearnersListViewProps) => {
@@ -85,6 +163,19 @@ export const LearnersListView = ({
   const [genderFilter, setGenderFilter] = useState<'all' | 'male' | 'female'>('all');
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [expandedLearnerId, setExpandedLearnerId] = useState<string | null>(null);
+  
+  // Selection state
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedLearners, setSelectedLearners] = useState<string[]>([]);
+  const [selectAll, setSelectAll] = useState(false);
+  
+  // Confirmation state
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{
+    type: 'archive' | 'permanent';
+    action: () => void;
+  } | null>(null);
+  
   const debouncedSearch = useDebounce(searchTerm, 300);
   const isMobile = useMediaQuery('(max-width: 640px)');
   const isTablet = useMediaQuery('(min-width: 641px) and (max-width: 1024px)');
@@ -104,13 +195,101 @@ export const LearnersListView = ({
       const matchesSearch = !debouncedSearch ||
         (learner.fullName || learner.name || '').toLowerCase().includes(debouncedSearch.toLowerCase()) ||
         learner.studentId.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        (learner.guardianPhone || learner.parentPhone || '').includes(debouncedSearch);
+        (learner.guardianPhone || learner.parentPhone || '').includes(debouncedSearch) ||
+        (learner.guardian || '').toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+        (learner.sponsor || '').toLowerCase().includes(debouncedSearch.toLowerCase());
       
       const matchesGender = genderFilter === 'all' || learner.gender === genderFilter;
       
       return matchesSearch && matchesGender;
     });
   }, [learners, debouncedSearch, genderFilter]);
+
+  // Selection handlers
+  const toggleSelectionMode = () => {
+    setSelectionMode(!selectionMode);
+    setSelectedLearners([]);
+    setSelectAll(false);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectAll) {
+      setSelectedLearners([]);
+    } else {
+      setSelectedLearners(filteredLearners.map(l => l.id));
+    }
+    setSelectAll(!selectAll);
+  };
+
+  const toggleSelectLearner = (learnerId: string) => {
+    setSelectedLearners(prev => {
+      if (prev.includes(learnerId)) {
+        const newSelection = prev.filter(id => id !== learnerId);
+        setSelectAll(newSelection.length === filteredLearners.length);
+        return newSelection;
+      } else {
+        const newSelection = [...prev, learnerId];
+        setSelectAll(newSelection.length === filteredLearners.length);
+        return newSelection;
+      }
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedLearners([]);
+    setSelectAll(false);
+    setSelectionMode(false);
+  };
+
+  // Bulk action handlers
+  const handleBulkArchive = () => {
+    if (selectedLearners.length === 0 || !onBulkArchive) return;
+    
+    setConfirmAction({
+      type: 'archive',
+      action: () => onBulkArchive(selectedLearners)
+    });
+    setShowConfirmModal(true);
+  };
+
+  const handleBulkPermanentDelete = () => {
+    if (selectedLearners.length === 0 || !onBulkDelete) return;
+    
+    setConfirmAction({
+      type: 'permanent',
+      action: () => onBulkDelete(selectedLearners)
+    });
+    setShowConfirmModal(true);
+  };
+
+  const handleBulkTransfer = () => {
+    if (selectedLearners.length === 0 || !onBulkTransfer) return;
+    onBulkTransfer(selectedLearners);
+    clearSelection();
+  };
+
+  // Single learner action handlers
+  const handleRemoveClick = (learner: Learner) => {
+    const name = learner.fullName || learner.name || 'this learner';
+    
+    setConfirmAction({
+      type: 'archive',
+      action: () => onRemoveLearner(learner.id)
+    });
+    setShowConfirmModal(true);
+  };
+
+  const handleHardDeleteClick = (learner: Learner) => {
+    if (!onHardDeleteLearner) return;
+    
+    const name = learner.fullName || learner.name || 'this learner';
+    
+    setConfirmAction({
+      type: 'permanent',
+      action: () => onHardDeleteLearner(learner.id)
+    });
+    setShowConfirmModal(true);
+  };
 
   // Clear filters
   const clearFilters = () => {
@@ -173,11 +352,31 @@ export const LearnersListView = ({
                       </span>
                     )}
                   </div>
+
+                  {/* Selection indicator */}
+                  {selectionMode && selectedLearners.length > 0 && (
+                    <span className="text-xs text-blue-600 font-medium ml-2">
+                      {selectedLearners.length} selected
+                    </span>
+                  )}
                 </div>
               </div>
               
               {/* Action Buttons */}
               <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+                {/* Selection Mode Toggle */}
+                <button
+                  onClick={toggleSelectionMode}
+                  className={`inline-flex items-center justify-center p-2 rounded-lg transition-all ${
+                    selectionMode 
+                      ? 'bg-blue-100 text-blue-700' 
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                  title={selectionMode ? 'Exit selection mode' : 'Select multiple'}
+                >
+                  {selectionMode ? <CheckSquare size={18} /> : <Square size={18} />}
+                </button>
+
                 {/* Download PDF Button */}
                 {onDownloadPDF && (
                   <button
@@ -209,6 +408,55 @@ export const LearnersListView = ({
               </div>
             </div>
 
+            {/* Selection Mode Bar */}
+            {selectionMode && selectedLearners.length > 0 && (
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-2">
+                    <Check className="text-blue-600" size={18} />
+                    <span className="text-sm font-medium text-blue-700">
+                      {selectedLearners.length} learner{selectedLearners.length !== 1 ? 's' : ''} selected
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {onBulkTransfer && (
+                      <button
+                        onClick={handleBulkTransfer}
+                        className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 text-sm font-medium flex items-center gap-1.5 transition-colors"
+                      >
+                        <ArrowRight size={14} />
+                        Transfer
+                      </button>
+                    )}
+                    {onBulkArchive && (
+                      <button
+                        onClick={handleBulkArchive}
+                        className="px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 text-sm font-medium flex items-center gap-1.5 transition-colors"
+                      >
+                        <Archive size={14} />
+                        Archive
+                      </button>
+                    )}
+                    {onBulkDelete && (
+                      <button
+                        onClick={handleBulkPermanentDelete}
+                        className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 text-sm font-medium flex items-center gap-1.5 transition-colors"
+                      >
+                        <Trash2 size={14} />
+                        Delete
+                      </button>
+                    )}
+                    <button
+                      onClick={clearSelection}
+                      className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Search and Filter Bar */}
             <div className="mt-4 space-y-3">
               {/* Search */}
@@ -216,7 +464,7 @@ export const LearnersListView = ({
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
                 <input
                   type="text"
-                  placeholder={isMobile ? "Search name or phone..." : "Search by name, ID, or parent phone..."}
+                  placeholder={isMobile ? "Search name, ID, or phone..." : "Search by name, ID, guardian, phone, or sponsor..."}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
@@ -332,153 +580,248 @@ export const LearnersListView = ({
                 {/* Mobile View - Card Layout */}
                 {isMobile ? (
                   <div className="space-y-2">
-                    {filteredLearners.map((learner) => (
-                      <div
-                        key={learner.id}
-                        className="bg-white rounded-xl border border-gray-200 overflow-hidden"
-                      >
-                        {/* Main Card Content - Always Visible */}
-                        <div className="p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <div className="w-8 h-8 bg-gradient-to-br from-blue-50 to-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                                <User size={14} className="text-blue-600" />
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="font-medium text-gray-900 text-sm truncate">
-                                  {learner.fullName || learner.name || 'N/A'}
-                                </p>
-                                <p className="text-xs text-gray-500">
-                                  ID: {learner.studentId}
-                                </p>
-                              </div>
-                            </div>
-                            <button
-                              onClick={() => setExpandedLearnerId(expandedLearnerId === learner.id ? null : learner.id)}
-                              className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-                            >
-                              <ChevronRight 
-                                size={16} 
-                                className={`text-gray-500 transition-transform ${expandedLearnerId === learner.id ? 'rotate-90' : ''}`} 
-                              />
-                            </button>
-                          </div>
-
-                          {/* Quick Info Row */}
-                          <div className="flex items-center gap-2 ml-10">
-                            <GenderBadge gender={learner.gender} />
-                            <AgeBadge age={learner.age} />
-                          </div>
-                        </div>
-
-                        {/* Expanded Details */}
-                        {expandedLearnerId === learner.id && (
-                          <div className="px-3 pb-3 pt-1 ml-10 border-t border-gray-100">
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                <Phone size={14} className="text-gray-400" />
-                                <span className="text-sm text-gray-700">
-                                  {learner.guardianPhone || learner.parentPhone || 'N/A'}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Hash size={14} className="text-gray-400" />
-                                <span className="text-sm text-gray-700">
-                                  Student ID: {learner.studentId}
-                                </span>
-                              </div>
+                    {filteredLearners.map((learner) => {
+                      const isSelected = selectedLearners.includes(learner.id);
+                      
+                      return (
+                        <div
+                          key={learner.id}
+                          className={`bg-white rounded-xl border overflow-hidden ${
+                            isSelected ? 'border-blue-500 bg-blue-50/30' : 'border-gray-200'
+                          }`}
+                        >
+                          {/* Selection checkbox for mobile */}
+                          {selectionMode && (
+                            <div className="px-3 pt-3">
                               <button
-                                onClick={() => {
-                                  if (confirm(`Remove ${learner.fullName || learner.name} from this class?`)) {
-                                    onRemoveLearner(learner.id);
-                                  }
-                                }}
-                                className="w-full mt-2 py-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors text-sm font-medium"
+                                onClick={() => toggleSelectLearner(learner.id)}
+                                className={`w-5 h-5 rounded border flex items-center justify-center ${
+                                  isSelected 
+                                    ? 'bg-blue-600 border-blue-600 text-white' 
+                                    : 'bg-white border-gray-300'
+                                }`}
                               >
-                                Remove from class
+                                {isSelected && <Check size={14} />}
                               </button>
                             </div>
+                          )}
+
+                          {/* Main Card Content */}
+                          <div className="p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <div className="w-8 h-8 bg-gradient-to-br from-blue-50 to-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                  <User size={14} className="text-blue-600" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-medium text-gray-900 text-sm truncate">
+                                    {learner.fullName || learner.name || 'N/A'}
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    ID: {learner.studentId}
+                                  </p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => setExpandedLearnerId(expandedLearnerId === learner.id ? null : learner.id)}
+                                className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+                              >
+                                <ChevronRight 
+                                  size={16} 
+                                  className={`text-gray-500 transition-transform ${expandedLearnerId === learner.id ? 'rotate-90' : ''}`} 
+                                />
+                              </button>
+                            </div>
+
+                            {/* Quick Info Row */}
+                            <div className="flex items-center gap-2 ml-10">
+                              <GenderBadge gender={learner.gender} />
+                              <AgeBadge age={learner.age} />
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    ))}
+
+                          {/* Expanded Details */}
+                          {expandedLearnerId === learner.id && (
+                            <div className="px-3 pb-3 pt-1 ml-10 border-t border-gray-100">
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Phone size={14} className="text-gray-400" />
+                                  <span className="text-sm text-gray-700">
+                                    {learner.guardianPhone || learner.parentPhone || 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <User size={14} className="text-gray-400" />
+                                  <span className="text-sm text-gray-700">
+                                    Guardian: {learner.guardian || 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Hash size={14} className="text-gray-400" />
+                                  <span className="text-sm text-gray-700">
+                                    Sponsor: {learner.sponsor || 'N/A'}
+                                  </span>
+                                </div>
+                                
+                                {/* Action buttons */}
+                                <div className="flex gap-2 mt-3">
+                                  {onEditLearner && (
+                                    <button
+                                      onClick={() => onEditLearner(learner)}
+                                      className="flex-1 py-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-sm font-medium flex items-center justify-center gap-1"
+                                    >
+                                      <Edit size={14} />
+                                      Edit
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => handleRemoveClick(learner)}
+                                    className="flex-1 py-2 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 rounded-lg transition-colors text-sm font-medium flex items-center justify-center gap-1"
+                                  >
+                                    <Archive size={14} />
+                                    Archive
+                                  </button>
+                                  {onHardDeleteLearner && (
+                                    <button
+                                      onClick={() => handleHardDeleteClick(learner)}
+                                      className="flex-1 py-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors text-sm font-medium flex items-center justify-center gap-1"
+                                    >
+                                      <Trash2 size={14} />
+                                      Delete
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   /* Tablet/Desktop View - Grid Layout */
                   <div className="space-y-2">
                     {/* Header */}
                     <div className="grid grid-cols-12 gap-3 px-4 py-2 text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-200">
-                      <div className="col-span-4">Learner</div>
-                      <div className="col-span-2">Gender</div>
-                      <div className="col-span-2">Age</div>
-                      <div className="col-span-3">Parent Contact</div>
+                      {selectionMode && <div className="col-span-1">Select</div>}
+                      <div className={selectionMode ? "col-span-3" : "col-span-4"}>Learner</div>
+                      <div className="col-span-1">Gender</div>
+                      <div className="col-span-1">Age</div>
+                      <div className="col-span-2">Guardian</div>
+                      <div className="col-span-2">Contact</div>
+                      <div className="col-span-1">Sponsor</div>
                       <div className="col-span-1 text-right">Actions</div>
                     </div>
                     
                     {/* Rows */}
-                    {filteredLearners.map((learner) => (
-                      <div
-                        key={learner.id}
-                        className="grid grid-cols-12 gap-3 px-4 py-3 bg-white rounded-xl border border-gray-100 hover:border-gray-200 hover:bg-gray-50/50 transition-all duration-150 items-center"
-                      >
-                        {/* Learner Info */}
-                        <div className="col-span-4 flex items-center gap-3 min-w-0">
-                          <div className="w-8 h-8 bg-gradient-to-br from-blue-50 to-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                            <User size={14} className="text-blue-600" />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="font-medium text-gray-900 text-sm truncate">
-                              {learner.fullName || learner.name || 'N/A'}
-                            </p>
-                            <p className="text-xs text-gray-500 truncate">
-                              ID: {learner.studentId}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Gender */}
-                        <div className="col-span-2">
-                          <GenderBadge gender={learner.gender} />
-                        </div>
-
-                        {/* Age */}
-                        <div className="col-span-2">
-                          <AgeBadge age={learner.age} />
-                        </div>
-
-                        {/* Parent Contact */}
-                        <div className="col-span-3 flex items-center gap-2 min-w-0">
-                          <Phone size={14} className="text-gray-400 flex-shrink-0" />
-                          <span className="text-sm text-gray-700 truncate">
-                            {learner.guardianPhone || learner.parentPhone || 'N/A'}
-                          </span>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="col-span-1 flex items-center justify-end gap-1">
-                          {onEditLearner && (
-                            <button
-                              onClick={() => onEditLearner(learner)}
-                              className="p-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
-                              title="Edit learner"
-                            >
-                              <UserPlus size={16} />
-                            </button>
+                    {filteredLearners.map((learner) => {
+                      const isSelected = selectedLearners.includes(learner.id);
+                      
+                      return (
+                        <div
+                          key={learner.id}
+                          className={`grid grid-cols-12 gap-3 px-4 py-3 rounded-xl border transition-all duration-150 items-center ${
+                            isSelected 
+                              ? 'bg-blue-50 border-blue-200' 
+                              : 'bg-white border-gray-100 hover:border-gray-200 hover:bg-gray-50/50'
+                          }`}
+                        >
+                          {/* Selection Checkbox */}
+                          {selectionMode && (
+                            <div className="col-span-1">
+                              <button
+                                onClick={() => toggleSelectLearner(learner.id)}
+                                className={`w-5 h-5 rounded border flex items-center justify-center ${
+                                  isSelected 
+                                    ? 'bg-blue-600 border-blue-600 text-white' 
+                                    : 'bg-white border-gray-300 hover:border-blue-500'
+                                }`}
+                              >
+                                {isSelected && <Check size={14} />}
+                              </button>
+                            </div>
                           )}
-                          <button
-                            onClick={() => {
-                              if (confirm(`Remove ${learner.fullName || learner.name} from this class?`)) {
-                                onRemoveLearner(learner.id);
-                              }
-                            }}
-                            className="p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Remove from class"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+
+                          {/* Learner Info */}
+                          <div className={selectionMode ? "col-span-3" : "col-span-4"}>
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-8 h-8 bg-gradient-to-br from-blue-50 to-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <User size={14} className="text-blue-600" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="font-medium text-gray-900 text-sm truncate">
+                                  {learner.fullName || learner.name || 'N/A'}
+                                </p>
+                                <p className="text-xs text-gray-500 truncate">
+                                  ID: {learner.studentId}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Gender */}
+                          <div className="col-span-1">
+                            <GenderBadge gender={learner.gender} />
+                          </div>
+
+                          {/* Age */}
+                          <div className="col-span-1">
+                            <AgeBadge age={learner.age} />
+                          </div>
+
+                          {/* Guardian */}
+                          <div className="col-span-2 truncate" title={learner.guardian}>
+                            <span className="text-sm text-gray-700">
+                              {learner.guardian || 'N/A'}
+                            </span>
+                          </div>
+
+                          {/* Contact */}
+                          <div className="col-span-2 flex items-center gap-2 min-w-0">
+                            <Phone size={14} className="text-gray-400 flex-shrink-0" />
+                            <span className="text-sm text-gray-700 truncate">
+                              {learner.guardianPhone || learner.parentPhone || 'N/A'}
+                            </span>
+                          </div>
+
+                          {/* Sponsor */}
+                          <div className="col-span-1 truncate" title={learner.sponsor}>
+                            <span className="text-sm text-gray-600">
+                              {learner.sponsor || '-'}
+                            </span>
+                          </div>
+
+                          {/* Actions */}
+                          <div className="col-span-1 flex items-center justify-end gap-1">
+                            {onEditLearner && (
+                              <button
+                                onClick={() => onEditLearner(learner)}
+                                className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Edit learner"
+                              >
+                                <Edit size={16} />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleRemoveClick(learner)}
+                              className="p-1.5 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 rounded-lg transition-colors"
+                              title="Archive learner"
+                            >
+                              <Archive size={16} />
+                            </button>
+                            {onHardDeleteLearner && (
+                              <button
+                                onClick={() => handleHardDeleteClick(learner)}
+                                className="p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Permanently delete"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -516,6 +859,28 @@ export const LearnersListView = ({
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      {showConfirmModal && confirmAction && (
+        <ConfirmationModal
+          isOpen={showConfirmModal}
+          onClose={() => {
+            setShowConfirmModal(false);
+            setConfirmAction(null);
+          }}
+          onConfirm={() => {
+            confirmAction.action();
+            clearSelection();
+          }}
+          title={confirmAction.type === 'permanent' ? 'Permanently Delete?' : 'Archive Learner?'}
+          message={
+            confirmAction.type === 'permanent'
+              ? `Are you sure you want to permanently delete ${selectedLearners.length > 1 ? `${selectedLearners.length} learners` : 'this learner'}? This action CANNOT be undone.`
+              : `Are you sure you want to archive ${selectedLearners.length > 1 ? `${selectedLearners.length} learners` : 'this learner'}? They will be removed from this class but their data will be preserved.`
+          }
+          type={confirmAction.type}
+        />
+      )}
     </div>
   );
 };

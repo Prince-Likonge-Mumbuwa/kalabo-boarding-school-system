@@ -1,6 +1,5 @@
-// @/components/SuccessModal.tsx
 import React from 'react';
-import { CheckCircle, X, Copy, Download } from 'lucide-react';
+import { CheckCircle, X, Copy, Download, Trash2, Archive, AlertTriangle } from 'lucide-react';
 
 interface SuccessModalProps {
   isOpen: boolean;
@@ -10,9 +9,10 @@ interface SuccessModalProps {
   studentId?: string;
   studentName?: string;
   className?: string;
-  actionType: 'add' | 'import' | 'update' | 'edit';
+  actionType: 'add' | 'import' | 'update' | 'edit' | 'delete' | 'hardDelete' | 'bulk' | 'archive';
   importedCount?: number;
   studentIds?: string[];
+  deletedCount?: number;
 }
 
 export const SuccessModal = ({
@@ -25,7 +25,8 @@ export const SuccessModal = ({
   className,
   actionType,
   importedCount,
-  studentIds
+  studentIds,
+  deletedCount
 }: SuccessModalProps) => {
   if (!isOpen) return null;
 
@@ -51,6 +52,36 @@ export const SuccessModal = ({
     }
   };
 
+  // Determine icon based on action type
+  const getIcon = () => {
+    switch (actionType) {
+      case 'delete':
+      case 'hardDelete':
+        return <Trash2 className="h-8 w-8 text-red-600" />;
+      case 'archive':
+        return <Archive className="h-8 w-8 text-yellow-600" />;
+      case 'bulk':
+        return <CheckCircle className="h-8 w-8 text-blue-600" />;
+      default:
+        return <CheckCircle className="h-8 w-8 text-green-600" />;
+    }
+  };
+
+  // Determine background color based on action type
+  const getIconBgColor = () => {
+    switch (actionType) {
+      case 'delete':
+      case 'hardDelete':
+        return 'bg-red-100';
+      case 'archive':
+        return 'bg-yellow-100';
+      case 'bulk':
+        return 'bg-blue-100';
+      default:
+        return 'bg-green-100';
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
@@ -69,10 +100,10 @@ export const SuccessModal = ({
           <X size={20} />
         </button>
         
-        {/* Success Icon */}
+        {/* Success/Info Icon */}
         <div className="text-center mb-4">
-          <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-4">
-            <CheckCircle className="h-8 w-8 text-green-600" />
+          <div className={`mx-auto flex items-center justify-center h-16 w-16 rounded-full ${getIconBgColor()} mb-4`}>
+            {getIcon()}
           </div>
           
           <h3 className="text-xl font-bold text-gray-900 mb-1">
@@ -171,6 +202,48 @@ export const SuccessModal = ({
           </div>
         )}
 
+        {(actionType === 'delete' || actionType === 'hardDelete') && (
+          <div className="bg-red-50 rounded-xl p-4 mb-4">
+            <div className="text-center">
+              {deletedCount ? (
+                <p className="text-sm text-red-800">
+                  {deletedCount} item{deletedCount !== 1 ? 's' : ''} permanently deleted.
+                </p>
+              ) : (
+                <p className="text-sm text-red-800">
+                  Item has been permanently deleted.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {actionType === 'archive' && (
+          <div className="bg-yellow-50 rounded-xl p-4 mb-4">
+            <div className="text-center">
+              {deletedCount ? (
+                <p className="text-sm text-yellow-800">
+                  {deletedCount} item{deletedCount !== 1 ? 's' : ''} archived successfully.
+                </p>
+              ) : (
+                <p className="text-sm text-yellow-800">
+                  Item has been archived successfully.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {actionType === 'bulk' && (
+          <div className="bg-blue-50 rounded-xl p-4 mb-4">
+            <div className="text-center">
+              <p className="text-sm text-blue-800">
+                {deletedCount ? `${deletedCount} operation${deletedCount !== 1 ? 's' : ''} completed successfully.` : message}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="grid grid-cols-2 gap-3">
           <button
@@ -184,7 +257,13 @@ export const SuccessModal = ({
               onClose();
               // You can add navigation logic here if needed
             }}
-            className="px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className={`px-4 py-2.5 text-white text-sm font-medium rounded-xl transition-colors focus:outline-none focus:ring-2 ${
+              actionType === 'delete' || actionType === 'hardDelete'
+                ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
+                : actionType === 'archive'
+                ? 'bg-yellow-600 hover:bg-yellow-700 focus:ring-yellow-500'
+                : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
+            }`}
           >
             Continue
           </button>

@@ -1,4 +1,4 @@
-// @/services/pdf/markSchedulePDF.ts - UPDATED WITH NOT CONDUCTED HANDLING
+// @/services/pdf/markSchedulePDF.ts - FIXED VERSION
 
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
@@ -13,13 +13,14 @@ interface MarkScheduleOptions {
     name: string;
     studentId: string;
     marks: string;
+    id?: string; // Add optional id field
   }>;
   teacherName: string;
   schoolName: string;
   allExamData?: {
-    week4?: Array<{ studentId: string; marks: number; studentName: string }>;
-    week8?: Array<{ studentId: string; marks: number; studentName: string }>;
-    endOfTerm?: Array<{ studentId: string; marks: number; studentName: string }>;
+    week4?: Array<{ studentId: string; marks: number; studentName: string; student_id?: string }>;
+    week8?: Array<{ studentId: string; marks: number; studentName: string; student_id?: string }>;
+    endOfTerm?: Array<{ studentId: string; marks: number; studentName: string; student_id?: string }>;
   };
   isNotConducted?: boolean;
 }
@@ -280,6 +281,24 @@ export const generateMarkSchedulePDF = async ({
       return { grade: '9', color: rgb(1, 0.2, 0.2) };
     };
 
+    // FIXED: Create saved marks map for current exam type
+    const savedMarksMap = new Map();
+    if (allExamData && !isNotConducted) {
+      const currentExamData = allExamData[examType] || [];
+      console.log(`📊 PDF - Current exam data for ${examType}:`, currentExamData);
+      
+      currentExamData.forEach(item => {
+        // Store by studentId
+        if (item.studentId) {
+          savedMarksMap.set(item.studentId, item.marks);
+        }
+        // Also store by student_id if different
+        if (item.student_id) {
+          savedMarksMap.set(item.student_id, item.marks);
+        }
+      });
+    }
+
     // Table rows
     for (let i = 0; i < students.length; i++) {
       const student = students[i];
@@ -323,8 +342,32 @@ export const generateMarkSchedulePDF = async ({
         });
       }
 
-      // Get marks - handle different cases
-      const marksValue = student.marks || '';
+      // FIXED: Get marks - prioritize current input, fall back to saved marks
+      let marksValue = student.marks || '';
+      let isFromSaved = false;
+      
+      // If current input is empty, check for saved marks
+      if ((!marksValue || marksValue === '') && !isNotConducted) {
+        // Try to find saved mark using multiple ID fields
+        let savedMark = savedMarksMap.get(student.studentId);
+        
+        // If not found by studentId, try by document id if available
+        if (!savedMark && student.id) {
+          savedMark = savedMarksMap.get(student.id);
+        }
+        
+        if (savedMark !== undefined) {
+          isFromSaved = true;
+          if (savedMark === -1) {
+            marksValue = 'X';
+          } else if (savedMark === -2) {
+            marksValue = 'N/A';
+          } else if (savedMark >= 0) {
+            marksValue = savedMark.toString();
+          }
+        }
+      }
+      
       const marksStr = marksValue.toString().trim();
       const isAbsent = marksStr.toLowerCase() === 'x';
       const isNA = marksStr === 'N/A' || marksStr === 'na';
@@ -399,6 +442,17 @@ export const generateMarkSchedulePDF = async ({
           size: 9,
           font: helveticaFont,
         });
+        
+        // Optionally indicate if mark came from saved data
+        if (isFromSaved) {
+          currentPage.drawText('*', {
+            x: margin + 310,
+            y: yPosition,
+            size: 9,
+            font: helveticaBold,
+            color: rgb(0, 0.5, 0),
+          });
+        }
       } else {
         // No mark entered - show dash
         currentPage.drawText('-', {
@@ -503,9 +557,24 @@ export const generateMarkSchedulePDF = async ({
       }
     });
 
-    // If we have all exam data, add a second page with term summary
-    if (allExamData && (allExamData.week4 || allExamData.week8 || allExamData.endOfTerm) && !isNotConducted) {
-      console.log('📊 Adding term summary page with all exam data');
+    // Add a legend if we used saved marks
+    if (!isNotConducted && savedMarksMap.size > 0) {
+      currentPage.drawText('* Mark loaded from saved data', {
+        x: margin + 10,
+        y: yPosition - 45,
+        size: 7,
+        font: helveticaOblique,
+        color: rgb(0, 0.5, 0),
+      });
+    }
+
+    // FIXED: Term summary page with proper data mapping
+    if (allExamData && (allExamData.week4?.length || allExamData.week8?.length || allExamData.endOfTerm?.length) && !isNotConducted) {
+      console.log('📊 Adding term summary page with all exam data:', {
+        week4Count: allExamData.week4?.length,
+        week8Count: allExamData.week8?.length,
+        endOfTermCount: allExamData.endOfTerm?.length
+      });
       
       const summaryPage = pdfDoc.addPage([pageWidth, pageHeight]);
       addHeader(summaryPage, pdfDoc.getPageCount());
@@ -557,10 +626,24 @@ export const generateMarkSchedulePDF = async ({
 
       summaryY -= 18;
 
-      // Create maps of marks by student for quick lookup
-      const week4Map = new Map(allExamData.week4?.map(d => [d.studentId, d.marks]) || []);
-      const week8Map = new Map(allExamData.week8?.map(d => [d.studentId, d.marks]) || []);
-      const eotMap = new Map(allExamData.endOfTerm?.map(d => [d.studentId, d.marks]) || []);
+      // FIXED: Create comprehensive maps of marks by student
+      const week4Map = new Map();
+      allExamData.week4?.forEach(item => {
+        if (item.studentId) week4Map.set(item.studentId, item.marks);
+        if (item.student_id) week4Map.set(item.student_id, item.marks);
+      });
+      
+      const week8Map = new Map();
+      allExamData.week8?.forEach(item => {
+        if (item.studentId) week8Map.set(item.studentId, item.marks);
+        if (item.student_id) week8Map.set(item.student_id, item.marks);
+      });
+      
+      const eotMap = new Map();
+      allExamData.endOfTerm?.forEach(item => {
+        if (item.studentId) eotMap.set(item.studentId, item.marks);
+        if (item.student_id) eotMap.set(item.student_id, item.marks);
+      });
 
       // Display each student's term performance
       for (let i = 0; i < students.length; i++) {
@@ -578,6 +661,7 @@ export const generateMarkSchedulePDF = async ({
           break;
         }
 
+        // FIXED: Try to find marks by various identifiers
         const week4Mark = week4Map.get(student.studentId);
         const week8Mark = week8Map.get(student.studentId);
         const eotMark = eotMap.get(student.studentId);
