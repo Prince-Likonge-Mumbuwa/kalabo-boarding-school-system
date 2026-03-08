@@ -1,13 +1,13 @@
-// @/pages/admin/AdminResultsAnalysis.tsx - RESPONSIVE VERSION
-// UPDATED WITH AVERAGES OF ALL TESTS
+// @/pages/admin/AdminResultsAnalysis.tsx - UPDATED WITH EXAM CONFIGURATION SUPPORT
 // Quality: Grades 1-2 only (Distinction)
 // Quantity: Grades 3-7 (Merit through Satisfactory)
 // Fail: Grades 8-9 (Satisfactory Low and Unsatisfactory)
-// Uses AVERAGES of all exams (week4, week8, endOfTerm) per student per subject
+// Uses AVERAGES of all CONFIGURED exams (week4, week8, endOfTerm) per student per subject
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
+import { useExamConfig } from '@/hooks/useExamConfig';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useAuth } from '@/hooks/useAuth';
@@ -30,7 +30,8 @@ import {
   School,
   BookOpen,
   Eye,
-  FileText
+  FileText,
+  Calendar
 } from 'lucide-react';
 import { StudentResult } from '@/services/resultsService';
 import { Learner } from '@/types/school';
@@ -127,6 +128,7 @@ interface AdminResultsData {
   year: number;
   subjects: SubjectData[];
   generatedDate: string;
+  examConfigSummary?: string; // NEW: Show which exams were included
 }
 
 // ==================== NOTIFICATION COMPONENT ====================
@@ -423,27 +425,42 @@ const SubjectPerformanceMobileCard = ({ subjects }: { subjects: SubjectPerforman
   );
 };
 
-// ==================== HELPER FUNCTION FOR AVERAGE CALCULATION ====================
+// ==================== HELPER FUNCTIONS ====================
 
 /**
- * Calculate average grade for a student in a subject across all exams
- * Uses all available exam results (week4, week8, endOfTerm)
+ * Get list of configured exam types for a term/year
+ */
+const getConfiguredExamTypes = (examConfig: any): string[] => {
+  if (!examConfig?.examTypes) return [];
+  
+  const types = [];
+  if (examConfig.examTypes.week4) types.push('week4');
+  if (examConfig.examTypes.week8) types.push('week8');
+  if (examConfig.examTypes.endOfTerm) types.push('endOfTerm');
+  
+  return types;
+};
+
+/**
+ * Calculate average grade for a student in a subject across configured exams
  */
 const calculateStudentSubjectAverageGrade = (
   studentId: string,
   subjectId: string,
-  allResults: StudentResult[]
+  allResults: StudentResult[],
+  configuredExamTypes: string[]
 ): number | null => {
-  // Get all results for this student and subject
+  // Get all results for this student and subject that match configured exam types
   const subjectResults = allResults.filter(r => 
     r.studentId === studentId && 
     r.subjectId === subjectId &&
-    r.percentage >= 0 // Only include valid scores
+    r.percentage >= 0 && // Only include valid scores
+    configuredExamTypes.includes(r.examType) // Only include configured exams
   );
   
   if (subjectResults.length === 0) return null;
   
-  // Calculate average percentage across all exams
+  // Calculate average percentage across all configured exams
   const avgPercentage = subjectResults.reduce((sum, r) => sum + r.percentage, 0) / subjectResults.length;
   
   // Convert to grade using the grade scale
@@ -483,10 +500,23 @@ export default function AdminResultsAnalysis() {
   // Get classes for filter
   const { classes, isLoading: classesLoading } = useSchoolClasses({ isActive: true });
 
+  // Get exam configuration for the selected term and year
+  const { 
+    configs: examConfigs, 
+    isLoading: loadingExamConfig 
+  } = useExamConfig({ year: selectedYear, term: selectedTerm });
+  
+  const currentExamConfig = examConfigs?.[0]; // Get the most recent config for this term/year
+  
+  // Get list of configured exam types for this term
+  const configuredExamTypes = useMemo(() => {
+    return getConfiguredExamTypes(currentExamConfig);
+  }, [currentExamConfig]);
+
   // Get all learners for gender data
   const { learners, isLoading: learnersLoading } = useSchoolLearners();
 
-  // Use the analytics hook with real data - get ALL results, not just endOfTerm
+  // Use the analytics hook with real data
   const { 
     analytics, 
     results, 
@@ -585,7 +615,7 @@ export default function AdminResultsAnalysis() {
     return gender;
   }, [learners, studentDataMap]);
 
-  // ==================== PROCESS RESULTS USING AVERAGES ====================
+  // ==================== PROCESS RESULTS USING AVERAGES OF CONFIGURED EXAMS ====================
   
   // Group results by subject for quick access
   const subjectGroups = useMemo(() => {
@@ -610,21 +640,31 @@ export default function AdminResultsAnalysis() {
     return map;
   }, [classes, selectedClass]);
 
-  // Calculate student-subject averages
+  // Calculate student-subject averages using only configured exams
   const studentSubjectAverages = useMemo(() => {
+    if (configuredExamTypes.length === 0) return new Map();
+    
     const averages = new Map<string, Map<string, { avgGrade: number; gender?: 'M' | 'F' }>>();
     
     // Get unique student-subject combinations
     const uniqueCombinations = new Set<string>();
     results.forEach((r: StudentResult) => {
-      uniqueCombinations.add(`${r.studentId}|${r.subjectId}`);
+      // Only include results from configured exam types
+      if (configuredExamTypes.includes(r.examType)) {
+        uniqueCombinations.add(`${r.studentId}|${r.subjectId}`);
+      }
     });
     
     // Calculate average grade for each student-subject combination
     uniqueCombinations.forEach(combo => {
       const [studentId, subjectId] = combo.split('|');
       
-      const avgGrade = calculateStudentSubjectAverageGrade(studentId, subjectId, results);
+      const avgGrade = calculateStudentSubjectAverageGrade(
+        studentId, 
+        subjectId, 
+        results,
+        configuredExamTypes
+      );
       
       if (avgGrade !== null) {
         // Get gender
@@ -639,11 +679,11 @@ export default function AdminResultsAnalysis() {
     });
     
     return averages;
-  }, [results, getStudentGender]);
+  }, [results, getStudentGender, configuredExamTypes]);
 
   // Calculate grade distribution based on averages
   const gradeDistribution = useMemo((): GradeDistribution[] => {
-    if (studentSubjectAverages.size === 0) return [];
+    if (studentSubjectAverages.size === 0 || configuredExamTypes.length === 0) return [];
 
     const gradeMap = new Map<number, { boys: number; girls: number; unknown: number }>();
     
@@ -703,11 +743,11 @@ export default function AdminResultsAnalysis() {
         passStatus: getPassStatus(grade)
       }))
       .filter(g => g.total > 0);
-  }, [studentSubjectAverages]);
+  }, [studentSubjectAverages, configuredExamTypes]);
 
   // ==================== UPDATED SCHOOL-WIDE METRICS USING AVERAGES ====================
   const schoolMetrics = useMemo(() => {
-    if (studentSubjectAverages.size === 0) {
+    if (studentSubjectAverages.size === 0 || configuredExamTypes.length === 0) {
       return {
         totalStudents: 0,
         totalAssessments: 0,
@@ -717,7 +757,8 @@ export default function AdminResultsAnalysis() {
         failRate: 0,         // Grades 8-9
         distinctionRate: 0,
         classesCount: classes?.length || 0,
-        subjectsCount: 0
+        subjectsCount: 0,
+        configuredExamsCount: 0
       };
     }
 
@@ -743,8 +784,11 @@ export default function AdminResultsAnalysis() {
         .flatMap(subjectMap => Array.from(subjectMap.keys()))
     ).size;
 
-    // Calculate average score from all results
-    const validResults = results.filter(r => r.percentage >= 0);
+    // Calculate average score from all valid results that are configured
+    const validResults = results.filter(r => 
+      r.percentage >= 0 && 
+      configuredExamTypes.includes(r.examType)
+    );
     const avgScore = validResults.length > 0
       ? Math.round(validResults.reduce((sum, r) => sum + r.percentage, 0) / validResults.length)
       : 0;
@@ -758,16 +802,16 @@ export default function AdminResultsAnalysis() {
       failRate: totalAssessments > 0 ? Math.round((failCount / totalAssessments) * 100) : 0,
       distinctionRate: totalAssessments > 0 ? Math.round((distinctionCount / totalAssessments) * 100) : 0,
       classesCount: classes?.length || 0,
-      subjectsCount: uniqueSubjects
+      subjectsCount: uniqueSubjects,
+      configuredExamsCount: configuredExamTypes.length
     };
-  }, [studentSubjectAverages, results, classes]);
+  }, [studentSubjectAverages, results, classes, configuredExamTypes]);
 
   // ==================== UPDATED CLASS-LEVEL PERFORMANCE USING AVERAGES ====================
   const classPerformance = useMemo((): ClassPerformance[] => {
-    if (studentSubjectAverages.size === 0 || !classes) return [];
+    if (studentSubjectAverages.size === 0 || !classes || configuredExamTypes.length === 0) return [];
 
-    // Group students by class - we need to know which class each student belongs to
-    // This requires mapping student IDs to class IDs
+    // Group students by class
     const studentClassMap = new Map<string, string>();
     
     // Get class data from learners
@@ -885,11 +929,11 @@ export default function AdminResultsAnalysis() {
         }
       };
     });
-  }, [studentSubjectAverages, classes, learners]);
+  }, [studentSubjectAverages, classes, learners, configuredExamTypes]);
 
   // ==================== UPDATED SUBJECT PERFORMANCE USING AVERAGES ====================
   const subjectPerformance = useMemo((): SubjectPerformance[] => {
-    if (studentSubjectAverages.size === 0) return [];
+    if (studentSubjectAverages.size === 0 || configuredExamTypes.length === 0) return [];
 
     const subjectMap = new Map<string, {
       teacher: string;
@@ -941,16 +985,16 @@ export default function AdminResultsAnalysis() {
         failRate: Math.round((fail / total) * 100)
       };
     }).sort((a, b) => a.failRate - b.failRate);
-  }, [studentSubjectAverages, results, learners]);
+  }, [studentSubjectAverages, results, learners, configuredExamTypes]);
 
-  // ==================== UPDATED PDF DOWNLOAD FUNCTION USING AVERAGES ====================
+  // ==================== UPDATED PDF DOWNLOAD FUNCTION ====================
   const handleDownloadPDF = async () => {
     try {
-      if (studentSubjectAverages.size === 0) {
+      if (studentSubjectAverages.size === 0 || configuredExamTypes.length === 0) {
         showNotification(
           'warning',
           'No data to export',
-          'There are no valid results for the selected filters.'
+          'There are no valid results for the selected filters or no exams configured.'
         );
         return;
       }
@@ -1033,6 +1077,17 @@ export default function AdminResultsAnalysis() {
       // Sort subjects alphabetically
       subjects.sort((a, b) => a.name.localeCompare(b.name));
 
+      // Create exam config summary text
+      const examTypeLabels = {
+        week4: 'Week 4',
+        week8: 'Week 8',
+        endOfTerm: 'End of Term'
+      };
+      
+      const examConfigSummary = configuredExamTypes
+        .map(type => examTypeLabels[type as keyof typeof examTypeLabels])
+        .join(' + ');
+
       // Prepare PDF data
       const pdfData: AdminResultsData = {
         schoolName: 'KALABO BOARDING SECONDARY SCHOOL',
@@ -1049,7 +1104,8 @@ export default function AdminResultsAnalysis() {
           year: 'numeric',
           hour: '2-digit',
           minute: '2-digit'
-        })
+        }),
+        examConfigSummary: `Based on: ${examConfigSummary}`
       };
 
       // Generate PDF
@@ -1082,7 +1138,7 @@ export default function AdminResultsAnalysis() {
       showNotification(
         'success',
         'PDF Downloaded',
-        `Successfully generated PDF with ${subjects.length} subjects.`
+        `Successfully generated PDF with ${subjects.length} subjects based on ${configuredExamTypes.length} configured exams.`
       );
 
     } catch (error) {
@@ -1128,8 +1184,12 @@ export default function AdminResultsAnalysis() {
   // Years for filter
   const years = [2026, 2027, 2028, 2029, 2030];
 
+  // Check if exams are configured
+  const hasExamsConfigured = configuredExamTypes.length > 0;
+  const noExamsConfigured = hasExamsConfigured === false && (selectedClass !== 'all' || selectedTerm !== 'Term 1');
+
   // Loading states
-  if (isLoading || classesLoading || learnersLoading) {
+  if (isLoading || classesLoading || learnersLoading || loadingExamConfig) {
     return (
       <DashboardLayout activeTab="results">
         <div className="min-h-screen bg-gray-50 p-3 sm:p-6 lg:p-8">
@@ -1173,7 +1233,13 @@ export default function AdminResultsAnalysis() {
               </h1>
               <p className="text-xs sm:text-sm text-gray-600 mt-1 flex items-center gap-1 sm:gap-2 flex-wrap">
                 <School size={14} className="text-gray-400 flex-shrink-0" />
-                <span className="truncate">Average of All Tests • {selectedTerm} {selectedYear}</span>
+                <span className="truncate">Average of All Configured Tests • {selectedTerm} {selectedYear}</span>
+                {hasExamsConfigured && (
+                  <span className="inline-flex items-center gap-1 text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full text-[10px] sm:text-xs whitespace-nowrap">
+                    <Calendar size={10} />
+                    {configuredExamTypes.length} exam{configuredExamTypes.length !== 1 ? 's' : ''}
+                  </span>
+                )}
                 {isFetching && (
                   <span className="inline-flex items-center gap-1 text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full text-[10px] sm:text-xs whitespace-nowrap">
                     <Loader2 size={10} className="animate-spin" />
@@ -1187,7 +1253,7 @@ export default function AdminResultsAnalysis() {
             <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
               <button
                 onClick={handleDownloadPDF}
-                disabled={studentSubjectAverages.size === 0 || isFetching || isDownloading}
+                disabled={studentSubjectAverages.size === 0 || isFetching || isDownloading || !hasExamsConfigured}
                 className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm whitespace-nowrap"
               >
                 {isDownloading ? (
@@ -1359,20 +1425,40 @@ export default function AdminResultsAnalysis() {
                 </div>
               </div>
 
+              {/* Exam Config Summary */}
+              {hasExamsConfigured && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 px-3 py-2 rounded-lg">
+                    <Calendar size={14} className="text-blue-600" />
+                    <span>
+                      Exams included in analysis: {configuredExamTypes.map(t => 
+                        t === 'week4' ? 'Week 4' : t === 'week8' ? 'Week 8' : 'End of Term'
+                      ).join(' • ')}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Active Filter Indicator */}
-              {selectedClass !== 'all' && (
+              {(selectedClass !== 'all' || selectedTerm !== 'Term 1' || selectedYear !== 2026) && (
                 <div className="mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-gray-100">
                   <div className="flex items-center gap-2 text-xs sm:text-sm">
                     <span className="text-gray-600 whitespace-nowrap">Currently showing:</span>
                     <span className="inline-flex items-center gap-1 px-2 sm:px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-[10px] sm:text-xs font-medium truncate max-w-[200px]">
                       <Filter size={10} />
-                      {classes.find(c => c.id === selectedClass)?.name || selectedClass}
+                      {selectedClass !== 'all' 
+                        ? classes.find(c => c.id === selectedClass)?.name || selectedClass
+                        : 'All Classes'} • {selectedTerm} • {selectedYear}
                     </span>
                     <button
-                      onClick={() => handleFilterChange('class', 'all')}
+                      onClick={() => {
+                        setSelectedClass('all');
+                        setSelectedTerm('Term 1');
+                        setSelectedYear(2026);
+                      }}
                       className="text-[10px] sm:text-xs text-gray-500 hover:text-gray-700 hover:underline ml-1 whitespace-nowrap"
                     >
-                      Clear filter
+                      Clear all filters
                     </button>
                   </div>
                 </div>
@@ -1381,8 +1467,28 @@ export default function AdminResultsAnalysis() {
           </div>
         </div>
 
+        {/* No Exams Configured State */}
+        {noExamsConfigured && (
+          <div className="bg-white rounded-xl sm:rounded-2xl border border-yellow-200 p-8 sm:p-12 text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-yellow-100 rounded-full mb-3 sm:mb-4">
+              <Calendar className="text-yellow-600" size={24} />
+            </div>
+            <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mb-1 sm:mb-2">No Exams Configured</h3>
+            <p className="text-sm sm:text-base text-gray-600 max-w-md mx-auto">
+              No exams have been configured for {selectedTerm} {selectedYear}. 
+              Please configure exams in the Exam Management page to view results.
+            </p>
+            <button
+              onClick={() => window.location.href = '/dashboard/admin/exams'}
+              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+            >
+              Go to Exam Management
+            </button>
+          </div>
+        )}
+
         {/* Main Content */}
-        {studentSubjectAverages.size === 0 ? (
+        {hasExamsConfigured && studentSubjectAverages.size === 0 ? (
           <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 p-8 sm:p-12 text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gray-100 rounded-full mb-3 sm:mb-4">
               <FileText className="text-gray-400" size={24} />
@@ -1394,7 +1500,7 @@ export default function AdminResultsAnalysis() {
                 : 'No results have been entered yet.'}
             </p>
           </div>
-        ) : (
+        ) : hasExamsConfigured && (
           <div className="space-y-4 sm:space-y-6 lg:space-y-8">
             
             {/* Grade Distribution */}
@@ -1403,7 +1509,9 @@ export default function AdminResultsAnalysis() {
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <div>
                     <h3 className="text-sm sm:text-base font-semibold text-gray-900">Grade Distribution</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Based on averages of all tests</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Based on averages of {configuredExamTypes.length} configured test{configuredExamTypes.length !== 1 ? 's' : ''}
+                    </p>
                   </div>
                   <div className="flex items-center gap-3 sm:gap-4 text-xs">
                     <div className="flex items-center gap-1 sm:gap-2">
@@ -1490,7 +1598,9 @@ export default function AdminResultsAnalysis() {
               <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
                   <h3 className="text-sm sm:text-base font-semibold text-gray-900">Class Performance Summary</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Based on averages of all tests</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Based on averages of {configuredExamTypes.length} configured test{configuredExamTypes.length !== 1 ? 's' : ''}
+                  </p>
                 </div>
 
                 {/* Mobile Card View */}
@@ -1563,7 +1673,9 @@ export default function AdminResultsAnalysis() {
               <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
                   <h3 className="text-sm sm:text-base font-semibold text-gray-900">Subject Performance</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Based on averages of all tests</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Based on averages of {configuredExamTypes.length} configured test{configuredExamTypes.length !== 1 ? 's' : ''}
+                  </p>
                 </div>
 
                 {/* Mobile Card View */}
@@ -1629,9 +1741,9 @@ export default function AdminResultsAnalysis() {
         <div className="mt-4 sm:mt-6 lg:mt-8 pt-4 sm:pt-6 border-t border-gray-200">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
             <p className="text-[10px] sm:text-xs text-gray-500">
-              {studentSubjectAverages.size > 0 ? (
+              {studentSubjectAverages.size > 0 && hasExamsConfigured ? (
                 <>
-                  <span className="font-medium">Data source:</span> Averages of all tests • 
+                  <span className="font-medium">Data source:</span> Averages of {configuredExamTypes.length} configured test{configuredExamTypes.length !== 1 ? 's' : ''} • 
                   <span className="font-medium ml-1">Quality (Grades 1-2):</span> {schoolMetrics.qualityRate}% • 
                   <span className="font-medium ml-1">Quantity (Grades 3-7):</span> {schoolMetrics.quantityRate}% • 
                   <span className="font-medium ml-1">Fail (Grades 8-9):</span> {schoolMetrics.failRate}%

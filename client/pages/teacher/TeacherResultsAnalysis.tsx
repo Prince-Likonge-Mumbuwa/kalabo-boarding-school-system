@@ -1,12 +1,13 @@
-// @/pages/teacher/TeacherResultsAnalysis.tsx - UPDATED WITH AVERAGES OF ALL TESTS
+// @/pages/teacher/TeacherResultsAnalysis.tsx - UPDATED WITH EXAM CONFIGURATION SUPPORT
 // Quality: Grades 1-2 only (Distinction)
 // Quantity: Grades 3-7 (Merit through Satisfactory)
 // Fail: Grades 8-9 (Satisfactory Low and Unsatisfactory)
-// Uses AVERAGES of all exams (week4, week8, endOfTerm) per student per subject
+// Uses AVERAGES of all CONFIGURED exams (week4, week8, endOfTerm) per student per subject
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
+import { useExamConfig } from '@/hooks/useExamConfig';
 import { useAuth } from '@/hooks/useAuth';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
@@ -14,7 +15,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { 
   Filter, Loader2, RefreshCw, TrendingUp, TrendingDown, 
   Download, Target, Users, Award, AlertCircle, ChevronDown,
-  BarChart3, PieChart, Eye
+  BarChart3, PieChart, Eye, Calendar
 } from 'lucide-react';
 import { StudentResult } from '@/services/resultsService';
 import { Learner } from '@/types/school';
@@ -65,7 +66,7 @@ interface LocalClassPerformance {
   };
 }
 
-// Types for PDF data - MUST MATCH the imported type exactly
+// Types for PDF data
 interface SubjectMetrics {
   registered: number;
   sat: number;
@@ -79,7 +80,6 @@ interface SubjectMetrics {
   quantity: number;  // grades 3-7
 }
 
-// This must match the TeacherResultsData from pdfService
 interface TeacherPDFData {
   schoolName: string;
   address: string;
@@ -90,29 +90,45 @@ interface TeacherPDFData {
   boys: SubjectMetrics;
   girls: SubjectMetrics;
   generatedDate: string;
+  examConfigSummary?: string; // NEW: Show which exams were included
 }
 
 // ==================== HELPER FUNCTIONS ====================
 
 /**
- * Calculate average grade for a student in a subject across all exams
- * Uses all available exam results (week4, week8, endOfTerm)
+ * Get list of configured exam types for a term/year
+ */
+const getConfiguredExamTypes = (examConfig: any): string[] => {
+  if (!examConfig?.examTypes) return [];
+  
+  const types = [];
+  if (examConfig.examTypes.week4) types.push('week4');
+  if (examConfig.examTypes.week8) types.push('week8');
+  if (examConfig.examTypes.endOfTerm) types.push('endOfTerm');
+  
+  return types;
+};
+
+/**
+ * Calculate average grade for a student in a subject across all configured exams
  */
 const calculateStudentSubjectAverageGrade = (
   studentId: string,
   subjectId: string,
-  allResults: StudentResult[]
+  allResults: StudentResult[],
+  configuredExamTypes: string[] // Only include configured exams
 ): number | null => {
-  // Get all results for this student and subject
+  // Get all results for this student and subject that match configured exam types
   const subjectResults = allResults.filter(r => 
     r.studentId === studentId && 
     r.subjectId === subjectId &&
-    r.percentage >= 0 // Only include valid scores
+    r.percentage >= 0 && // Only include valid scores
+    configuredExamTypes.includes(r.examType) // Only include configured exams
   );
   
   if (subjectResults.length === 0) return null;
   
-  // Calculate average percentage across all exams
+  // Calculate average percentage across all configured exams
   const avgPercentage = subjectResults.reduce((sum, r) => sum + r.percentage, 0) / subjectResults.length;
   
   // Convert to grade using the grade calculation function
@@ -127,15 +143,16 @@ const calculateStudentSubjectAverageGrade = (
   return 9;
 };
 
-// ==================== CLEAN SQUARE STAT CARD FOR MOBILE ====================
+// ==================== CLEAN SQUARE STAT CARD ====================
 interface StatCardProps {
   label: string;
   value: string;
   icon: React.ElementType;
   color: 'green' | 'blue' | 'red';
+  subtext?: string;
 }
 
-const StatCard = ({ label, value, icon: Icon, color }: StatCardProps) => {
+const StatCard = ({ label, value, icon: Icon, color, subtext }: StatCardProps) => {
   const colors = {
     green: {
       bg: 'bg-green-50',
@@ -174,6 +191,9 @@ const StatCard = ({ label, value, icon: Icon, color }: StatCardProps) => {
       <p className={`text-xl font-bold ${style.text}`}>
         {value}
       </p>
+      {subtext && (
+        <p className="text-[10px] text-gray-500 mt-1">{subtext}</p>
+      )}
     </div>
   );
 };
@@ -215,10 +235,11 @@ const GradeBadge = ({ grade }: { grade: number }) => {
 };
 
 // ==================== GRADE DISTRIBUTION CHART ====================
-const GradeDistributionChart = ({ data, viewMode, onToggleView }: { 
+const GradeDistributionChart = ({ data, viewMode, onToggleView, examCount }: { 
   data: LocalGradeDistribution[]; 
   viewMode: 'detailed' | 'simple';
   onToggleView: () => void;
+  examCount?: number;
 }) => {
   const maxValue = Math.max(...data.map(d => viewMode === 'detailed' 
     ? Math.max(d.boys, d.girls) 
@@ -232,6 +253,11 @@ const GradeDistributionChart = ({ data, viewMode, onToggleView }: {
           <h3 className="text-base sm:text-lg font-bold text-gray-900">Grade Distribution</h3>
           <p className="text-xs sm:text-sm text-gray-600 mt-1">
             {viewMode === 'detailed' ? 'Boys vs Girls by Grade' : 'Total Students by Grade'}
+            {examCount && (
+              <span className="ml-2 text-xs text-blue-600">
+                (Based on {examCount} exam{examCount !== 1 ? 's' : ''})
+              </span>
+            )}
           </p>
         </div>
         <button
@@ -346,7 +372,7 @@ const GradeDistributionChart = ({ data, viewMode, onToggleView }: {
           </div>
         </div>
         <p className="text-gray-500 text-xs">
-          Total: {data.reduce((sum, d) => sum + d.total, 0)} students
+          Total: {data.reduce((sum, d) => sum + d.total, 0)} assessments
         </p>
       </div>
     </div>
@@ -354,7 +380,34 @@ const GradeDistributionChart = ({ data, viewMode, onToggleView }: {
 };
 
 // ==================== EMPTY STATE ====================
-const EmptyState = ({ hasAssignments }: { hasAssignments: boolean }) => {
+const EmptyState = ({ 
+  hasAssignments, 
+  noExamsConfigured,
+  term,
+  year 
+}: { 
+  hasAssignments: boolean;
+  noExamsConfigured?: boolean;
+  term?: string;
+  year?: number;
+}) => {
+  if (noExamsConfigured) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-8 sm:p-12 text-center max-w-3xl mx-auto">
+        <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-yellow-50 to-amber-50 rounded-full mb-4 sm:mb-5">
+          <Calendar className="text-yellow-600" size={24} />
+        </div>
+        <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mb-2">
+          No Exams Configured
+        </h3>
+        <p className="text-sm sm:text-base text-gray-600 max-w-md mx-auto">
+          No exams have been configured for {term} {year}. 
+          Please contact the administrator to set up exam configurations.
+        </p>
+      </div>
+    );
+  }
+
   if (!hasAssignments) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-8 sm:p-12 text-center max-w-3xl mx-auto">
@@ -432,6 +485,19 @@ export default function TeacherResultsAnalysis() {
   const { assignments, isLoading: assignmentsLoading } = useTeacherAssignments(user?.id || '');
   const { learners, isLoading: learnersLoading } = useSchoolLearners();
 
+  // Get exam configuration for the selected term and year
+  const { 
+    configs: examConfigs, 
+    isLoading: loadingExamConfig 
+  } = useExamConfig({ year: selectedYear, term: selectedTerm });
+  
+  const currentExamConfig = examConfigs?.[0]; // Get the most recent config for this term/year
+  
+  // Get list of configured exam types for this term
+  const configuredExamTypes = useMemo(() => {
+    return getConfiguredExamTypes(currentExamConfig);
+  }, [currentExamConfig]);
+
   const { 
     analytics, 
     results,
@@ -448,7 +514,6 @@ export default function TeacherResultsAnalysis() {
 
   // ==================== STUDENT DATA MAPPING ====================
   
-  // Map both document IDs and custom student IDs to gender
   const studentDataMap = useMemo(() => {
     const docIdToGender = new Map<string, 'M' | 'F'>();
     const customIdToGender = new Map<string, 'M' | 'F'>();
@@ -456,25 +521,19 @@ export default function TeacherResultsAnalysis() {
     const customIdToDocId = new Map<string, string>();
     
     learners.forEach((learner: Learner) => {
-      // Document ID (Firestore internal ID)
       if (learner.id) {
         if (learner.gender) {
           docIdToGender.set(learner.id, learner.gender === 'male' ? 'M' : 'F');
         }
-        
-        // Map to custom ID if available
         if (learner.studentId) {
           docIdToCustomId.set(learner.id, learner.studentId);
         }
       }
       
-      // Custom ID (display ID like "G10B_001")
       if (learner.studentId) {
         if (learner.gender) {
           customIdToGender.set(learner.studentId, learner.gender === 'male' ? 'M' : 'F');
         }
-        
-        // Map to document ID
         if (learner.id) {
           customIdToDocId.set(learner.studentId, learner.id);
         }
@@ -484,17 +543,13 @@ export default function TeacherResultsAnalysis() {
     return { docIdToGender, customIdToGender, docIdToCustomId, customIdToDocId };
   }, [learners]);
 
-  // Helper function to get gender from a student ID (could be document ID or custom ID)
   const getStudentGender = useCallback((studentId: string): 'M' | 'F' | undefined => {
-    // Method 1: Try as document ID
     let gender = studentDataMap.docIdToGender.get(studentId);
     
-    // Method 2: Try as custom ID
     if (!gender) {
       gender = studentDataMap.customIdToGender.get(studentId);
     }
     
-    // Method 3: Try to find learner by direct comparison (fallback)
     if (!gender) {
       const learner = learners.find(l => 
         l.id === studentId || 
@@ -508,40 +563,27 @@ export default function TeacherResultsAnalysis() {
     return gender;
   }, [learners, studentDataMap]);
 
-  // Debug function to check mappings
+  // Debug function
   const checkMappings = useCallback(() => {
     console.log('===== CHECKING STUDENT MAPPINGS =====');
     console.log('Total learners:', learners.length);
     console.log('Total results:', results.length);
+    console.log('Configured exam types:', configuredExamTypes);
     
-    // Take first 5 results and try to find their gender
     const sampleResults = results.slice(0, 5);
     
     sampleResults.forEach((result, index) => {
       console.log(`\nResult ${index + 1}:`);
       console.log('  Student ID in result:', result.studentId);
       console.log('  Student name:', result.studentName);
+      console.log('  Exam type:', result.examType);
+      console.log('  Included in config?', configuredExamTypes.includes(result.examType));
       
       const finalGender = getStudentGender(result.studentId);
       console.log('  Final gender:', finalGender || 'Not found');
-      
-      const learner = learners.find(l => 
-        l.id === result.studentId || 
-        l.studentId === result.studentId
-      );
-      
-      if (learner) {
-        console.log('  Found learner:', {
-          id: learner.id,
-          studentId: learner.studentId,
-          name: learner.fullName,
-          gender: learner.gender
-        });
-      }
     });
-  }, [learners, results, getStudentGender]);
+  }, [learners, results, getStudentGender, configuredExamTypes]);
 
-  // Run debug on mount if showDebug is true
   useEffect(() => {
     if (showDebug && results.length > 0 && learners.length > 0) {
       checkMappings();
@@ -592,35 +634,37 @@ export default function TeacherResultsAnalysis() {
     return Array.from(subjectMap.values());
   }, [assignments, selectedClass]);
 
-  // ==================== PROCESS RESULTS USING AVERAGES ====================
+  // ==================== PROCESS RESULTS USING AVERAGES OF CONFIGURED EXAMS ====================
   
-  // Group results by student and subject to calculate averages
   const studentSubjectAverages = useMemo(() => {
+    if (configuredExamTypes.length === 0) return new Map();
+    
     const averages = new Map<string, Map<string, { avgGrade: number; gender?: 'M' | 'F' }>>();
     
     // Get unique student-subject combinations
     const uniqueCombinations = new Set<string>();
     results.forEach((r: StudentResult) => {
-      uniqueCombinations.add(`${r.studentId}|${r.subjectId}`);
+      // Only include results from configured exam types
+      if (configuredExamTypes.includes(r.examType)) {
+        uniqueCombinations.add(`${r.studentId}|${r.subjectId}`);
+      }
     });
     
     // Calculate average grade for each student-subject combination
     uniqueCombinations.forEach(combo => {
       const [studentId, subjectId] = combo.split('|');
       
-      // Get all results for this student and subject
       const subjectResults = results.filter((r: StudentResult) => 
         r.studentId === studentId && 
         r.subjectId === subjectId &&
-        r.percentage >= 0
+        r.percentage >= 0 &&
+        configuredExamTypes.includes(r.examType)
       );
       
       if (subjectResults.length === 0) return;
       
-      // Calculate average percentage
       const avgPercentage = subjectResults.reduce((sum, r) => sum + r.percentage, 0) / subjectResults.length;
       
-      // Convert to grade
       let grade: number;
       if (avgPercentage >= 75) grade = 1;
       else if (avgPercentage >= 70) grade = 2;
@@ -632,10 +676,8 @@ export default function TeacherResultsAnalysis() {
       else if (avgPercentage >= 40) grade = 8;
       else grade = 9;
       
-      // Get gender
       const gender = getStudentGender(studentId);
       
-      // Store in map
       if (!averages.has(studentId)) {
         averages.set(studentId, new Map());
       }
@@ -643,11 +685,11 @@ export default function TeacherResultsAnalysis() {
     });
     
     return averages;
-  }, [results, getStudentGender]);
+  }, [results, getStudentGender, configuredExamTypes]);
 
   // Calculate grade distribution based on averages
   const gradeDistribution = useMemo((): LocalGradeDistribution[] => {
-    if (studentSubjectAverages.size === 0) return [];
+    if (studentSubjectAverages.size === 0 || configuredExamTypes.length === 0) return [];
 
     const gradeMap = new Map<number, { boys: number; girls: number; unknown: number }>();
     
@@ -655,7 +697,6 @@ export default function TeacherResultsAnalysis() {
       gradeMap.set(i, { boys: 0, girls: 0, unknown: 0 });
     }
 
-    // Count each student-subject average
     studentSubjectAverages.forEach((subjectMap) => {
       subjectMap.forEach(({ avgGrade, gender }) => {
         const current = gradeMap.get(avgGrade) || { boys: 0, girls: 0, unknown: 0 };
@@ -677,8 +718,8 @@ export default function TeacherResultsAnalysis() {
       if (grade <= 2) return 'Dist';
       if (grade <= 4) return 'Merit';
       if (grade <= 6) return 'Credit';
-      if (grade <= 7) return 'Satis';  // Grade 7 only
-      return 'Fail';  // Grades 8-9
+      if (grade <= 7) return 'Satis';
+      return 'Fail';
     };
 
     return Array.from(gradeMap.entries())
@@ -692,11 +733,11 @@ export default function TeacherResultsAnalysis() {
       }))
       .filter(g => g.total > 0)
       .sort((a, b) => a.grade - b.grade);
-  }, [studentSubjectAverages]);
+  }, [studentSubjectAverages, configuredExamTypes]);
 
-  // ==================== UPDATED CORE METRICS USING AVERAGES ====================
+  // ==================== CORE METRICS USING AVERAGES ====================
   const coreMetrics = useMemo(() => {
-    if (studentSubjectAverages.size === 0) {
+    if (studentSubjectAverages.size === 0 || configuredExamTypes.length === 0) {
       return {
         qualityPass: { percentage: 0, count: 0, total: 0, boys: 0, girls: 0 },
         quantityPass: { percentage: 0, count: 0, total: 0, boys: 0, girls: 0 },
@@ -704,7 +745,6 @@ export default function TeacherResultsAnalysis() {
       };
     }
 
-    // Collect all student-subject average grades
     const allGrades: { grade: number; gender?: 'M' | 'F' }[] = [];
     
     studentSubjectAverages.forEach((subjectMap) => {
@@ -715,13 +755,8 @@ export default function TeacherResultsAnalysis() {
 
     const total = allGrades.length;
 
-    // QUALITY: Grades 1-2 only (Distinction)
     const qualityPass = allGrades.filter(g => g.grade <= 2);
-    
-    // QUANTITY: Grades 3-7 (Merit through Satisfactory)
     const quantityPass = allGrades.filter(g => g.grade >= 3 && g.grade <= 7);
-    
-    // FAIL: Grades 8-9 (Satisfactory Low and Unsatisfactory)
     const fail = allGrades.filter(g => g.grade >= 8);
 
     const qualityBoys = qualityPass.filter(g => g.gender === 'M').length;
@@ -756,132 +791,18 @@ export default function TeacherResultsAnalysis() {
         girls: failGirls
       }
     };
-  }, [studentSubjectAverages]);
+  }, [studentSubjectAverages, configuredExamTypes]);
 
-  // ==================== UPDATED CLASS PERFORMANCE ====================
-  const classPerformance = useMemo((): LocalClassPerformance[] => {
-    if (studentSubjectAverages.size === 0 || !assignments) return [];
-
-    // Group by class
-    const classMap = new Map<string, { grade: number; gender?: 'M' | 'F' }[]>();
-    
-    // We need to map students to classes - using assignments as reference
-    // This is simplified - in production you'd need proper student-class mapping
-    assignments.forEach(assignment => {
-      if (!classMap.has(assignment.classId)) {
-        classMap.set(assignment.classId, []);
-      }
-    });
-
-    // For now, we'll use the first assignment's class as a demo
-    // In production, you'd need to properly map students to classes
-    if (assignments.length > 0) {
-      const firstClassId = assignments[0].classId;
-      const classGrades: { grade: number; gender?: 'M' | 'F' }[] = [];
-      
-      studentSubjectAverages.forEach((subjectMap) => {
-        subjectMap.forEach(({ avgGrade, gender }) => {
-          classGrades.push({ grade: avgGrade, gender });
-        });
-      });
-      
-      classMap.set(firstClassId, classGrades);
-    }
-
-    return Array.from(classMap.entries()).map(([classId, classGrades]) => {
-      const total = classGrades.length;
-      const className = assignments.find(a => a.classId === classId)?.className || classId;
-
-      // Grade distribution for this class
-      const gradeMap = new Map<number, { boys: number; girls: number; unknown: number }>();
-      for (let i = 1; i <= 9; i++) gradeMap.set(i, { boys: 0, girls: 0, unknown: 0 });
-      
-      classGrades.forEach(({ grade, gender }) => {
-        const current = gradeMap.get(grade)!;
-        
-        if (gender === 'M') {
-          gradeMap.set(grade, { ...current, boys: current.boys + 1 });
-        } else if (gender === 'F') {
-          gradeMap.set(grade, { ...current, girls: current.girls + 1 });
-        } else {
-          gradeMap.set(grade, { ...current, unknown: current.unknown + 1 });
-        }
-      });
-
-      const gradeDistribution = Array.from(gradeMap.entries())
-        .map(([grade, counts]) => ({
-          grade,
-          boys: counts.boys,
-          girls: counts.girls,
-          total: counts.boys + counts.girls + counts.unknown,
-          percentage: total > 0 ? Math.round(((counts.boys + counts.girls + counts.unknown) / total) * 100) : 0,
-          description: grade <= 2 ? 'Dist' : grade <= 4 ? 'Merit' : grade <= 6 ? 'Credit' : grade <= 7 ? 'Satis' : 'Fail'
-        }))
-        .filter(g => g.total > 0);
-
-      // Performance metrics
-      const qualityBoys = classGrades.filter(g => g.grade <= 2 && g.gender === 'M').length;
-      const qualityGirls = classGrades.filter(g => g.grade <= 2 && g.gender === 'F').length;
-      
-      const quantityBoys = classGrades.filter(g => g.grade >= 3 && g.grade <= 7 && g.gender === 'M').length;
-      const quantityGirls = classGrades.filter(g => g.grade >= 3 && g.grade <= 7 && g.gender === 'F').length;
-      
-      const failBoys = classGrades.filter(g => g.grade >= 8 && g.gender === 'M').length;
-      const failGirls = classGrades.filter(g => g.grade >= 8 && g.gender === 'F').length;
-
-      const qualityCount = qualityBoys + qualityGirls;
-      const quantityCount = quantityBoys + quantityGirls;
-      const failCount = failBoys + failGirls;
-
-      return {
-        classId,
-        className,
-        candidates: {
-          boys: qualityBoys + quantityBoys + failBoys,
-          girls: qualityGirls + quantityGirls + failGirls,
-          total: classGrades.length
-        },
-        sat: {
-          boys: classGrades.filter(g => g.gender === 'M').length,
-          girls: classGrades.filter(g => g.gender === 'F').length,
-          total: classGrades.length
-        },
-        gradeDistribution,
-        performance: {
-          quality: {
-            boys: qualityBoys,
-            girls: qualityGirls,
-            total: qualityCount,
-            percentage: total > 0 ? Math.round((qualityCount / total) * 100) : 0
-          },
-          quantity: {
-            boys: quantityBoys,
-            girls: quantityGirls,
-            total: quantityCount,
-            percentage: total > 0 ? Math.round((quantityCount / total) * 100) : 0
-          },
-          fail: {
-            boys: failBoys,
-            girls: failGirls,
-            total: failCount,
-            percentage: total > 0 ? Math.round((failCount / total) * 100) : 0
-          }
-        }
-      };
-    });
-  }, [studentSubjectAverages, assignments]);
-
-  // ==================== UPDATED PDF DOWNLOAD FUNCTION ====================
+  // ==================== PDF DOWNLOAD FUNCTION ====================
   const handleDownloadPDF = async () => {
     try {
-      if (studentSubjectAverages.size === 0) {
+      if (studentSubjectAverages.size === 0 || configuredExamTypes.length === 0) {
         alert('No data to export');
         return;
       }
 
       setIsDownloading(true);
 
-      // Collect all student-subject averages with gender
       const allAverages: { grade: number; gender?: 'M' | 'F' }[] = [];
       
       studentSubjectAverages.forEach((subjectMap) => {
@@ -890,12 +811,10 @@ export default function TeacherResultsAnalysis() {
         });
       });
 
-      // Split by gender
       const boysGrades = allAverages.filter(g => g.gender === 'M').map(g => g.grade);
       const girlsGrades = allAverages.filter(g => g.gender === 'F').map(g => g.grade);
       const unknownGrades = allAverages.filter(g => !g.gender).map(g => g.grade);
 
-      // Calculate metrics with updated ranges
       const calculateMetrics = (grades: number[]): SubjectMetrics => {
         const total = grades.length;
         
@@ -903,20 +822,30 @@ export default function TeacherResultsAnalysis() {
           registered: total,
           sat: total,
           absent: 0,
-          dist: grades.filter(g => g <= 2).length,                 // Grades 1-2
-          merit: grades.filter(g => g >= 3 && g <= 4).length,      // Grades 3-4
-          credit: grades.filter(g => g >= 5 && g <= 6).length,     // Grades 5-6
-          pass: grades.filter(g => g === 7).length,                // Grade 7 only
-          fail: grades.filter(g => g >= 8).length,                 // Grades 8-9
-          quality: grades.filter(g => g <= 2).length,              // Quality: Grades 1-2
-          quantity: grades.filter(g => g >= 3 && g <= 7).length,   // Quantity: Grades 3-7
+          dist: grades.filter(g => g <= 2).length,
+          merit: grades.filter(g => g >= 3 && g <= 4).length,
+          credit: grades.filter(g => g >= 5 && g <= 6).length,
+          pass: grades.filter(g => g === 7).length,
+          fail: grades.filter(g => g >= 8).length,
+          quality: grades.filter(g => g <= 2).length,
+          quantity: grades.filter(g => g >= 3 && g <= 7).length,
         };
       };
 
-      // Get subject name
       const subjectName = selectedSubject !== 'all' 
         ? selectedSubject 
         : (assignedSubjects.length === 1 ? assignedSubjects[0].name : 'All Subjects');
+
+      // Create exam config summary text
+      const examTypeLabels = {
+        week4: 'Week 4',
+        week8: 'Week 8',
+        endOfTerm: 'End of Term'
+      };
+      
+      const examConfigSummary = configuredExamTypes
+        .map(type => examTypeLabels[type as keyof typeof examTypeLabels])
+        .join(' + ');
 
       const pdfData: TeacherPDFData = {
         schoolName: 'KALABO BOARDING SECONDARY SCHOOL',
@@ -927,7 +856,7 @@ export default function TeacherResultsAnalysis() {
         subject: subjectName,
         term: selectedTerm,
         year: selectedYear,
-        boys: calculateMetrics([...boysGrades, ...unknownGrades]), // Put unknown in boys as fallback
+        boys: calculateMetrics([...boysGrades, ...unknownGrades]),
         girls: calculateMetrics(girlsGrades),
         generatedDate: new Date().toLocaleDateString('en-GB', {
           day: '2-digit',
@@ -935,24 +864,20 @@ export default function TeacherResultsAnalysis() {
           year: 'numeric',
           hour: '2-digit',
           minute: '2-digit'
-        })
+        }),
+        examConfigSummary: `Based on: ${examConfigSummary}`
       };
 
-      // Dynamically import the PDF generator
       const { generateResultsAnalysisPDF } = await import('@/services/pdf/resultsAnalysisPDFLib');
       
-      // Generate PDF
       const pdfBytes = await generateResultsAnalysisPDF(pdfData);
 
-      // Convert Uint8Array to Blob
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
 
-      // Download PDF
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       
-      // Create filename
       const filename = [
         'results',
         pdfData.className.replace(/\s+/g, '-'),
@@ -977,6 +902,8 @@ export default function TeacherResultsAnalysis() {
 
   const hasAssignments = assignedClasses.length > 0;
   const hasData = studentSubjectAverages.size > 0;
+  const hasExamsConfigured = configuredExamTypes.length > 0;
+  const noExamsConfigured = hasAssignments && hasData === false && configuredExamTypes.length === 0;
 
   const currentYear = new Date().getFullYear();
   const years = [currentYear, currentYear + 1, currentYear + 2];
@@ -988,7 +915,7 @@ export default function TeacherResultsAnalysis() {
     setSelectedYear(new Date().getFullYear());
   };
 
-  if (assignmentsLoading || isLoading || learnersLoading) {
+  if (assignmentsLoading || isLoading || learnersLoading || loadingExamConfig) {
     return (
       <DashboardLayout activeTab="analysis">
         <div className="p-4 sm:p-6 lg:p-8">
@@ -1017,7 +944,11 @@ export default function TeacherResultsAnalysis() {
                   updating
                 </span>
               )}
-              <span className="ml-2 text-xs text-gray-400">(Averages of all tests)</span>
+              {hasExamsConfigured && (
+                <span className="ml-2 text-xs text-blue-600">
+                  (Based on {configuredExamTypes.length} configured exam{configuredExamTypes.length !== 1 ? 's' : ''})
+                </span>
+              )}
             </p>
           </div>
           
@@ -1025,7 +956,7 @@ export default function TeacherResultsAnalysis() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleDownloadPDF}
-              disabled={!hasData || isDownloading}
+              disabled={!hasData || isDownloading || !hasExamsConfigured}
               className={`
                 inline-flex items-center justify-center
                 bg-blue-600 text-white rounded-lg sm:rounded-xl hover:bg-blue-700
@@ -1058,7 +989,7 @@ export default function TeacherResultsAnalysis() {
               {!isMobile && 'Refresh'}
             </button>
             
-            {/* Debug toggle button - only show in development */}
+            {/* Debug toggle button */}
             {process.env.NODE_ENV === 'development' && (
               <button
                 onClick={() => setShowDebug(!showDebug)}
@@ -1077,6 +1008,16 @@ export default function TeacherResultsAnalysis() {
 
         {/* Empty State - No Assignments */}
         {!hasAssignments && <EmptyState hasAssignments={false} />}
+
+        {/* Empty State - No Exams Configured */}
+        {hasAssignments && noExamsConfigured && (
+          <EmptyState 
+            hasAssignments={true} 
+            noExamsConfigured={true}
+            term={selectedTerm}
+            year={selectedYear}
+          />
+        )}
 
         {/* Filters Section */}
         {hasAssignments && (
@@ -1188,6 +1129,20 @@ export default function TeacherResultsAnalysis() {
                 </div>
               </div>
               
+              {/* Exam Config Summary */}
+              {hasExamsConfigured && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 px-3 py-2 rounded-lg">
+                    <Calendar size={14} className="text-blue-600" />
+                    <span>
+                      Exams included: {configuredExamTypes.map(t => 
+                        t === 'week4' ? 'Week 4' : t === 'week8' ? 'Week 8' : 'End of Term'
+                      ).join(' • ')}
+                    </span>
+                  </div>
+                </div>
+              )}
+              
               {/* Clear Filters */}
               {(selectedClass !== 'all' || selectedSubject !== 'all' || selectedTerm !== 'Term 1' || selectedYear !== currentYear) && (
                 <div className="mt-3 pt-3 border-t border-gray-100 flex justify-end">
@@ -1203,41 +1158,45 @@ export default function TeacherResultsAnalysis() {
           </div>
         )}
 
-        {/* Clean Square Stats Cards - 3x1 Grid */}
-        {hasAssignments && hasData && (
+        {/* Clean Square Stats Cards */}
+        {hasAssignments && hasData && hasExamsConfigured && (
           <div className="grid grid-cols-3 gap-2 sm:gap-4">
             <StatCard
               label="Quality"
               value={`${coreMetrics.qualityPass.percentage}%`}
               icon={Target}
               color="green"
+              subtext={`${coreMetrics.qualityPass.count} of ${coreMetrics.qualityPass.total}`}
             />
             <StatCard
               label="Quantity"
               value={`${coreMetrics.quantityPass.percentage}%`}
               icon={Award}
               color="blue"
+              subtext={`${coreMetrics.quantityPass.count} of ${coreMetrics.quantityPass.total}`}
             />
             <StatCard
               label="Fail"
               value={`${coreMetrics.fail.percentage}%`}
               icon={AlertCircle}
               color="red"
+              subtext={`${coreMetrics.fail.count} of ${coreMetrics.fail.total}`}
             />
           </div>
         )}
 
         {/* Grade Distribution Chart */}
-        {hasAssignments && hasData && gradeDistribution.length > 0 && (
+        {hasAssignments && hasData && hasExamsConfigured && gradeDistribution.length > 0 && (
           <GradeDistributionChart
             data={gradeDistribution}
             viewMode={chartViewMode}
             onToggleView={() => setChartViewMode(prev => prev === 'detailed' ? 'simple' : 'detailed')}
+            examCount={configuredExamTypes.length}
           />
         )}
 
         {/* Grade Distribution Table */}
-        {hasAssignments && hasData && gradeDistribution.length > 0 && (
+        {hasAssignments && hasData && hasExamsConfigured && gradeDistribution.length > 0 && (
           <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             
             <div className="px-4 sm:px-6 py-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
@@ -1247,7 +1206,12 @@ export default function TeacherResultsAnalysis() {
                     Grade Distribution Details
                   </h3>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Average of All Tests • {gradeDistribution.reduce((sum, g) => sum + g.total, 0)} assessments
+                    Average of All Configured Tests • {gradeDistribution.reduce((sum, g) => sum + g.total, 0)} assessments
+                    {configuredExamTypes.length > 0 && (
+                      <span className="ml-2 text-blue-600">
+                        (Based on {configuredExamTypes.length} exam{configuredExamTypes.length !== 1 ? 's' : ''})
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -1363,12 +1327,12 @@ export default function TeacherResultsAnalysis() {
         )}
 
         {/* Empty State - No Results */}
-        {hasAssignments && !hasData && <EmptyState hasAssignments={true} />}
+        {hasAssignments && !hasData && hasExamsConfigured && <EmptyState hasAssignments={true} />}
 
         {/* Footer Stats */}
-        {hasAssignments && hasData && (
+        {hasAssignments && hasData && hasExamsConfigured && (
           <div className="text-xs text-gray-500 text-center sm:text-left pt-4 border-t border-gray-200">
-            <span className="font-medium">Average of All Tests</span>
+            <span className="font-medium">Average of All Configured Tests</span>
             <span className="mx-2">•</span>
             {selectedTerm} {selectedYear}
             <span className="mx-2">•</span>

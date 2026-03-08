@@ -18,6 +18,7 @@ import AdminDashboard from "./pages/AdminDashboard";
 import AttendanceOverview from "./pages/admin/AttendanceOverview";
 import ClassManagement from "./pages/admin/ClassManagement";
 import TeacherManagement from "./pages/admin/TeacherManagement";
+import ExamManagement from "./pages/admin/ExamManagement"; // NEW IMPORT
 import ReportCards from "./pages/admin/ReportCards";
 import AdminResultsAnalysis from "./pages/admin/AdminResultsAnalysis";
 
@@ -58,12 +59,17 @@ const App = () => (
             } />
             <Route path="/dashboard/admin/attendance-overview" element={
               <ProtectedRoute allowedRoles={['admin']}>
-            <AttendanceOverview />
-  </ProtectedRoute>
+                <AttendanceOverview />
+              </ProtectedRoute>
             } />
             <Route path="/dashboard/admin/teachers" element={
               <ProtectedRoute allowedRoles={['admin']}>
                 <TeacherManagement />
+              </ProtectedRoute>
+            } />
+            <Route path="/dashboard/admin/exams" element={ // NEW ROUTE
+              <ProtectedRoute allowedRoles={['admin']}>
+                <ExamManagement />
               </ProtectedRoute>
             } />
             <Route path="/dashboard/admin/report-cards" element={

@@ -290,7 +290,123 @@ export const useSchoolTeachers = (classId?: string) => {
     },
   });
 
-  // Mutation: Remove teacher from class
+  // NEW MUTATION: Update teacher information
+  const updateTeacherMutation = useMutation({
+    mutationFn: ({ teacherId, updates }: { teacherId: string; updates: Partial<Teacher> }) => {
+      return teacherService.updateTeacher(teacherId, updates);
+    },
+    onMutate: async ({ teacherId, updates }) => {
+      await queryClient.cancelQueries({ queryKey: ['teachers'] });
+      
+      const previousTeachers = queryClient.getQueryData(['teachers']);
+      
+      queryClient.setQueryData(['teachers'], (old: Teacher[] = []) => {
+        return old.map(teacher => 
+          teacher.id === teacherId 
+            ? { ...teacher, ...updates, updatedAt: new Date() } 
+            : teacher
+        );
+      });
+      
+      return { previousTeachers };
+    },
+    onError: (error, variables, context) => {
+      if (context?.previousTeachers) {
+        queryClient.setQueryData(['teachers'], context.previousTeachers);
+      }
+      console.error('Failed to update teacher:', error);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
+    },
+  });
+
+  // NEW MUTATION: Delete teacher (hard delete)
+  const deleteTeacherMutation = useMutation({
+    mutationFn: async (teacherId: string) => {
+      return teacherService.deleteTeacher(teacherId);
+    },
+    onMutate: async (teacherId) => {
+      await queryClient.cancelQueries({ queryKey: ['teachers'] });
+      
+      const previousTeachers = queryClient.getQueryData(['teachers']);
+      
+      queryClient.setQueryData(['teachers'], (old: Teacher[] = []) => {
+        return old.filter(teacher => teacher.id !== teacherId);
+      });
+      
+      return { previousTeachers };
+    },
+    onError: (error, teacherId, context) => {
+      if (context?.previousTeachers) {
+        queryClient.setQueryData(['teachers'], context.previousTeachers);
+      }
+      console.error('Failed to delete teacher:', error);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
+    },
+  });
+
+  // NEW MUTATION: Remove specific subject from teacher in class
+  const removeTeacherSubjectMutation = useMutation({
+    mutationFn: ({ teacherId, classId, subject }: { teacherId: string; classId: string; subject: string }) => {
+      return teacherService.removeTeacherSubject(teacherId, classId, subject);
+    },
+    onMutate: async ({ teacherId, classId, subject }) => {
+      await queryClient.cancelQueries({ queryKey: ['teacherAssignments', teacherId] });
+      await queryClient.cancelQueries({ queryKey: ['teacherAssignments', 'class', classId] });
+      
+      const previousAssignments = queryClient.getQueryData(['teacherAssignments', 'class', classId]);
+      
+      // Optimistically remove the subject
+      queryClient.setQueryData(['teacherAssignments', 'class', classId], (old: TeacherAssignment[] = []) => {
+        return old.filter(a => !(a.teacherId === teacherId && a.subject === subject));
+      });
+      
+      return { previousAssignments };
+    },
+    onError: (error, variables, context) => {
+      if (context?.previousAssignments) {
+        queryClient.setQueryData(['teacherAssignments', 'class', variables.classId], context.previousAssignments);
+      }
+      console.error('Failed to remove teacher subject:', error);
+    },
+    onSettled: (data, error, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+    },
+  });
+
+  // NEW MUTATION: Transfer teacher between classes
+  const transferTeacherMutation = useMutation({
+    mutationFn: ({ 
+      teacherId, 
+      fromClassId, 
+      toClassId, 
+      subjectMapping 
+    }: { 
+      teacherId: string; 
+      fromClassId: string; 
+      toClassId: string; 
+      subjectMapping?: Record<string, string> 
+    }) => {
+      return teacherService.transferTeacher(teacherId, fromClassId, toClassId, subjectMapping);
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.fromClassId] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.toClassId] });
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+    },
+  });
+
+  // Mutation: Remove teacher from class (all subjects)
   const removeTeacherMutation = useMutation({
     mutationFn: async ({ teacherId, classId }: { teacherId: string; classId: string }) => {
       console.log('Removing teacher from class:', { teacherId, classId });
@@ -434,6 +550,11 @@ export const useSchoolTeachers = (classId?: string) => {
     }));
   };
 
+  // Helper: Get all assignments for a specific teacher
+  const getTeacherAssignments = (teacherId: string): TeacherAssignment[] => {
+    return teacherAssignmentsQuery.data || [];
+  };
+
   return {
     // Data
     allTeachers: teachersQuery.data || [],
@@ -454,21 +575,31 @@ export const useSchoolTeachers = (classId?: string) => {
     // Mutation states
     isAssigningTeacher: assignTeacherMutation.isPending || assignTeacherWithMultipleSubjectsMutation.isPending,
     isRemovingTeacher: removeTeacherMutation.isPending,
+    isRemovingSubject: removeTeacherSubjectMutation.isPending,
     isUpdatingTeacherStatus: updateTeacherStatusMutation.isPending,
+    isUpdatingTeacher: updateTeacherMutation.isPending,
+    isDeletingTeacher: deleteTeacherMutation.isPending,
+    isTransferringTeacher: transferTeacherMutation.isPending,
     
     // Mutations
     assignTeacherToClass: assignTeacherMutation.mutateAsync,
     assignTeacherWithMultipleSubjects: assignTeacherWithMultipleSubjectsMutation.mutateAsync,
     removeTeacherFromClass: removeTeacherMutation.mutateAsync,
+    removeTeacherSubject: removeTeacherSubjectMutation.mutateAsync,
     updateTeacherStatus: updateTeacherStatusMutation.mutateAsync,
+    updateTeacher: updateTeacherMutation.mutateAsync,
+    deleteTeacher: deleteTeacherMutation.mutateAsync,
+    transferTeacher: transferTeacherMutation.mutateAsync,
     
     // Helper functions
     getTeacherSubjectsForClass,
     isTeacherAssignedToClass,
+    getTeacherAssignments,
     
     // Refetch
     refetchTeachers: teachersQuery.refetch,
     refetchClassTeachers: classTeachersQuery.refetch,
     refetchAssignments: classAssignmentsQuery.refetch,
+    refetchTeacherAssignments: teacherAssignmentsQuery.refetch,
   };
 };

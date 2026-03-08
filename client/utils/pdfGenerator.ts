@@ -8,7 +8,7 @@ interface PDFGenerationOptions {
   learners: Learner[];
   format: 'simple' | 'detailed' | 'summary';
   includeStats: boolean;
-  schoolName: string;
+  schoolName?: string; // Made optional with default
   academicYear: string;
 }
 
@@ -21,7 +21,7 @@ export const generateClassListPDF = async ({
   learners,
   format,
   includeStats,
-  schoolName,
+  schoolName = 'KALABO BOARDING SECONDARY SCHOOL', // Default school name
   academicYear
 }: PDFGenerationOptions): Promise<void> => {
   try {
@@ -363,15 +363,15 @@ export const generateClassListPDF = async ({
       });
     }
 
-    // Save the PDF - FIXED: Convert Uint8Array to Buffer or cast to any for Blob
+    // Save the PDF - KEEPING ORIGINAL WORKING VERSION
     const pdfBytes = await pdfDoc.save();
     
-    // Create download link - FIXED: Cast to any to avoid type issues
+    // Create download link - KEEPING ORIGINAL WORKING VERSION
     const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${className}_Class_List_${new Date().toISOString().split('T')[0]}.pdf`;
+    link.download = `${className.replace(/\s+/g, '_')}_Class_List_${new Date().toISOString().split('T')[0]}.pdf`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -389,7 +389,7 @@ export const generateClassListPDF = async ({
 export const generateLearnerReportPDF = async (
   learner: Learner,
   className: string,
-  schoolName: string
+  schoolName: string = 'KALABO BOARDING SECONDARY SCHOOL' // Default school name
 ): Promise<void> => {
   try {
     const pdfDoc = await PDFDocument.create();
@@ -608,13 +608,13 @@ export const generateLearnerReportPDF = async (
       color: rgb(0.5, 0.5, 0.5),
     });
 
-    // Save PDF - FIXED: Convert Uint8Array to Buffer or cast to any for Blob
+    // Save PDF - KEEPING ORIGINAL WORKING VERSION
     const pdfBytes = await pdfDoc.save();
     const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${fullName}_Report_${new Date().toISOString().split('T')[0]}.pdf`;
+    link.download = `${fullName.replace(/\s+/g, '_')}_Report_${new Date().toISOString().split('T')[0]}.pdf`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

@@ -1,4 +1,4 @@
-// @/pages/teacher/ResultsEntry.tsx - FINAL VERSION WITH FIXED MARK SCHEDULE PREVIEW
+// @/pages/teacher/ResultsEntry.tsx - FIXED VERSION
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
@@ -15,10 +15,11 @@ import {
   Edit3,
   Trash2,
   History,
-  Ban
+  UserX
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useResults, useSubjectCompletion } from '@/hooks/useResults';
+import { useExamConfig } from '@/hooks/useExamConfig';
 import { learnerService } from '@/services/schoolService';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
@@ -46,7 +47,6 @@ interface SavedDraft {
   lastModified: string;
   completedCount: number;
   totalStudents: number;
-  isNotConducted?: boolean;
 }
 
 interface ExtendedSubjectCompletion {
@@ -67,11 +67,6 @@ interface ExtendedSubjectCompletion {
     endOfTerm: string[];
   };
   savedMarks?: Record<string, number>;
-  notConducted?: {
-    week4: boolean;
-    week8: boolean;
-    endOfTerm: boolean;
-  };
 }
 
 interface ClassInfo {
@@ -95,11 +90,21 @@ interface ExamData {
   endOfTerm: ExamDataItem[];
 }
 
+// ==================== AVAILABLE EXAM TYPES BASED ON CONFIG ====================
+const getAvailableExamTypes = (config: any) => {
+  if (!config?.examTypes) return [];
+  
+  const types = [];
+  if (config.examTypes.week4) types.push({ id: 'week4', label: 'Week 4', shortLabel: 'W4' });
+  if (config.examTypes.week8) types.push({ id: 'week8', label: 'Week 8', shortLabel: 'W8' });
+  if (config.examTypes.endOfTerm) types.push({ id: 'endOfTerm', label: 'End of Term', shortLabel: 'EOT' });
+  return types;
+};
+
 // ==================== GRADE BADGE ====================
 const GradeBadge = ({ grade }: { grade: number | null }) => {
   if (grade === null) return <span className="text-gray-300 text-xs">—</span>;
   if (grade === -1) return <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded-md text-xs font-mono">X</span>;
-  if (grade === -2) return <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded-md text-xs font-mono">N/A</span>;
   
   const colors: Record<number, string> = {
     1: 'bg-green-600 text-white',
@@ -131,7 +136,7 @@ interface StudentRowProps {
   isMobile: boolean;
   disabled?: boolean;
   showExistingMark?: number | null;
-  isNotConducted?: boolean;
+  onMarkAbsent?: (studentId: string) => void;
 }
 
 const StudentRow = ({ 
@@ -144,7 +149,7 @@ const StudentRow = ({
   isMobile,
   disabled = false,
   showExistingMark,
-  isNotConducted = false
+  onMarkAbsent
 }: StudentRowProps) => {
   const marks = student.marks || '';
   const isAbsent = marks.toLowerCase() === 'x';
@@ -157,7 +162,7 @@ const StudentRow = ({
   const hasExistingMark = showExistingMark !== undefined && showExistingMark !== null && marks === '';
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (disabled || isNotConducted) return;
+    if (disabled) return;
     if (e.key === 'Enter' && onEnterPress) {
       e.preventDefault();
       onEnterPress();
@@ -165,6 +170,12 @@ const StudentRow = ({
     if (e.key === 'ArrowDown' && onEnterPress) {
       e.preventDefault();
       onEnterPress();
+    }
+  };
+
+  const handleMarkAbsent = () => {
+    if (onMarkAbsent) {
+      onMarkAbsent(student.id);
     }
   };
 
@@ -176,50 +187,57 @@ const StudentRow = ({
             <span className="text-xs font-medium text-gray-400 w-5">{index + 1}</span>
             <span className="font-medium text-gray-900 text-sm truncate">{student.name}</span>
           </div>
-          {isNotConducted ? (
-            <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded-md text-xs font-mono">N/A</span>
-          ) : (
-            <GradeBadge grade={grade} />
-          )}
+          <GradeBadge grade={grade} />
         </div>
         
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <input
               type="text"
-              value={isNotConducted ? 'N/A' : marks}
-              onChange={e => !isNotConducted && onMarksChange(student.id, e.target.value)}
+              value={marks}
+              onChange={e => onMarksChange(student.id, e.target.value)}
               onKeyDown={handleKeyDown}
               ref={inputRef}
-              placeholder={disabled ? "Locked" : hasExistingMark ? `${showExistingMark}` : "0 / X"}
+              placeholder={disabled ? "Locked" : hasExistingMark ? `${showExistingMark}` : "0"}
               className={`
-                w-full px-3 py-2.5 border rounded-lg text-base font-medium uppercase
+                w-full px-3 py-2.5 border rounded-lg text-base font-medium
                 focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                ${isNotConducted 
-                  ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed'
-                  : disabled 
-                    ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed' 
-                    : hasExistingMark
-                      ? 'bg-green-50 border-green-300 text-green-700'
-                      : 'border-gray-300'
+                ${disabled 
+                  ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed' 
+                  : hasExistingMark
+                    ? 'bg-green-50 border-green-300 text-green-700'
+                    : 'border-gray-300'
                 }
               `}
               inputMode="numeric"
-              disabled={disabled || isNotConducted}
+              disabled={disabled}
             />
-            {!disabled && !isNotConducted && marks && !isAbsent && marksNum !== null && (
+            {!disabled && marks && !isAbsent && marksNum !== null && (
               <div className="absolute right-2 top-1/2 transform -translate-y-1/2 text-xs text-gray-500">
                 {marksNum}/{totalMarks}
               </div>
             )}
           </div>
+          {!disabled && (
+            <button
+              onClick={handleMarkAbsent}
+              className={`p-2 rounded-lg transition-colors ${
+                isAbsent 
+                  ? 'bg-gray-700 text-white' 
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+              title="Mark as absent"
+            >
+              <UserX size={16} />
+            </button>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <tr className={`hover:bg-gray-50/50 transition-colors group ${disabled || isNotConducted ? 'opacity-75' : ''}`}>
+    <tr className={`hover:bg-gray-50/50 transition-colors group ${disabled ? 'opacity-75' : ''}`}>
       <td className="px-3 py-2.5 text-xs text-gray-500 font-mono">{index + 1}</td>
       <td className="px-3 py-2.5">
         <div className="font-medium text-gray-900 text-sm truncate max-w-[180px]" title={student.name}>
@@ -231,27 +249,25 @@ const StudentRow = ({
         <div className="relative w-24">
           <input
             type="text"
-            value={isNotConducted ? 'N/A' : marks}
-            onChange={e => !isNotConducted && onMarksChange(student.id, e.target.value)}
+            value={marks}
+            onChange={e => onMarksChange(student.id, e.target.value)}
             onKeyDown={handleKeyDown}
             ref={inputRef}
             placeholder={disabled ? "—" : hasExistingMark ? `${showExistingMark}` : "0"}
             className={`
-              w-full px-2 py-1.5 border rounded-lg text-sm font-medium text-center uppercase
+              w-full px-2 py-1.5 border rounded-lg text-sm font-medium text-center
               focus:ring-2 focus:ring-blue-500 focus:border-transparent
-              ${isNotConducted 
-                ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed'
-                : disabled 
-                  ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed' 
-                  : hasExistingMark
-                    ? 'bg-green-50 border-green-300 text-green-700'
-                    : 'border-gray-300'
+              ${disabled 
+                ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed' 
+                : hasExistingMark
+                  ? 'bg-green-50 border-green-300 text-green-700'
+                  : 'border-gray-300'
               }
             `}
             inputMode="numeric"
-            disabled={disabled || isNotConducted}
+            disabled={disabled}
           />
-          {!disabled && !isNotConducted && marks && !isAbsent && marksNum !== null && (
+          {!disabled && marks && !isAbsent && marksNum !== null && (
             <div className="absolute right-1 top-1/2 transform -translate-y-1/2 text-[10px] text-gray-400">
               /{totalMarks}
             </div>
@@ -259,10 +275,21 @@ const StudentRow = ({
         </div>
       </td>
       <td className="px-3 py-2.5">
-        {isNotConducted ? (
-          <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded-md text-xs font-mono">N/A</span>
-        ) : (
-          <GradeBadge grade={grade} />
+        <GradeBadge grade={grade} />
+      </td>
+      <td className="px-3 py-2.5">
+        {!disabled && (
+          <button
+            onClick={handleMarkAbsent}
+            className={`p-1.5 rounded-lg transition-colors ${
+              isAbsent 
+                ? 'bg-gray-700 text-white' 
+                : 'text-gray-500 hover:bg-gray-100'
+            }`}
+            title="Mark as absent"
+          >
+            <UserX size={16} />
+          </button>
         )}
       </td>
     </tr>
@@ -275,7 +302,8 @@ interface SubjectProgressProps {
   selectedExamType: string;
   onExamTypeChange: (type: 'week4' | 'week8' | 'endOfTerm') => void;
   hasDraft?: boolean;
-  isNotConducted?: boolean;
+  availableExamTypes: Array<{ id: string; label: string; shortLabel: string }>;
+  examConfig: any;
 }
 
 const SubjectProgress = ({ 
@@ -283,44 +311,46 @@ const SubjectProgress = ({
   selectedExamType,
   onExamTypeChange,
   hasDraft,
-  isNotConducted
+  availableExamTypes,
+  examConfig
 }: SubjectProgressProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
   
   if (!completion) return null;
   
-  const examTypes = [
-    { 
-      id: 'week4' as const, 
-      label: 'W4', 
-      fullLabel: 'Week 4',
-      isComplete: completion.week4Complete,
-      count: completion.enteredStudents.week4,
-      notConducted: completion.notConducted?.week4 || false
-    },
-    { 
-      id: 'week8' as const, 
-      label: 'W8', 
-      fullLabel: 'Week 8',
-      isComplete: completion.week8Complete,
-      count: completion.enteredStudents.week8,
-      notConducted: completion.notConducted?.week8 || false
-    },
-    { 
-      id: 'endOfTerm' as const, 
-      label: 'EOT', 
-      fullLabel: 'End of Term',
-      isComplete: completion.endOfTermComplete,
-      count: completion.enteredStudents.endOfTerm,
-      notConducted: completion.notConducted?.endOfTerm || false
-    },
-  ];
+  const examTypes = availableExamTypes.map(type => {
+    const isComplete = completion[`${type.id}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
+    const count = completion.enteredStudents[type.id as keyof typeof completion.enteredStudents] || 0;
+    const totalMarks = examConfig?.[`${type.id}TotalMarks`] || 100;
+    
+    return {
+      id: type.id,
+      label: type.shortLabel,
+      fullLabel: type.label,
+      isComplete,
+      count,
+      totalMarks
+    };
+  });
 
-  const week4Complete = completion.week4Complete || completion.notConducted?.week4;
-  const week8Complete = completion.week8Complete || completion.notConducted?.week8;
-  
-  const isWeek8Enabled = week4Complete;
-  const isEndOfTermEnabled = week8Complete;
+  // Determine which exams are enabled (sequential unlocking)
+  const enabledStates = useMemo(() => {
+    const states: Record<string, boolean> = {};
+    
+    examTypes.forEach((exam, index) => {
+      if (index === 0) {
+        states[exam.id] = true; // First exam always enabled
+      } else {
+        const previousExam = examTypes[index - 1];
+        states[exam.id] = previousExam.isComplete;
+      }
+    });
+    
+    return states;
+  }, [examTypes]);
+
+  // Grid columns based on number of exam types
+  const gridCols = examTypes.length === 3 ? 'grid-cols-3' : examTypes.length === 2 ? 'grid-cols-2' : 'grid-cols-1';
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm">
@@ -348,25 +378,23 @@ const SubjectProgress = ({
         />
       </div>
       
-      <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+      <div className={`grid ${gridCols} gap-1.5 sm:gap-2`}>
         {examTypes.map((exam) => {
           const isSelected = selectedExamType === exam.id;
-          const isLocked = 
-            (exam.id === 'week8' && !week4Complete) ||
-            (exam.id === 'endOfTerm' && !week8Complete);
+          const isEnabled = enabledStates[exam.id];
           
           return (
             <button
               key={exam.id}
-              onClick={() => !isLocked && onExamTypeChange(exam.id)}
-              disabled={isLocked}
+              onClick={() => isEnabled && onExamTypeChange(exam.id as any)}
+              disabled={!isEnabled}
               className={`
                 relative flex flex-col items-center p-1.5 sm:p-2 rounded-lg transition-all
                 ${isSelected 
                   ? 'bg-blue-50 border-2 border-blue-500' 
                   : 'border-2 border-transparent'
                 }
-                ${isLocked 
+                ${!isEnabled 
                   ? 'opacity-50 cursor-not-allowed bg-gray-50' 
                   : 'hover:bg-gray-50 cursor-pointer'
                 }
@@ -374,21 +402,21 @@ const SubjectProgress = ({
             >
               <div className="flex items-center gap-1 mb-0.5 sm:mb-1">
                 <span className={`text-xs font-semibold ${
-                  exam.notConducted ? 'text-gray-600' :
                   exam.isComplete ? 'text-green-600' : isSelected ? 'text-blue-600' : 'text-gray-600'
                 }`}>
                   {exam.label}
                 </span>
-                {exam.notConducted ? (
-                  <Ban size={10} className="text-gray-500 flex-shrink-0" />
-                ) : exam.isComplete ? (
+                {exam.isComplete ? (
                   <CheckCircle size={10} className="text-green-500 flex-shrink-0" />
-                ) : isLocked && !exam.isComplete ? (
+                ) : !isEnabled && !exam.isComplete ? (
                   <Lock size={8} className="text-gray-400 flex-shrink-0" />
                 ) : null}
               </div>
               <span className="text-[10px] text-gray-500">
-                {exam.notConducted ? 'N/A' : `${exam.count}/${completion.totalStudents}`}
+                {exam.count}/{completion.totalStudents}
+              </span>
+              <span className="text-[8px] text-gray-400 mt-0.5">
+                {exam.totalMarks} marks
               </span>
             </button>
           );
@@ -406,6 +434,8 @@ interface DraftCardProps {
 }
 
 const DraftCard = ({ draft, onLoad, onDelete }: DraftCardProps) => {
+  const isMobile = useMediaQuery('(max-width: 640px)');
+  
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md transition-all">
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -415,7 +445,6 @@ const DraftCard = ({ draft, onLoad, onDelete }: DraftCardProps) => {
           </h4>
           <p className="text-xs text-gray-500 truncate">
             {draft.examType} • {draft.term} {draft.year}
-            {draft.isNotConducted && ' • Not Conducted'}
           </p>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -437,25 +466,23 @@ const DraftCard = ({ draft, onLoad, onDelete }: DraftCardProps) => {
       </div>
       <div className="flex items-center justify-between text-xs">
         <span className="text-gray-600">
-          {draft.isNotConducted ? 'Not Conducted' : `${draft.completedCount}/${draft.totalStudents} entered`}
+          {draft.completedCount}/{draft.totalStudents} entered
         </span>
         <span className="text-gray-400">
           {new Date(draft.lastModified).toLocaleTimeString()}
         </span>
       </div>
-      {!draft.isNotConducted && (
-        <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-          <div 
-            className="h-full bg-yellow-500 rounded-full"
-            style={{ width: `${(draft.completedCount / draft.totalStudents) * 100}%` }}
-          />
-        </div>
-      )}
+      <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div 
+          className="h-full bg-yellow-500 rounded-full"
+          style={{ width: `${(draft.completedCount / draft.totalStudents) * 100}%` }}
+        />
+      </div>
     </div>
   );
 };
 
-// ==================== FIXED MARK SCHEDULE PDF PREVIEW ====================
+// ==================== MARK SCHEDULE PDF PREVIEW ====================
 interface MarksPDFPreviewProps {
   isOpen: boolean;
   onClose: () => void;
@@ -469,7 +496,6 @@ interface MarksPDFPreviewProps {
   onDownload: () => void;
   allExamData: ExamData | null;
   loadingAllData: boolean;
-  isNotConducted: boolean;
 }
 
 const MarksPDFPreview = ({ 
@@ -484,29 +510,22 @@ const MarksPDFPreview = ({
   totalMarks,
   onDownload,
   allExamData,
-  loadingAllData,
-  isNotConducted
+  loadingAllData
 }: MarksPDFPreviewProps) => {
-  // All hooks first - before any conditional returns
   const isMobile = useMediaQuery('(max-width: 640px)');
 
-  // FIXED: Create a map of saved marks using both studentId and student document ID
   const savedMarksMap = useMemo(() => {
     const map = new Map();
     
     if (allExamData) {
       const currentExamData = allExamData[examType] || [];
-      console.log(`📊 Preview - Exam data for ${examType}:`, currentExamData);
-      
       currentExamData.forEach((item: ExamDataItem) => {
-        // Store marks by both possible ID formats for flexibility
         if (item.studentId) {
           map.set(item.studentId, {
             marks: item.marks,
             isSaved: true
           });
         }
-        // Also store by the custom ID if different
         if (item.student_id) {
           map.set(item.student_id, {
             marks: item.marks,
@@ -516,70 +535,41 @@ const MarksPDFPreview = ({
       });
     }
     
-    console.log(`📊 Preview - Saved marks map size:`, map.size);
     return map;
   }, [allExamData, examType]);
 
-  // FIXED: Match students with saved marks using multiple ID fields
   const displayStudents = useMemo(() => {
     return students.map((student: StudentResultInput) => {
-      // Try to find saved mark using different ID fields
       let saved = savedMarksMap.get(student.studentId);
-      
-      // If not found by studentId, try by document ID
       if (!saved) {
         saved = savedMarksMap.get(student.id);
       }
       
       let displayMarks = student.marks;
       let isFromSaved = false;
-      let savedMarkValue = null;
       
-      // If current input is empty but we have saved marks, show the saved marks
       if ((!displayMarks || displayMarks === '') && saved) {
-        savedMarkValue = saved.marks;
-        
-        // Format the saved mark for display
-        if (savedMarkValue === -1) {
+        if (saved.marks === -1) {
           displayMarks = 'X';
-        } else if (savedMarkValue === -2) {
-          displayMarks = 'N/A';
-        } else if (savedMarkValue >= 0) {
-          displayMarks = savedMarkValue.toString();
+        } else if (saved.marks >= 0) {
+          displayMarks = saved.marks.toString();
         }
         isFromSaved = true;
-      }
-      
-      // If not conducted, override everything
-      if (isNotConducted) {
-        displayMarks = 'N/A';
-        isFromSaved = false;
       }
       
       return {
         ...student,
         displayMarks,
-        isFromSaved,
-        savedMarkValue: saved?.marks // Keep the raw value for grade calculation
+        isFromSaved
       };
     });
-  }, [students, savedMarksMap, isNotConducted]);
+  }, [students, savedMarksMap]);
 
-  // Early return after all hooks
   if (!isOpen) return null;
 
   const completedCount = displayStudents.filter((s: any) => 
-    s.displayMarks && s.displayMarks !== '' && s.displayMarks !== 'N/A'
+    s.displayMarks && s.displayMarks !== ''
   ).length;
-
-  console.log(`📊 Preview - Display students with marks:`, 
-    displayStudents.map(s => ({ 
-      name: s.name, 
-      studentId: s.studentId, 
-      marks: s.displayMarks,
-      isFromSaved: s.isFromSaved 
-    }))
-  );
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -596,12 +586,6 @@ const MarksPDFPreview = ({
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              {isNotConducted && (
-                <div className="flex items-center gap-1 px-2 py-1 bg-gray-200 rounded-lg">
-                  <Ban size={14} className="text-gray-600" />
-                  <span className="text-xs font-medium text-gray-600">Not Conducted</span>
-                </div>
-              )}
               <button
                 onClick={onDownload}
                 disabled={loadingAllData}
@@ -631,12 +615,6 @@ const MarksPDFPreview = ({
                 <h1 className="text-lg sm:text-2xl font-bold text-gray-900">MINISTRY OF EDUCATION</h1>
                 <h2 className="text-base sm:text-xl font-semibold text-gray-800 mt-0.5 sm:mt-1">KALABO BOARDING SECONDARY SCHOOL</h2>
                 <h3 className="text-sm sm:text-lg font-medium text-blue-600 mt-1 sm:mt-2">MARK SCHEDULE</h3>
-                {isNotConducted && (
-                  <div className="mt-2 inline-flex items-center gap-1 px-3 py-1 bg-gray-200 rounded-full">
-                    <Ban size={14} className="text-gray-600" />
-                    <span className="text-xs font-medium text-gray-600">TEST NOT CONDUCTED</span>
-                  </div>
-                )}
               </div>
 
               {/* Info Grid */}
@@ -655,7 +633,7 @@ const MarksPDFPreview = ({
                 </div>
                 <div className="min-w-0">
                   <p className="text-gray-500">Marks</p>
-                  <p className="font-medium">{isNotConducted ? 'N/A' : totalMarks}</p>
+                  <p className="font-medium">{totalMarks}</p>
                 </div>
                 <div className="min-w-0">
                   <p className="text-gray-500">Term</p>
@@ -667,7 +645,7 @@ const MarksPDFPreview = ({
                 </div>
                 <div className="min-w-0">
                   <p className="text-gray-500">Entered</p>
-                  <p className="font-medium text-green-600">{isNotConducted ? 'N/A' : completedCount}</p>
+                  <p className="font-medium text-green-600">{completedCount}</p>
                 </div>
                 <div className="min-w-0">
                   <p className="text-gray-500">Teacher</p>
@@ -698,13 +676,11 @@ const MarksPDFPreview = ({
                       </thead>
                       <tbody>
                         {displayStudents.map((student: any, index: number) => {
-                          // FIXED: Properly calculate marks and grade
                           const marks = student.displayMarks;
                           const isAbsent = marks?.toLowerCase() === 'x';
-                          const isNA = marks === 'N/A';
                           
                           let marksNum = null;
-                          if (!isAbsent && !isNA && marks && marks !== '') {
+                          if (!isAbsent && marks && marks !== '') {
                             marksNum = parseInt(marks);
                           }
                           
@@ -724,9 +700,7 @@ const MarksPDFPreview = ({
                               </td>
                               <td className="px-2 sm:px-3 py-1.5 sm:py-2 font-mono text-gray-600 border border-gray-300 hidden sm:table-cell">{student.studentId}</td>
                               <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-center border border-gray-300">
-                                {isNA ? (
-                                  <span className="text-gray-500 italic">N/A</span>
-                                ) : marks ? (
+                                {marks ? (
                                   <span className={`font-medium ${isAbsent ? 'text-gray-500 italic' : student.isFromSaved ? 'text-green-700' : ''}`}>
                                     {isAbsent ? 'ABS' : marks}
                                   </span>
@@ -735,9 +709,7 @@ const MarksPDFPreview = ({
                                 )}
                               </td>
                               <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-center border border-gray-300">
-                                {isNA ? (
-                                  <span className="text-gray-500 text-xs">N/A</span>
-                                ) : grade !== null ? (
+                                {grade !== null ? (
                                   <GradeBadge grade={grade} />
                                 ) : (
                                   <span className="text-gray-300">—</span>
@@ -764,37 +736,57 @@ const MarksPDFPreview = ({
 };
 
 // ==================== SKELETON ====================
-const TableSkeleton = () => (
-  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden animate-pulse">
-    <div className="p-4 border-b border-gray-200 bg-gray-50">
-      <div className="h-5 bg-gray-200 rounded w-32 sm:w-48"></div>
+const TableSkeleton = () => {
+  const isMobile = useMediaQuery('(max-width: 640px)');
+  
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden animate-pulse">
+      <div className="p-4 border-b border-gray-200 bg-gray-50">
+        <div className="h-5 bg-gray-200 rounded w-32 sm:w-48"></div>
+      </div>
+      <div className="divide-y divide-gray-100">
+        {[1, 2, 3, 4, 5].map(i => (
+          <div key={i} className="p-3 sm:p-4 flex flex-wrap items-center gap-2 sm:gap-4">
+            <div className="w-5 h-4 bg-gray-200 rounded"></div>
+            <div className="flex-1 h-4 bg-gray-200 rounded min-w-[120px]"></div>
+            <div className="w-16 sm:w-20 h-8 bg-gray-200 rounded"></div>
+            <div className="w-10 h-6 bg-gray-200 rounded"></div>
+          </div>
+        ))}
+      </div>
     </div>
-    <div className="divide-y divide-gray-100">
-      {[1, 2, 3, 4, 5].map(i => (
-        <div key={i} className="p-3 sm:p-4 flex flex-wrap items-center gap-2 sm:gap-4">
-          <div className="w-5 h-4 bg-gray-200 rounded"></div>
-          <div className="flex-1 h-4 bg-gray-200 rounded min-w-[120px]"></div>
-          <div className="w-16 sm:w-20 h-8 bg-gray-200 rounded"></div>
-          <div className="w-10 h-6 bg-gray-200 rounded"></div>
-        </div>
-      ))}
-    </div>
-  </div>
-);
+  );
+};
 
 // ==================== EMPTY STATE ====================
 interface EmptyStateProps {
   hasClass: boolean;
   hasSubject: boolean;
   hasStudents: boolean;
+  noExamsConfigured?: boolean;
 }
 
 const EmptyState = ({ 
   hasClass, 
   hasSubject, 
-  hasStudents 
+  hasStudents,
+  noExamsConfigured
 }: EmptyStateProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
+  
+  if (noExamsConfigured) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-6 sm:p-12 text-center">
+        <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-yellow-100 rounded-full mb-3 sm:mb-4">
+          <AlertCircle className="text-yellow-600" size={isMobile ? 24 : 32} />
+        </div>
+        <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1 sm:mb-2">No Exams Configured</h3>
+        <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto">
+          No exams have been configured for this term. Please contact the administrator to set up exam configurations.
+        </p>
+      </div>
+    );
+  }
   
   if (!hasClass) {
     return (
@@ -872,42 +864,6 @@ const EditModeIndicator = ({ isEditing, onCancelEdit }: EditModeIndicatorProps) 
   );
 };
 
-// ==================== NOT CONDUCTED TOGGLE ====================
-interface NotConductedToggleProps {
-  isNotConducted: boolean;
-  onToggle: () => void;
-  disabled?: boolean;
-  examType: string;
-}
-
-const NotConductedToggle = ({ 
-  isNotConducted, 
-  onToggle,
-  disabled,
-  examType
-}: NotConductedToggleProps) => {
-  return (
-    <button
-      onClick={onToggle}
-      disabled={disabled}
-      className={`
-        inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg border transition-all text-sm
-        ${isNotConducted 
-          ? 'bg-gray-700 border-gray-700 text-white hover:bg-gray-800' 
-          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-        }
-        ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
-      `}
-      title={isNotConducted ? `Mark ${examType} as conducted` : `Mark ${examType} as not conducted`}
-    >
-      <Ban size={16} />
-      <span className="hidden xs:inline">
-        {isNotConducted ? 'Conducted' : 'Not Conducted'}
-      </span>
-    </button>
-  );
-};
-
 // ==================== MAIN COMPONENT ====================
 export default function ResultsEntry() {
   const { user } = useAuth();
@@ -922,8 +878,6 @@ export default function ResultsEntry() {
   const [examType, setExamType] = useState<'week4' | 'week8' | 'endOfTerm'>('week4');
   const [term, setTerm] = useState('Term 1');
   const [year, setYear] = useState(new Date().getFullYear());
-  const [totalMarks, setTotalMarks] = useState(100);
-  const [isNotConducted, setIsNotConducted] = useState(false);
   
   const [students, setStudents] = useState<StudentResultInput[]>([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
@@ -941,7 +895,25 @@ export default function ResultsEntry() {
 
   const { classes, isLoading: loadingClasses } = useSchoolClasses({ isActive: true });
   
-  // FIXED: Get subjects the teacher actually teaches in each class
+  // Get exam configuration for the selected term and year
+  const { 
+    configs: examConfigs, 
+    isLoading: loadingExamConfig 
+  } = useExamConfig({ year, term });
+  
+  const currentExamConfig = examConfigs?.[0]; // Get the most recent config for this term/year
+  
+  // Determine available exam types based on config - FIXED: Added null check
+  const availableExamTypes = useMemo(() => {
+    return getAvailableExamTypes(currentExamConfig);
+  }, [currentExamConfig]);
+  
+  // Get total marks from config - FIXED: Added null check and fallback
+  const totalMarks = useMemo(() => {
+    if (!currentExamConfig || !examType) return 100;
+    return currentExamConfig[`${examType}TotalMarks`] || 100;
+  }, [currentExamConfig, examType]);
+  
   const { assignments, getSubjectsForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.id);
   
   const { saveResults, isSaving, checkExisting, editResults, isEditing } = useResults();
@@ -973,7 +945,7 @@ export default function ResultsEntry() {
     localStorage.setItem('results_drafts', JSON.stringify(newDrafts));
   }, []);
 
-  // FIXED: Get all classes the teacher is assigned to (as either subject teacher or form teacher)
+  // Get all classes the teacher is assigned to
   const assignedClasses = useMemo(() => {
     if (!user?.id || !classes.length) return [];
     return classes.filter((cls: ClassInfo) => 
@@ -982,29 +954,23 @@ export default function ResultsEntry() {
     );
   }, [classes, user?.id]);
 
-  // FIXED: Get subjects the teacher actually teaches in the selected class
+  // Get subjects the teacher actually teaches in the selected class
   const availableSubjects = useMemo(() => {
     if (!selectedClass || !user?.id) return [];
     return getSubjectsForClass(selectedClass);
   }, [selectedClass, user?.id, getSubjectsForClass]);
 
-  // FIXED: Check if teacher is ONLY a form teacher (no subjects) in this class
+  // Check if teacher is ONLY a form teacher (no subjects) in this class
   const isOnlyFormTeacher = useMemo(() => {
     if (!selectedClass || !user?.id) return false;
     const subjects = getSubjectsForClass(selectedClass);
-    return subjects.length === 0; // No subjects means they're only a form teacher
+    return subjects.length === 0;
   }, [selectedClass, user?.id, getSubjectsForClass]);
 
   const currentSubjectCompletion = useMemo(() => {
     if (!selectedSubject || !completionStatus.length) return null;
     return completionStatus.find((s: any) => s.subjectName === selectedSubject) as ExtendedSubjectCompletion | null;
   }, [selectedSubject, completionStatus]);
-
-  // Check if current exam type is marked as not conducted
-  const isCurrentExamNotConducted = useMemo(() => {
-    if (!currentSubjectCompletion || !currentSubjectCompletion.notConducted) return false;
-    return currentSubjectCompletion.notConducted[examType] || false;
-  }, [currentSubjectCompletion, examType]);
 
   const currentDraft = useMemo(() => {
     return drafts.find(d => 
@@ -1016,61 +982,54 @@ export default function ResultsEntry() {
     );
   }, [drafts, selectedClass, selectedSubject, examType, term, year]);
 
-  // Load draft data
+  // Load draft data - FIXED: Added proper dependencies
   useEffect(() => {
     if (currentDraft && currentDraft.id !== activeDraftId) {
       setStudents(currentDraft.results);
-      setTotalMarks(currentDraft.totalMarks);
-      setIsNotConducted(currentDraft.isNotConducted || false);
       setActiveDraftId(currentDraft.id);
-    } else if (!currentDraft) {
+    } else if (!currentDraft && activeDraftId) {
       setActiveDraftId(null);
-      // Check if this exam type is marked as not conducted in completion status
-      if (isCurrentExamNotConducted) {
-        setIsNotConducted(true);
-      } else {
-        setIsNotConducted(false);
-      }
+      // Reset students marks when no draft
+      setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
     }
-  }, [currentDraft, activeDraftId, isCurrentExamNotConducted]);
+  }, [currentDraft, activeDraftId]);
 
+  // Check if current exam type is completed
+  const isExamCompleted = useMemo(() => {
+    if (!currentSubjectCompletion || !examType) return false;
+    return currentSubjectCompletion[`${examType}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
+  }, [currentSubjectCompletion, examType]);
+
+  // Check if exam type is enabled (based on previous exams completion) - FIXED: Added null checks
   const isExamTypeEnabled = useCallback((type: 'week4' | 'week8' | 'endOfTerm') => {
-    if (!currentSubjectCompletion) return type === 'week4';
+    if (!currentSubjectCompletion || !availableExamTypes.length) return type === availableExamTypes[0]?.id;
     
-    // If exam type is marked as not conducted, it's considered complete for unlocking purposes
-    if (type === 'week4') return true;
-    if (type === 'week8') {
-      return currentSubjectCompletion.week4Complete || currentSubjectCompletion.notConducted?.week4 || false;
-    }
-    if (type === 'endOfTerm') {
-      return currentSubjectCompletion.week8Complete || currentSubjectCompletion.notConducted?.week8 || false;
-    }
+    const examIndex = availableExamTypes.findIndex(t => t.id === type);
+    if (examIndex === 0) return true;
+    if (examIndex === -1) return false;
     
-    return false;
-  }, [currentSubjectCompletion]);
+    const previousExam = availableExamTypes[examIndex - 1];
+    return currentSubjectCompletion[`${previousExam.id}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
+  }, [currentSubjectCompletion, availableExamTypes]);
 
+  // Auto-select first available exam type - FIXED: Added proper dependencies and null check
   useEffect(() => {
-    if (!currentSubjectCompletion) return;
-    
-    if (!isExamTypeEnabled(examType)) {
-      if (isExamTypeEnabled('week4')) {
-        setExamType('week4');
-      } else if (isExamTypeEnabled('week8')) {
-        setExamType('week8');
-      } else if (isExamTypeEnabled('endOfTerm')) {
-        setExamType('endOfTerm');
+    if (availableExamTypes.length > 0) {
+      const firstType = availableExamTypes[0].id as 'week4' | 'week8' | 'endOfTerm';
+      if (!availableExamTypes.some(t => t.id === examType)) {
+        setExamType(firstType);
       }
     }
-  }, [currentSubjectCompletion, examType, isExamTypeEnabled]);
+  }, [availableExamTypes, examType]);
 
-  // FIXED: Auto-select subject only if there's exactly one subject
+  // Auto-select subject if there's exactly one - FIXED: Added proper dependencies
   useEffect(() => {
     if (availableSubjects.length === 1 && !selectedSubject) {
       setSelectedSubject(availableSubjects[0]);
     }
   }, [availableSubjects, selectedSubject]);
 
-  // Load students
+  // Load students - FIXED: Added proper dependencies
   useEffect(() => {
     const loadStudents = async () => {
       if (!selectedClass) {
@@ -1113,12 +1072,12 @@ export default function ResultsEntry() {
     loadStudents();
   }, [selectedClass, assignedClasses]);
 
-  // Auto-save draft (only if there's a selected subject)
+  // Auto-save draft - FIXED: Added proper dependencies and cleanup
   useEffect(() => {
     if (!selectedClass || !selectedSubject || !students.length || !selectedClassData || isEditMode) return;
 
     const filledCount = students.filter(s => s.marks && s.marks !== '').length;
-    if (filledCount === 0 && !isNotConducted) {
+    if (filledCount === 0) {
       if (currentDraft) {
         const newDrafts = drafts.filter(d => d.id !== currentDraft.id);
         saveDrafts(newDrafts);
@@ -1140,8 +1099,7 @@ export default function ResultsEntry() {
         results: students.map(s => ({ ...s })),
         lastModified: new Date().toISOString(),
         completedCount: filledCount,
-        totalStudents: students.length,
-        isNotConducted
+        totalStudents: students.length
       };
 
       const existingIndex = drafts.findIndex(d => d.id === draftId);
@@ -1159,7 +1117,7 @@ export default function ResultsEntry() {
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [students, selectedClass, selectedSubject, examType, term, year, totalMarks, selectedClassData, isEditMode, isNotConducted, drafts, currentDraft, saveDrafts]);
+  }, [students, selectedClass, selectedSubject, examType, term, year, totalMarks, selectedClassData, isEditMode, drafts, currentDraft, saveDrafts]);
 
   const focusNextInput = useCallback((currentStudentId: string) => {
     const currentIndex = students.findIndex(s => s.id === currentStudentId);
@@ -1170,58 +1128,41 @@ export default function ResultsEntry() {
     }
   }, [students]);
 
-  // Fetch all exam data
+  // Fetch all exam data for PDF preview - FIXED: Added proper dependencies
   useEffect(() => {
     const fetchAllExamData = async () => {
-      if (!showPDFPreview || !selectedClass || !selectedSubject || !checkExisting) return;
+      if (!showPDFPreview || !selectedClass || !selectedSubject || !checkExisting || !availableExamTypes.length) return;
       
       setLoadingAllData(true);
       
       try {
-        const week4Response = await checkExisting({
-          classId: selectedClass,
-          subjectId: selectedSubject,
-          examType: 'week4',
-          term,
-          year,
-        });
+        const promises = availableExamTypes.map(type => 
+          checkExisting({
+            classId: selectedClass,
+            subjectId: selectedSubject,
+            examType: type.id as any,
+            term,
+            year,
+          })
+        );
         
-        const week8Response = await checkExisting({
-          classId: selectedClass,
-          subjectId: selectedSubject,
-          examType: 'week8',
-          term,
-          year,
-        });
-        
-        const eotResponse = await checkExisting({
-          classId: selectedClass,
-          subjectId: selectedSubject,
-          examType: 'endOfTerm',
-          term,
-          year,
-        });
+        const responses = await Promise.all(promises);
         
         const transformedData: ExamData = {
-          week4: (week4Response?.results || []).map((item: any) => ({
-            studentId: item.studentId || item.student_id,
-            studentName: item.studentName || item.student_name,
-            marks: item.marks,
-            student_id: item.student_id
-          })),
-          week8: (week8Response?.results || []).map((item: any) => ({
-            studentId: item.studentId || item.student_id,
-            studentName: item.studentName || item.student_name,
-            marks: item.marks,
-            student_id: item.student_id
-          })),
-          endOfTerm: (eotResponse?.results || []).map((item: any) => ({
-            studentId: item.studentId || item.student_id,
-            studentName: item.studentName || item.student_name,
-            marks: item.marks,
-            student_id: item.student_id
-          })),
+          week4: [],
+          week8: [],
+          endOfTerm: []
         };
+        
+        responses.forEach((response, index) => {
+          const examTypeId = availableExamTypes[index].id;
+          transformedData[examTypeId as keyof ExamData] = (response?.results || []).map((item: any) => ({
+            studentId: item.studentId || item.student_id,
+            studentName: item.studentName || item.student_name,
+            marks: item.marks,
+            student_id: item.student_id
+          }));
+        });
         
         setAllExamData(transformedData);
         
@@ -1233,7 +1174,7 @@ export default function ResultsEntry() {
     };
     
     fetchAllExamData();
-  }, [showPDFPreview, selectedClass, selectedSubject, term, year, checkExisting]);
+  }, [showPDFPreview, selectedClass, selectedSubject, term, year, checkExisting, availableExamTypes]);
 
   const handleMarksChange = useCallback((studentId: string, marks: string) => {
     if (marks && marks.toLowerCase() !== 'x' && !/^\d*$/.test(marks)) return;
@@ -1246,47 +1187,30 @@ export default function ResultsEntry() {
     ));
   }, [totalMarks]);
 
-  const handleToggleNotConducted = useCallback(() => {
-    setIsNotConducted(prev => {
-      const newState = !prev;
-      if (newState) {
-        // Clear all marks when marking as not conducted
-        setStudents(current => current.map(s => ({ ...s, marks: '' })));
-      }
-      return newState;
-    });
+  const handleMarkAbsent = useCallback((studentId: string) => {
+    setStudents(prev => prev.map(s =>
+      s.id === studentId ? { ...s, marks: s.marks.toLowerCase() === 'x' ? '' : 'x' } : s
+    ));
   }, []);
 
   const handleExamTypeChange = useCallback((type: 'week4' | 'week8' | 'endOfTerm') => {
     if (isExamTypeEnabled(type)) {
       setExamType(type);
       setIsEditMode(false);
-      
-      // Check if this exam type is marked as not conducted
-      if (currentSubjectCompletion?.notConducted?.[type]) {
-        setIsNotConducted(true);
-      } else {
-        setIsNotConducted(false);
-      }
     }
-  }, [currentSubjectCompletion, isExamTypeEnabled]);
+  }, [isExamTypeEnabled]);
 
   const handleEditResults = async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user || !currentSubjectCompletion) return;
 
+    const hasExistingResults = currentSubjectCompletion[`${examType}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
+
+    if (!hasExistingResults) {
+      alert('No results to edit for this exam type.');
+      return;
+    }
+
     try {
-      const hasExistingResults = 
-        (examType === 'week4' && currentSubjectCompletion.week4Complete) ||
-        (examType === 'week8' && currentSubjectCompletion.week8Complete) ||
-        (examType === 'endOfTerm' && currentSubjectCompletion.endOfTermComplete);
-
-      const isNotConducted = currentSubjectCompletion.notConducted?.[examType] || false;
-
-      if (!hasExistingResults && !isNotConducted) {
-        alert('No results to edit for this exam type.');
-        return;
-      }
-
       const existingResponse = await checkExisting({
         classId: selectedClass,
         subjectId: selectedSubject,
@@ -1324,7 +1248,6 @@ export default function ResultsEntry() {
       });
 
       setIsEditMode(true);
-      setIsNotConducted(false);
       await refetchCompletion();
       
     } catch (error: any) {
@@ -1346,36 +1269,22 @@ export default function ResultsEntry() {
       );
       setIsEditMode(false);
       setOriginalResults(new Map());
-      
-      // Restore not conducted state
-      if (currentSubjectCompletion?.notConducted?.[examType]) {
-        setIsNotConducted(true);
-      } else {
-        setIsNotConducted(false);
-      }
     }
-  }, [originalResults, currentSubjectCompletion, examType]);
+  }, [originalResults]);
 
   const handleSaveResults = async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
 
-    // If not conducted, save with special value -2 for all students
-    const results = isNotConducted 
-      ? students.map(s => ({
-          studentId: s.studentId,
-          studentName: s.name,
-          marks: -2, // -2 represents N/A (not conducted)
-        }))
-      : students
-          .filter(s => s.marks !== '')
-          .map(s => ({
-            studentId: s.studentId,
-            studentName: s.name,
-            marks: s.marks.toLowerCase() === 'x' ? -1 : parseInt(s.marks),
-          }));
+    const results = students
+      .filter(s => s.marks !== '')
+      .map(s => ({
+        studentId: s.studentId,
+        studentName: s.name,
+        marks: s.marks.toLowerCase() === 'x' ? -1 : parseInt(s.marks),
+      }));
 
-    if (results.length === 0 && !isNotConducted) {
-      alert('Please enter marks for at least one student or mark as Not Conducted');
+    if (results.length === 0) {
+      alert('Please enter marks for at least one student');
       return;
     }
 
@@ -1388,10 +1297,10 @@ export default function ResultsEntry() {
         teacherId: user.id,
         teacherName: user.name || user.email || 'Unknown',
         examType,
-        examName: `${examType} - ${selectedSubject}`,
+        examName: `${examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'} - ${selectedSubject}`,
         term,
         year,
-        totalMarks: isNotConducted ? 0 : totalMarks,
+        totalMarks,
         results,
         overwrite: isEditMode,
       });
@@ -1406,10 +1315,9 @@ export default function ResultsEntry() {
       setIsEditMode(false);
       setOriginalResults(new Map());
       
-      // Keep not conducted state as is since it's now saved
       await refetchCompletion();
       
-      alert(isNotConducted ? `${examType} marked as Not Conducted successfully!` : 'Results saved successfully!');
+      alert('Results saved successfully!');
       
     } catch (error: any) {
       console.error('Error saving results:', error);
@@ -1423,9 +1331,7 @@ export default function ResultsEntry() {
     setExamType(draft.examType);
     setTerm(draft.term);
     setYear(draft.year);
-    setTotalMarks(draft.totalMarks);
     setStudents(draft.results);
-    setIsNotConducted(draft.isNotConducted || false);
     setActiveDraftId(draft.id);
     setIsEditMode(false);
   }, []);
@@ -1453,7 +1359,7 @@ export default function ResultsEntry() {
       const studentsForPDF = students.map(student => {
         let marksValue = student.marks || '';
         
-        if (marksValue === '' && allExamData && allExamData[examType] && !isNotConducted) {
+        if (marksValue === '' && allExamData && allExamData[examType]) {
           const savedMark = allExamData[examType].find(
             (item: ExamDataItem) => item.studentId === student.studentId || item.student_id === student.studentId
           );
@@ -1465,7 +1371,7 @@ export default function ResultsEntry() {
         return {
           name: student.name,
           studentId: student.studentId,
-          marks: isNotConducted ? 'N/A' : marksValue
+          marks: marksValue
         };
       });
 
@@ -1475,12 +1381,11 @@ export default function ResultsEntry() {
         examType,
         term,
         year,
-        totalMarks: isNotConducted ? 0 : totalMarks,
+        totalMarks,
         students: studentsForPDF,
         teacherName: teacherDisplayName,
         schoolName: 'KALABO BOARDING SECONDARY SCHOOL',
-        allExamData: allExamData || undefined,
-        isNotConducted
+        allExamData: allExamData || undefined
       });
       
       setShowPDFPreview(false);
@@ -1494,35 +1399,28 @@ export default function ResultsEntry() {
   const totalStudents = students.length;
   const completionPercentage = totalStudents > 0 ? Math.round((filledCount / totalStudents) * 100) : 0;
   
-  const isCurrentExamLocked = currentSubjectCompletion 
-    ? !isExamTypeEnabled(examType)
-    : false;
-  
-  const isExamCompleted = currentSubjectCompletion
-    ? (examType === 'week4' && currentSubjectCompletion.week4Complete) ||
-      (examType === 'week8' && currentSubjectCompletion.week8Complete) ||
-      (examType === 'endOfTerm' && currentSubjectCompletion.endOfTermComplete)
-    : false;
+  const isCurrentExamLocked = examType && availableExamTypes.length > 0 ? !isExamTypeEnabled(examType) : false;
 
   // Check if any results exist for this exam type
   const hasExistingResults = currentSubjectCompletion
-    ? (examType === 'week4' && (currentSubjectCompletion.week4Complete || currentSubjectCompletion.notConducted?.week4)) ||
-      (examType === 'week8' && (currentSubjectCompletion.week8Complete || currentSubjectCompletion.notConducted?.week8)) ||
-      (examType === 'endOfTerm' && (currentSubjectCompletion.endOfTermComplete || currentSubjectCompletion.notConducted?.endOfTerm))
+    ? currentSubjectCompletion[`${examType}Complete` as keyof ExtendedSubjectCompletion] as boolean || false
     : false;
 
-  if (loadingClasses || loadingAssignments) {
+  if (loadingClasses || loadingAssignments || loadingExamConfig) {
     return (
       <DashboardLayout activeTab="results">
         <div className="p-3 sm:p-4 lg:p-6">
           <div className="flex flex-col items-center justify-center min-h-[50vh] sm:min-h-[60vh]">
             <Loader2 className="animate-spin text-blue-600 mb-3 sm:mb-4" size={32} />
-            <p className="text-sm sm:text-base text-gray-600">Loading your classes...</p>
+            <p className="text-sm sm:text-base text-gray-600">Loading...</p>
           </div>
         </div>
       </DashboardLayout>
     );
   }
+
+  // Check if exams are configured for this term
+  const noExamsConfigured = selectedClass && selectedSubject && availableExamTypes.length === 0;
 
   return (
     <DashboardLayout activeTab="results">
@@ -1537,29 +1435,18 @@ export default function ResultsEntry() {
             <p className="text-xs sm:text-sm text-gray-600 mt-0.5 sm:mt-1 truncate">
               {selectedClassData?.name || 'Select a class'} • {term} {year}
             </p>
-            {/* FIXED: Show warning if teacher is only form teacher */}
             {selectedClass && isOnlyFormTeacher && (
               <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                <Ban size={12} />
+                <AlertCircle size={12} />
                 You're the form teacher but don't teach any subjects in this class. You cannot enter results.
               </p>
             )}
           </div>
           
-          {/* Action Buttons - Only show if there's a selected subject (i.e., teacher actually teaches a subject) */}
-          {selectedClass && selectedSubject && students.length > 0 && (
+          {/* Action Buttons */}
+          {selectedClass && selectedSubject && students.length > 0 && availableExamTypes.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               
-              {/* Not Conducted Toggle - Show for all exam types when not in edit mode and not completed */}
-              {!isEditMode && !isExamCompleted && (
-                <NotConductedToggle
-                  isNotConducted={isNotConducted}
-                  onToggle={handleToggleNotConducted}
-                  disabled={isSaving || isEditing}
-                  examType={examType}
-                />
-              )}
-
               {/* Download Button */}
               <button
                 onClick={handleDownloadMarks}
@@ -1576,8 +1463,8 @@ export default function ResultsEntry() {
                 <span className="hidden xs:inline">Download</span>
               </button>
 
-              {/* Edit Button - Show if exam has existing results and not in edit mode */}
-              {hasExistingResults && !isEditMode && !isNotConducted && (
+              {/* Edit Button */}
+              {hasExistingResults && !isEditMode && (
                 <button
                   onClick={handleEditResults}
                   disabled={isEditing}
@@ -1600,18 +1487,18 @@ export default function ResultsEntry() {
                 </button>
               )}
 
-              {/* Save Button - Show when not completed OR in edit mode OR not conducted */}
-              {(!isExamCompleted || isEditMode || isNotConducted) && (
+              {/* Save Button */}
+              {(!isExamCompleted || isEditMode) && (
                 <button
                   onClick={handleSaveResults}
-                  disabled={isSaving || (filledCount === 0 && !isNotConducted) || isCurrentExamLocked}
+                  disabled={isSaving || filledCount === 0 || isCurrentExamLocked}
                   className={`
                     inline-flex items-center justify-center gap-1 sm:gap-2
-                    ${isEditMode ? 'bg-amber-600' : isNotConducted ? 'bg-gray-700' : 'bg-blue-600'} 
+                    ${isEditMode ? 'bg-amber-600' : 'bg-blue-600'} 
                     text-white rounded-xl hover:bg-opacity-90
                     font-medium transition-all active:scale-[0.98]
                     focus:outline-none focus:ring-2 focus:ring-offset-2
-                    ${isEditMode ? 'focus:ring-amber-500' : isNotConducted ? 'focus:ring-gray-500' : 'focus:ring-blue-500'}
+                    ${isEditMode ? 'focus:ring-amber-500' : 'focus:ring-blue-500'}
                     disabled:opacity-50 disabled:cursor-not-allowed
                     px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
                     ${isSmallMobile ? 'flex-1' : ''}
@@ -1620,10 +1507,10 @@ export default function ResultsEntry() {
                   {isSaving ? (
                     <Loader2 size={16} className="animate-spin" />
                   ) : (
-                    isNotConducted ? <Ban size={16} /> : <Save size={16} />
+                    <Save size={16} />
                   )}
                   <span className="hidden xs:inline">
-                    {isEditMode ? 'Update' : isNotConducted ? 'Save as Not Conducted' : 'Save'}
+                    {isEditMode ? 'Update' : 'Save'}
                   </span>
                 </button>
               )}
@@ -1634,7 +1521,7 @@ export default function ResultsEntry() {
         {/* Edit Mode Indicator */}
         <EditModeIndicator isEditing={isEditMode} onCancelEdit={handleCancelEdit} />
 
-        {/* Drafts Section - Only show if there's a selected subject */}
+        {/* Drafts Section */}
         {drafts.length > 0 && !isEditMode && selectedSubject && (
           <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4">
             <div className="flex items-center gap-1 sm:gap-2 mb-2 sm:mb-3">
@@ -1668,9 +1555,8 @@ export default function ResultsEntry() {
                 value={selectedClass}
                 onChange={e => {
                   setSelectedClass(e.target.value);
-                  setSelectedSubject(''); // Clear subject when class changes
+                  setSelectedSubject('');
                   setIsEditMode(false);
-                  setIsNotConducted(false);
                 }}
                 className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white truncate"
                 disabled={assignedClasses.length === 0 || isEditMode}
@@ -1684,7 +1570,7 @@ export default function ResultsEntry() {
               </select>
             </div>
             
-            {/* Subject Select - FIXED: Only shows subjects the teacher actually teaches */}
+            {/* Subject Select */}
             <div className="min-w-0">
               <label className="block text-[10px] sm:text-xs font-medium text-gray-600 mb-0.5 sm:mb-1">
                 Subject <span className="text-red-500">*</span>
@@ -1694,7 +1580,6 @@ export default function ResultsEntry() {
                 onChange={e => {
                   setSelectedSubject(e.target.value);
                   setIsEditMode(false);
-                  setIsNotConducted(false);
                 }}
                 className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white truncate"
                 disabled={!selectedClass || availableSubjects.length === 0 || isEditMode}
@@ -1707,7 +1592,6 @@ export default function ResultsEntry() {
                   <option key={subject} value={subject} className="truncate">{subject}</option>
                 ))}
               </select>
-              {/* FIXED: Show helpful message when teacher is only form teacher */}
               {selectedClass && availableSubjects.length === 0 && (
                 <p className="text-[10px] text-amber-600 mt-1">
                   You're the form teacher but don't teach any subjects in this class.
@@ -1726,7 +1610,6 @@ export default function ResultsEntry() {
                   onChange={e => {
                     setTerm(e.target.value);
                     setIsEditMode(false);
-                    setIsNotConducted(false);
                   }}
                   className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white"
                   disabled={isEditMode}
@@ -1746,7 +1629,6 @@ export default function ResultsEntry() {
                   onChange={e => {
                     setYear(parseInt(e.target.value) || new Date().getFullYear());
                     setIsEditMode(false);
-                    setIsNotConducted(false);
                   }}
                   className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm"
                   min="2020"
@@ -1756,32 +1638,27 @@ export default function ResultsEntry() {
               </div>
             </div>
             
-            {/* Total Marks */}
-            <div className="min-w-0">
-              <label className="block text-[10px] sm:text-xs font-medium text-gray-600 mb-0.5 sm:mb-1">
-                Total Marks
-              </label>
-              <input
-                type="number"
-                value={totalMarks}
-                onChange={e => setTotalMarks(parseInt(e.target.value) || 100)}
-                className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm"
-                min="1"
-                max="500"
-                disabled={(isExamCompleted && !isEditMode) || isNotConducted || !selectedSubject}
-              />
-            </div>
+            {/* Exam Config Summary */}
+            {currentExamConfig && (
+              <div className="min-w-0 bg-blue-50 rounded-lg p-2 flex items-center gap-2">
+                <GraduationCap size={14} className="text-blue-600 flex-shrink-0" />
+                <span className="text-xs text-blue-700">
+                  {availableExamTypes.length} of 3 exams configured
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Subject Progress - Only show if there's a selected subject */}
-        {selectedClass && selectedSubject && currentSubjectCompletion && (
+        {/* Subject Progress */}
+        {selectedClass && selectedSubject && currentSubjectCompletion && availableExamTypes.length > 0 && (
           <SubjectProgress 
             completion={currentSubjectCompletion}
             selectedExamType={examType}
             onExamTypeChange={handleExamTypeChange}
             hasDraft={!!currentDraft}
-            isNotConducted={isNotConducted}
+            availableExamTypes={availableExamTypes}
+            examConfig={currentExamConfig}
           />
         )}
 
@@ -1794,9 +1671,10 @@ export default function ResultsEntry() {
               hasClass={!!selectedClass}
               hasSubject={!!selectedSubject}
               hasStudents={students.length > 0}
+              noExamsConfigured={noExamsConfigured}
             />
             
-            {selectedClass && selectedSubject && students.length > 0 && (
+            {selectedClass && selectedSubject && students.length > 0 && availableExamTypes.length > 0 && (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 
                 {/* Header */}
@@ -1816,39 +1694,32 @@ export default function ResultsEntry() {
                         Edit Mode
                       </span>
                     )}
-                    {isNotConducted && (
-                      <span className="text-[10px] sm:text-xs bg-gray-200 text-gray-700 px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap">
-                        Not Conducted
-                      </span>
-                    )}
                   </div>
                   
                   {/* Progress */}
-                  {!isNotConducted && (
-                    <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-                      <span className="text-[10px] sm:text-xs text-gray-500">
-                        {filledCount}/{totalStudents}
-                      </span>
-                      <div className="w-16 sm:w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-blue-500 rounded-full transition-all duration-300"
-                          style={{ width: `${completionPercentage}%` }}
-                        />
-                      </div>
-                      {filledCount > 0 && !isExamCompleted && !isEditMode && (
-                        <button
-                          onClick={() => {
-                            if (confirm('Clear all entered marks?')) {
-                              setStudents(students.map(s => ({ ...s, marks: '' })));
-                            }
-                          }}
-                          className="text-[10px] sm:text-xs text-gray-500 hover:text-gray-700 hover:underline"
-                        >
-                          Clear
-                        </button>
-                      )}
+                  <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+                    <span className="text-[10px] sm:text-xs text-gray-500">
+                      {filledCount}/{totalStudents}
+                    </span>
+                    <div className="w-16 sm:w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                        style={{ width: `${completionPercentage}%` }}
+                      />
                     </div>
-                  )}
+                    {filledCount > 0 && !isExamCompleted && !isEditMode && (
+                      <button
+                        onClick={() => {
+                          if (confirm('Clear all entered marks?')) {
+                            setStudents(students.map(s => ({ ...s, marks: '' })));
+                          }
+                        }}
+                        className="text-[10px] sm:text-xs text-gray-500 hover:text-gray-700 hover:underline"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Mobile-Optimized Card List */}
@@ -1871,9 +1742,9 @@ export default function ResultsEntry() {
                           }}
                           onEnterPress={() => focusNextInput(student.id)}
                           isMobile={true}
-                          disabled={(isExamCompleted && !isEditMode) || isNotConducted}
+                          disabled={isExamCompleted && !isEditMode}
                           showExistingMark={existingMark}
-                          isNotConducted={isNotConducted}
+                          onMarkAbsent={handleMarkAbsent}
                         />
                       );
                     })}
@@ -1888,6 +1759,7 @@ export default function ResultsEntry() {
                           <th className="px-3 py-2 sm:py-3 text-left font-medium text-gray-600">Student</th>
                           <th className="px-3 py-2 sm:py-3 text-left font-medium text-gray-600">Marks</th>
                           <th className="px-3 py-2 sm:py-3 text-left font-medium text-gray-600">Grade</th>
+                          <th className="px-3 py-2 sm:py-3 text-left font-medium text-gray-600 w-16">Absent</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -1908,9 +1780,9 @@ export default function ResultsEntry() {
                               }}
                               onEnterPress={() => focusNextInput(student.id)}
                               isMobile={false}
-                              disabled={(isExamCompleted && !isEditMode) || isNotConducted}
+                              disabled={isExamCompleted && !isEditMode}
                               showExistingMark={existingMark}
-                              isNotConducted={isNotConducted}
+                              onMarkAbsent={handleMarkAbsent}
                             />
                           );
                         })}
@@ -1920,19 +1792,12 @@ export default function ResultsEntry() {
                 )}
                 
                 {/* Status Messages */}
-                {!isExamCompleted && !isCurrentExamLocked && !isEditMode && !isNotConducted && (
+                {!isExamCompleted && !isCurrentExamLocked && !isEditMode && (
                   <div className="px-3 sm:px-4 py-2 bg-gray-50 border-t border-gray-200 text-[10px] sm:text-xs text-gray-500 flex flex-wrap items-center gap-2 sm:gap-4">
                     <span>⏎ Enter: next</span>
-                    <span>X: absent</span>
+                    <span>X: absent (click absent button)</span>
                     <span>0-{totalMarks}: marks</span>
                     <span className="ml-auto">Auto-saved</span>
-                  </div>
-                )}
-                
-                {isNotConducted && (
-                  <div className="px-3 sm:px-4 py-3 bg-gray-100 border-t border-gray-200 text-xs sm:text-sm text-gray-700 flex items-center gap-2">
-                    <Ban size={16} />
-                    <span>✗ This test has been marked as <strong>Not Conducted</strong>. No marks will be considered for reports.</span>
                   </div>
                 )}
                 
@@ -1945,7 +1810,7 @@ export default function ResultsEntry() {
                   </div>
                 )}
                 
-                {isExamCompleted && !isEditMode && !isNotConducted && (
+                {isExamCompleted && !isEditMode && (
                   <div className="px-3 sm:px-4 py-3 bg-green-50 border-t border-green-200 text-xs sm:text-sm text-green-700 flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <CheckCircle size={16} />
@@ -1986,11 +1851,11 @@ export default function ResultsEntry() {
           </div>
         )}
 
-        {/* FIXED: Special state for form teachers with no subjects */}
+        {/* Form Teacher Only State */}
         {selectedClass && isOnlyFormTeacher && !selectedSubject && (
           <div className="bg-white rounded-xl border border-gray-200 p-6 sm:p-12 text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-amber-100 rounded-full mb-3 sm:mb-4">
-              <Ban className="text-amber-600" size={isMobile ? 24 : 32} />
+              <AlertCircle className="text-amber-600" size={isMobile ? 24 : 32} />
             </div>
             <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1 sm:mb-2">Form Teacher Only</h3>
             <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto">
@@ -2015,7 +1880,6 @@ export default function ResultsEntry() {
           onDownload={handleGeneratePDF}
           allExamData={allExamData}
           loadingAllData={loadingAllData}
-          isNotConducted={isNotConducted}
         />
       )}
     </DashboardLayout>

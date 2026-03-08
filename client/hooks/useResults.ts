@@ -1,5 +1,5 @@
-// @/hooks/useResults.ts - FIXED VERSION with correct progress calculation
-// Version 2.3.1 - Fixed student progress calculation to properly handle not_conducted status
+// @/hooks/useResults.ts - UPDATED WITH EXAM CONFIGURATION SUPPORT
+// Version 2.4.0 - Added support for configured exams in progress calculation
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
@@ -28,6 +28,13 @@ export interface StudentProgressSummary {
 export interface StudentProgressData {
   students: StudentProgress[];
   summary: StudentProgressSummary;
+}
+
+// Extended options for report generation with exam configuration
+export interface ReportGenerationOptions {
+  includeIncomplete?: boolean;
+  markMissing?: boolean;
+  configuredExamTypes?: string[]; // NEW: Which exams are configured for this term
 }
 
 // Helper function for grade calculation
@@ -209,14 +216,11 @@ export const useResults = (options?: {
       studentId: string;
       term: string;
       year: number;
-      options?: {
-        includeIncomplete?: boolean;
-        markMissing?: boolean;
-      };
+      options?: ReportGenerationOptions; // UPDATED: Use extended options
     }) => resultsService.generateReportCard(studentId, term, year, options),
     onSuccess: (data, variables) => {
       if (data) {
-        console.log(`✅ Generated report card for ${data.studentName}`);
+        console.log(`✅ Generated report card for ${data.studentName} with ${variables.options?.configuredExamTypes?.length || 3} configured exams`);
         queryClient.setQueryData(
           ['reportCard', variables.studentId, variables.term, variables.year, variables.options?.includeIncomplete, variables.options?.markMissing],
           data
@@ -235,13 +239,10 @@ export const useResults = (options?: {
       classId: string;
       term: string;
       year: number;
-      options?: {
-        includeIncomplete?: boolean;
-        markMissing?: boolean;
-      };
+      options?: ReportGenerationOptions; // UPDATED: Use extended options
     }) => resultsService.generateClassReportCards(classId, term, year, options),
     onSuccess: (data, variables) => {
-      console.log(`✅ Generated ${data.reportCards.length} class report cards`);
+      console.log(`✅ Generated ${data.reportCards.length} class report cards with ${variables.options?.configuredExamTypes?.length || 3} configured exams`);
       queryClient.invalidateQueries({ 
         queryKey: ['reportCards', 'class', variables.classId, variables.term, variables.year] 
       });

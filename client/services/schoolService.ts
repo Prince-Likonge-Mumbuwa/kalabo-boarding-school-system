@@ -1,4 +1,4 @@
-// @/services/schoolService.ts - COMPREHENSIVE UPDATE WITH HARD DELETE METHODS
+// @/services/schoolService.ts - COMPREHENSIVE UPDATE WITH TEACHER MANAGEMENT METHODS
 import {
   collection,
   query,
@@ -1587,8 +1587,12 @@ const teacherService = {
     return classService.getTeacherAssignmentsByClass(classId);
   },
 
+  // ==================== FIXED ASSIGNMENT METHODS ====================
+
   /**
    * Assign a teacher to a class with a specific subject
+   * FIXED: Allows multiple subjects per teacher per class
+   * FIXED: Properly handles form teacher assignments without subject validation
    */
   assignTeacherToClass: async (
     teacherId: string, 
@@ -1599,13 +1603,21 @@ const teacherService = {
     try {
       console.log('Starting teacher assignment:', { teacherId, classId, subject, isFormTeacher });
       
-      // Validate subject is provided
+      // Special handling for form teacher assignment (no subject validation)
+      const isFormTeacherAssignment = isFormTeacher && subject === 'Form Teacher';
+      
+      // Validate subject is provided (except for form teacher assignments)
       if (!subject || subject.trim() === '') {
-        throw new Error('Subject is required when assigning a teacher to a class');
+        if (isFormTeacher) {
+          // For form teacher only, we can set a default
+          subject = 'Form Teacher';
+        } else {
+          throw new Error('Subject is required when assigning a teacher to a class');
+        }
       }
       
-      // Normalize subject name for validation
-      const normalizedSubject = normalizeSubjectName(subject);
+      // Normalize subject name for validation (skip for form teacher)
+      const normalizedSubject = !isFormTeacherAssignment ? normalizeSubjectName(subject) : 'form-teacher';
       console.log(`Normalized subject: ${subject} → ${normalizedSubject}`);
       
       // Get teacher and class data
@@ -1618,10 +1630,12 @@ const teacherService = {
       
       const teacherData = teacherDoc.data() as DocumentData;
       
-      // Validate that the teacher actually teaches this subject (using normalized comparison)
-      const teacherSubjects = (teacherData.subjects || []).map((s: string) => normalizeSubjectName(s));
-      if (!teacherSubjects.includes(normalizedSubject)) {
-        throw new Error(`Teacher does not teach ${subject} (normalized: ${normalizedSubject}). Their subjects are: ${teacherData.subjects.join(', ')}`);
+      // Validate that the teacher actually teaches this subject (skip for form teacher assignments)
+      if (!isFormTeacherAssignment) {
+        const teacherSubjects = (teacherData.subjects || []).map((s: string) => normalizeSubjectName(s));
+        if (!teacherSubjects.includes(normalizedSubject)) {
+          throw new Error(`Teacher does not teach ${subject} (normalized: ${normalizedSubject}). Their subjects are: ${teacherData.subjects.join(', ')}`);
+        }
       }
       
       const classRef = doc(db, 'classes', classId);
@@ -1635,57 +1649,82 @@ const teacherService = {
       
       console.log('Teacher and class data retrieved successfully');
       
-      // Check if this teacher is already assigned to this class for a different subject
+      // FIXED: Check if this specific subject assignment already exists
+      // We now allow multiple subjects per teacher per class, but not duplicates of the same subject
       const existingAssignmentsRef = collection(db, 'teacher_assignments');
-      const existingQuery = query(
+      
+      // Check for existing assignment with the SAME SUBJECT
+      const sameSubjectQuery = query(
         existingAssignmentsRef,
         where('teacherId', '==', teacherId),
-        where('classId', '==', classId)
+        where('classId', '==', classId),
+        where('subject', '==', subject) // Exact subject match
       );
-      const existingSnapshot = await getDocs(existingQuery);
+      const sameSubjectSnapshot = await getDocs(sameSubjectQuery);
       
-      if (!existingSnapshot.empty) {
-        // Teacher already assigned to this class
-        const existingAssignment = existingSnapshot.docs[0];
+      if (!sameSubjectSnapshot.empty) {
+        // Same subject already assigned - just update form teacher status if needed
+        const existingAssignment = sameSubjectSnapshot.docs[0];
         const existingData = existingAssignment.data();
-        const existingNormalizedSubject = normalizeSubjectName(existingData.subject || '');
         
-        if (existingNormalizedSubject === normalizedSubject) {
-          // Same subject, just update isFormTeacher if needed
-          if (isFormTeacher !== existingData.isFormTeacher) {
-            const batch = writeBatch(db);
-            batch.update(existingAssignment.ref, {
+        if (isFormTeacher !== existingData.isFormTeacher) {
+          const batch = writeBatch(db);
+          
+          // Update the assignment
+          batch.update(existingAssignment.ref, {
+            isFormTeacher,
+            updatedAt: serverTimestamp(),
+          });
+          
+          // Update class form teacher if needed
+          if (isFormTeacher) {
+            // Check if another teacher is already form teacher for this class
+            if (classData.formTeacherId && classData.formTeacherId !== teacherId) {
+              throw new Error(`Class already has a form teacher (${classData.formTeacherName || classData.formTeacherId}). A class can only have one form teacher.`);
+            }
+            
+            batch.update(classRef, {
+              formTeacherId: teacherId,
+              formTeacherName: teacherData.name,
+              updatedAt: serverTimestamp(),
+            });
+          } else if (existingData.isFormTeacher && !isFormTeacher) {
+            // Removing form teacher status
+            batch.update(classRef, {
+              formTeacherId: null,
+              formTeacherName: null,
+              updatedAt: serverTimestamp(),
+            });
+          }
+          
+          // Update teacher's form teacher flag if needed
+          if (isFormTeacher !== teacherData.isFormTeacher) {
+            batch.update(teacherRef, {
               isFormTeacher,
               updatedAt: serverTimestamp(),
             });
-            
-            if (isFormTeacher) {
-              batch.update(classRef, {
-                formTeacherId: teacherId,
-                formTeacherName: teacherData.name,
-                updatedAt: serverTimestamp(),
-              });
-              batch.update(teacherRef, {
-                isFormTeacher: true,
-                updatedAt: serverTimestamp(),
-              });
-            }
-            
-            await batch.commit();
-            console.log('Updated existing assignment form teacher status');
-          } else {
-            console.log('Assignment already exists with same subject');
           }
-          return;
+          
+          await batch.commit();
+          console.log('Updated existing assignment form teacher status');
         } else {
-          throw new Error(`Teacher is already assigned to this class for ${existingData.subject}. Remove the existing assignment first.`);
+          console.log('Assignment already exists with same subject');
+        }
+        return;
+      }
+      
+      // FIXED: Check for form teacher conflict - only one form teacher per class
+      if (isFormTeacher) {
+        // Check if class already has a different form teacher
+        if (classData.formTeacherId && classData.formTeacherId !== teacherId) {
+          throw new Error(`Class already has a form teacher (${classData.formTeacherName || classData.formTeacherId}). A class can only have one form teacher.`);
         }
       }
       
       // Use writeBatch for atomic updates
       const batch = writeBatch(db);
       
-      // 1. Create assignment in teacher_assignments collection with normalized subject
+      // 1. Create assignment in teacher_assignments collection
       const assignmentRef = doc(collection(db, 'teacher_assignments'));
       batch.set(assignmentRef, {
         teacherId,
@@ -1694,35 +1733,59 @@ const teacherService = {
         classId,
         className: classData.name,
         subject, // Store original subject name
-        normalizedSubject, // Store normalized subject ID for matching
+        normalizedSubject: isFormTeacherAssignment ? 'form-teacher' : normalizedSubject, // Store normalized subject ID for matching
         isFormTeacher,
         assignedAt: serverTimestamp(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
       
-      console.log('Teacher assignment document queued with subject:', subject, '(normalized:', normalizedSubject, ')');
+      console.log('Teacher assignment document queued with subject:', subject);
       
-      // 2. Update the class document to track teachers
-      batch.update(classRef, {
-        teachers: arrayUnion(teacherId),
-        ...(isFormTeacher && {
+      // 2. Update the class document to track teachers (if not already tracked)
+      // Check if teacher is already in the teachers array
+      const teachersArray = classData.teachers || [];
+      if (!teachersArray.includes(teacherId)) {
+        batch.update(classRef, {
+          teachers: arrayUnion(teacherId),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      
+      // Update form teacher if applicable
+      if (isFormTeacher) {
+        batch.update(classRef, {
           formTeacherId: teacherId,
           formTeacherName: teacherData.name,
-        }),
-        updatedAt: serverTimestamp(),
-      });
+          updatedAt: serverTimestamp(),
+        });
+      }
       
       console.log('Class document update queued');
       
       // 3. Update teacher's user document
-      batch.update(teacherRef, {
-        assignedClasses: arrayUnion(classId),
-        assignedClassId: classId,
-        assignedClassName: classData.name,
-        isFormTeacher: isFormTeacher || teacherData.isFormTeacher || false,
+      const teacherUpdates: any = {
         updatedAt: serverTimestamp(),
-      });
+      };
+      
+      // Add class to assignedClasses if not already there
+      const assignedClasses = teacherData.assignedClasses || [];
+      if (!assignedClasses.includes(classId)) {
+        teacherUpdates.assignedClasses = arrayUnion(classId);
+      }
+      
+      // Update form teacher flag if this assignment makes them form teacher
+      if (isFormTeacher && !teacherData.isFormTeacher) {
+        teacherUpdates.isFormTeacher = true;
+      }
+      
+      // For backward compatibility, we might still set assignedClassId
+      // But we should only do this if it's the ONLY class or we need a primary class
+      // For now, let's keep the last assigned class as the "primary"
+      teacherUpdates.assignedClassId = classId;
+      teacherUpdates.assignedClassName = classData.name;
+      
+      batch.update(teacherRef, teacherUpdates);
       
       console.log('Teacher user document update queued');
       
@@ -1733,6 +1796,67 @@ const teacherService = {
     } catch (error) {
       console.error('Error in assignTeacherToClass:', error);
       throw error;
+    }
+  },
+
+  /**
+   * Assign a teacher as form teacher only (no subject)
+   * NEW: Helper function for form teacher only assignments
+   */
+  assignFormTeacherOnly: async (
+    teacherId: string,
+    classId: string
+  ): Promise<void> => {
+    return teacherService.assignTeacherToClass(teacherId, classId, 'Form Teacher', true);
+  },
+
+  /**
+   * Get all subjects a teacher teaches in a specific class
+   * NEW: Helper function for ResultsEntry dropdown
+   */
+  getTeacherSubjectsForClass: async (teacherId: string, classId: string): Promise<string[]> => {
+    try {
+      const assignmentsRef = collection(db, 'teacher_assignments');
+      const q = query(
+        assignmentsRef,
+        where('teacherId', '==', teacherId),
+        where('classId', '==', classId)
+      );
+      
+      const snapshot = await getDocs(q);
+      const subjects = snapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          // Filter out "Form Teacher" if it's just a form teacher assignment
+          if (data.subject === 'Form Teacher' && !data.isFormTeacher) {
+            return null;
+          }
+          return data.subject;
+        })
+        .filter(subject => subject !== null); // Remove null values
+      
+      console.log(`📚 Teacher ${teacherId} teaches subjects in class ${classId}:`, subjects);
+      return subjects;
+    } catch (error) {
+      console.error('Error getting teacher subjects for class:', error);
+      return [];
+    }
+  },
+
+  /**
+   * Check if teacher is form teacher for a class
+   * NEW: Helper function
+   */
+  isFormTeacherForClass: async (teacherId: string, classId: string): Promise<boolean> => {
+    try {
+      const classDoc = await getDoc(doc(db, 'classes', classId));
+      if (!classDoc.exists()) return false;
+      
+      const classData = classDoc.data();
+      return classData.formTeacherId === teacherId;
+    } catch (error) {
+      console.error('Error checking form teacher status:', error);
+      return false;
     }
   },
 
@@ -1756,7 +1880,173 @@ const teacherService = {
   },
 
   /**
-   * Remove a teacher from a class
+   * Update teacher information (name, email, phone, department, subjects)
+   */
+  updateTeacher: async (teacherId: string, updates: Partial<Teacher>): Promise<void> => {
+    try {
+      const teacherRef = doc(db, 'users', teacherId);
+      
+      // Remove undefined fields
+      const cleanUpdates = Object.entries(updates).reduce((acc, [key, value]) => {
+        if (value !== undefined) {
+          acc[key] = value;
+        }
+        return acc;
+      }, {} as Record<string, any>);
+      
+      cleanUpdates.updatedAt = serverTimestamp();
+      
+      await updateDoc(teacherRef, cleanUpdates);
+      console.log(`✅ Updated teacher ${teacherId}`);
+    } catch (error) {
+      console.error('Error updating teacher:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Hard delete a teacher (permanent)
+   * Note: This will fail if teacher has any assignments. Remove assignments first.
+   */
+  deleteTeacher: async (teacherId: string): Promise<void> => {
+    try {
+      // Check if teacher has any assignments
+      const assignments = await teacherService.getTeacherAssignments(teacherId);
+      
+      if (assignments.length > 0) {
+        throw new Error(`Cannot delete teacher with ${assignments.length} class assignments. Remove assignments first.`);
+      }
+      
+      const teacherRef = doc(db, 'users', teacherId);
+      await deleteDoc(teacherRef);
+      console.log(`✅ Teacher ${teacherId} permanently deleted`);
+    } catch (error) {
+      console.error('Error deleting teacher:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Remove a specific subject assignment from a teacher in a class
+   * FIXED: More precise removal - only removes the specified subject
+   */
+  removeTeacherSubject: async (teacherId: string, classId: string, subject: string): Promise<void> => {
+    try {
+      console.log('Removing teacher subject:', { teacherId, classId, subject });
+      
+      // Find the specific assignment
+      const assignmentsRef = collection(db, 'teacher_assignments');
+      const q = query(
+        assignmentsRef,
+        where('teacherId', '==', teacherId),
+        where('classId', '==', classId),
+        where('subject', '==', subject)
+      );
+      
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) {
+        throw new Error(`Assignment not found for subject: ${subject}`);
+      }
+      
+      const batch = writeBatch(db);
+      let wasFormTeacher = false;
+      
+      // Delete the specific assignment
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        wasFormTeacher = data.isFormTeacher || false;
+        batch.delete(doc.ref);
+      });
+      
+      // Check if this teacher has any other assignments in this class
+      const remainingQuery = query(
+        assignmentsRef,
+        where('teacherId', '==', teacherId),
+        where('classId', '==', classId)
+      );
+      const remainingSnapshot = await getDocs(remainingQuery);
+      
+      const teacherRef = doc(db, 'users', teacherId);
+      const classRef = doc(db, 'classes', classId);
+      
+      if (remainingSnapshot.empty) {
+        // No assignments left in this class - remove teacher from class entirely
+        batch.update(teacherRef, {
+          assignedClasses: arrayRemove(classId),
+          updatedAt: serverTimestamp()
+        });
+        
+        batch.update(classRef, {
+          teachers: arrayRemove(teacherId),
+          updatedAt: serverTimestamp()
+        });
+        
+        // If this teacher was the form teacher, remove that too
+        if (wasFormTeacher) {
+          batch.update(classRef, {
+            formTeacherId: null,
+            formTeacherName: null,
+          });
+          
+          // Check if teacher is form teacher for any other class
+          const otherClassesQuery = query(
+            collection(db, 'classes'),
+            where('formTeacherId', '==', teacherId)
+          );
+          const otherClassesSnapshot = await getDocs(otherClassesQuery);
+          
+          if (otherClassesSnapshot.empty) {
+            // No longer form teacher for any class
+            batch.update(teacherRef, {
+              isFormTeacher: false,
+            });
+          }
+        }
+      } else {
+        // Teacher still has other subjects in this class
+        // Just update if we removed form teacher status
+        if (wasFormTeacher) {
+          // Check if any remaining assignment has isFormTeacher true
+          const hasFormTeacherRemaining = remainingSnapshot.docs.some(
+            doc => doc.data().isFormTeacher === true
+          );
+          
+          if (!hasFormTeacherRemaining) {
+            // No longer form teacher for this class
+            batch.update(classRef, {
+              formTeacherId: null,
+              formTeacherName: null,
+              updatedAt: serverTimestamp()
+            });
+            
+            // Check if teacher is form teacher for any other class
+            const otherClassesQuery = query(
+              collection(db, 'classes'),
+              where('formTeacherId', '==', teacherId)
+            );
+            const otherClassesSnapshot = await getDocs(otherClassesQuery);
+            
+            if (otherClassesSnapshot.empty) {
+              // No longer form teacher for any class
+              batch.update(teacherRef, {
+                isFormTeacher: false,
+              });
+            }
+          }
+        }
+      }
+      
+      await batch.commit();
+      console.log(`✅ Removed subject ${subject} from teacher ${teacherId} in class ${classId}`);
+    } catch (error) {
+      console.error('Error removing teacher subject:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Remove a teacher from a class (all subjects)
    */
   removeTeacherFromClass: async (teacherId: string, classId: string): Promise<void> => {
     try {
@@ -1828,6 +2118,154 @@ const teacherService = {
       
     } catch (error) {
       console.error('Error in removeTeacherFromClass:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get all classes a teacher is assigned to with their subjects
+   * NEW: Comprehensive teacher assignment overview
+   */
+  getTeacherFullAssignments: async (teacherId: string): Promise<{
+    classId: string;
+    className: string;
+    subjects: string[];
+    isFormTeacher: boolean;
+  }[]> => {
+    try {
+      const assignments = await teacherService.getTeacherAssignments(teacherId);
+      
+      // Group by class
+      const classMap = new Map<string, {
+        className: string;
+        subjects: Set<string>;
+        isFormTeacher: boolean;
+      }>();
+      
+      assignments.forEach(assignment => {
+        if (!classMap.has(assignment.classId)) {
+          classMap.set(assignment.classId, {
+            className: assignment.className,
+            subjects: new Set(),
+            isFormTeacher: assignment.isFormTeacher,
+          });
+        }
+        
+        const classData = classMap.get(assignment.classId)!;
+        classData.subjects.add(assignment.subject);
+        
+        // If any assignment marks them as form teacher, they are form teacher
+        if (assignment.isFormTeacher) {
+          classData.isFormTeacher = true;
+        }
+      });
+      
+      return Array.from(classMap.entries()).map(([classId, data]) => ({
+        classId,
+        className: data.className,
+        subjects: Array.from(data.subjects).filter(s => s !== 'Form Teacher'),
+        isFormTeacher: data.isFormTeacher,
+      }));
+    } catch (error) {
+      console.error('Error getting teacher full assignments:', error);
+      return [];
+    }
+  },
+
+  /**
+   * Transfer teacher between classes with subject mapping
+   */
+  transferTeacher: async (
+    teacherId: string,
+    fromClassId: string,
+    toClassId: string,
+    subjectMapping?: Record<string, string> // Map old subject names to new ones
+  ): Promise<void> => {
+    try {
+      // Get all assignments from source class
+      const assignments = await teacherService.getTeacherAssignments(teacherId);
+      const fromClassAssignments = assignments.filter(a => a.classId === fromClassId);
+      
+      if (fromClassAssignments.length === 0) {
+        throw new Error('No assignments found for teacher in source class');
+      }
+      
+      const batch = writeBatch(db);
+      
+      // Get target class details
+      const toClassDoc = await getDoc(doc(db, 'classes', toClassId));
+      if (!toClassDoc.exists()) {
+        throw new Error('Target class not found');
+      }
+      const toClassData = toClassDoc.data() as DocumentData;
+      
+      // For each assignment, create new assignment in target class
+      for (const assignment of fromClassAssignments) {
+        const newSubject = subjectMapping?.[assignment.subject] || assignment.subject;
+        
+        // Create new assignment
+        const newAssignmentRef = doc(collection(db, 'teacher_assignments'));
+        batch.set(newAssignmentRef, {
+          teacherId: assignment.teacherId,
+          teacherName: assignment.teacherName,
+          teacherEmail: assignment.teacherEmail,
+          classId: toClassId,
+          className: toClassData.name,
+          subject: newSubject,
+          normalizedSubject: normalizeSubjectName(newSubject),
+          isFormTeacher: assignment.isFormTeacher,
+          assignedAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        
+        // Delete old assignment
+        const oldAssignmentRef = doc(db, 'teacher_assignments', assignment.id);
+        batch.delete(oldAssignmentRef);
+      }
+      
+      // Update teacher document
+      const teacherRef = doc(db, 'users', teacherId);
+      
+      // First remove from old class, then add to new class
+      batch.update(teacherRef, {
+        assignedClasses: arrayRemove(fromClassId),
+        updatedAt: serverTimestamp()
+      });
+      
+      batch.update(teacherRef, {
+        assignedClasses: arrayUnion(toClassId),
+        assignedClassId: toClassId,
+        assignedClassName: toClassData.name,
+        updatedAt: serverTimestamp()
+      });
+      
+      // Update source class
+      const fromClassRef = doc(db, 'classes', fromClassId);
+      batch.update(fromClassRef, {
+        teachers: arrayRemove(teacherId),
+        updatedAt: serverTimestamp()
+      });
+      
+      // Update target class
+      const toClassRef = doc(db, 'classes', toClassId);
+      const updateData: any = {
+        teachers: arrayUnion(teacherId),
+        updatedAt: serverTimestamp()
+      };
+      
+      // If teacher was form teacher in source class, set as form teacher in target class
+      if (fromClassAssignments.some(a => a.isFormTeacher)) {
+        updateData.formTeacherId = teacherId;
+        updateData.formTeacherName = fromClassAssignments[0].teacherName;
+      }
+      
+      batch.update(toClassRef, updateData);
+      
+      await batch.commit();
+      console.log(`✅ Transferred teacher ${teacherId} from ${fromClassId} to ${toClassId}`);
+    } catch (error) {
+      console.error('Error transferring teacher:', error);
       throw error;
     }
   },

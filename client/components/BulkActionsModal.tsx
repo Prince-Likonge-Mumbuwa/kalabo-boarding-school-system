@@ -1,6 +1,6 @@
 // @/components/BulkActionsModal.tsx
-import { X, Users, ArrowRight, AlertCircle } from 'lucide-react';
-import { useState } from 'react';
+import { X, Users, ArrowRight, AlertCircle, CheckSquare, Square } from 'lucide-react';
+import { useState, useMemo } from 'react';
 import { Class } from '@/types/school';
 
 interface BulkActionsModalProps {
