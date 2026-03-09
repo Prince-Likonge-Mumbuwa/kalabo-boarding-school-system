@@ -1,3 +1,4 @@
+// @/pages/SignUp.tsx - UPDATED with relaxed validation
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
@@ -227,28 +228,29 @@ export default function SignUp() {
     const dob = new Date(formData.dateOfBirth);
     const today = new Date();
     const age = today.getFullYear() - dob.getFullYear();
-    if (age < 18) {
+    const monthDiff = today.getMonth() - dob.getMonth();
+    if (age < 18 || (age === 18 && monthDiff < 0)) {
       errors.push('Teacher must be at least 18 years old');
     }
 
-    // TS Number validation (Teaching Service Number format: TS followed by 6 digits)
-    const tsRegex = /^TS\d{6}$/;
-    if (!tsRegex.test(formData.tsNumber)) {
-      errors.push('TS Number must be in format: TS123456');
+    // UPDATED: TS Number validation - any sequence less than 10 characters
+    if (!formData.tsNumber || formData.tsNumber.length >= 10) {
+      errors.push('TS Number must be less than 10 characters');
     }
 
-    // Employee number validation (EMP followed by 5 digits)
-    const empRegex = /^EMP\d{5}$/;
-    if (!empRegex.test(formData.employeeNumber)) {
-      errors.push('Employee Number must be in format: EMP12345');
+    // UPDATED: Employee number validation - any sequence less than 10 characters
+    if (!formData.employeeNumber || formData.employeeNumber.length >= 10) {
+      errors.push('Employee Number must be less than 10 characters');
     }
 
     // Date validations
-    const firstAppointment = new Date(formData.dateOfFirstAppointment);
-    const currentAppointment = new Date(formData.dateOfCurrentAppointment);
-    
-    if (currentAppointment < firstAppointment) {
-      errors.push('Current appointment date cannot be before first appointment');
+    if (formData.dateOfFirstAppointment && formData.dateOfCurrentAppointment) {
+      const firstAppointment = new Date(formData.dateOfFirstAppointment);
+      const currentAppointment = new Date(formData.dateOfCurrentAppointment);
+      
+      if (currentAppointment < firstAppointment) {
+        errors.push('Current appointment date cannot be before first appointment');
+      }
     }
 
     // Subjects validation
@@ -581,7 +583,7 @@ export default function SignUp() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* TS Number */}
+                    {/* TS Number - UPDATED placeholder */}
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-gray-700">
                         TS Number *
@@ -593,16 +595,17 @@ export default function SignUp() {
                           name="tsNumber"
                           value={formData.tsNumber}
                           onChange={handleChange}
-                          placeholder="TS123456"
+                          placeholder="e.g., TS123 or 45678"
                           className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
                           required
                           disabled={loading}
+                          maxLength={9}
                         />
                       </div>
-                      <p className="text-xs text-gray-500">Teaching Service Number (TS123456)</p>
+                      <p className="text-xs text-gray-500">Any sequence less than 10 characters</p>
                     </div>
 
-                    {/* Employee Number */}
+                    {/* Employee Number - UPDATED placeholder */}
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-gray-700">
                         Employee Number *
@@ -614,13 +617,14 @@ export default function SignUp() {
                           name="employeeNumber"
                           value={formData.employeeNumber}
                           onChange={handleChange}
-                          placeholder="EMP12345"
+                          placeholder="e.g., EMP123 or 7890"
                           className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
                           required
                           disabled={loading}
+                          maxLength={9}
                         />
                       </div>
-                      <p className="text-xs text-gray-500">Format: EMP12345</p>
+                      <p className="text-xs text-gray-500">Any sequence less than 10 characters</p>
                     </div>
                   </div>
 

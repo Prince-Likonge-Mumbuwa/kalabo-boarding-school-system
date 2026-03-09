@@ -318,7 +318,7 @@ export default function AdminDashboard() {
                 Admin Dashboard
               </h1>
               <p className="text-sm sm:text-base text-gray-600 mt-1 sm:mt-2 break-words">
-                Welcome back, {user?.name?.split(' ')[0] || 'Admin'}!
+                Welcome back, {user?.fullName?.split(' ')[0] || 'Admin'}!
               </p>
             </div>
             

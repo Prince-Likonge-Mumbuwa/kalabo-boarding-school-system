@@ -1,8 +1,7 @@
 // @/hooks/useTeacherAssignments.ts
 import { useQuery } from '@tanstack/react-query';
-import { teacherService } from '@/services/schoolService';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 
 export interface TeacherAssignment {
   id: string;
@@ -20,31 +19,32 @@ export const useTeacherAssignments = (teacherId?: string) => {
     if (!teacherId) return [];
     
     try {
-      const assignmentsRef = collection(db, 'teacherAssignments');
+      // FIXED: Use correct collection name with underscore
+      const assignmentsRef = collection(db, 'teacher_assignments');
       const q = query(assignmentsRef, where('teacherId', '==', teacherId));
       const snapshot = await getDocs(q);
       
-      // Also fetch class names for each assignment
+      console.log(`📚 Found ${snapshot.size} assignments for teacher ${teacherId} in teacher_assignments`);
+      
       const assignments = await Promise.all(
-        snapshot.docs.map(async (doc) => {
-          const data = doc.data();
+        snapshot.docs.map(async (docSnapshot) => {
+          const data = docSnapshot.data();
           
-          // Try to get class name from classes collection
+          // Get class name if not present
           let className = data.className || 'Unknown Class';
-          try {
-            const classDoc = await getDocs(query(
-              collection(db, 'classes'),
-              where('id', '==', data.classId)
-            ));
-            if (!classDoc.empty) {
-              className = classDoc.docs[0].data().name || className;
+          if (!className && data.classId) {
+            try {
+              const classDoc = await getDoc(doc(db, 'classes', data.classId));
+              if (classDoc.exists()) {
+                className = classDoc.data().name || className;
+              }
+            } catch (error) {
+              console.error('Error fetching class name:', error);
             }
-          } catch (error) {
-            console.error('Error fetching class name:', error);
           }
           
           return {
-            id: doc.id,
+            id: docSnapshot.id,
             teacherId: data.teacherId,
             classId: data.classId,
             className,
@@ -64,7 +64,8 @@ export const useTeacherAssignments = (teacherId?: string) => {
   };
 
   const assignmentsQuery = useQuery({
-    queryKey: ['teacherAssignments', teacherId],
+    // FIXED: Use consistent query key
+    queryKey: ['teacher_assignments', teacherId],
     queryFn: fetchAssignments,
     enabled: !!teacherId,
     staleTime: 30 * 1000,

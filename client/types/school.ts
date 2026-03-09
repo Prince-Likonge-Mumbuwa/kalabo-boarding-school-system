@@ -93,15 +93,15 @@ export interface CSVLearnerData {
   className?: string; // For reference
 }
 
-// ==================== TEACHER TYPE ====================
+// ==================== TEACHER TYPE WITH ALL FIELDS ====================
 export interface Teacher {
   id: string;
   name: string;
   email: string;
-  phone: string;
-  department: string;
-  subjects: string[];
-  assignedClasses: string[];
+  phone?: string;
+  department?: string;
+  subjects?: string[];
+  assignedClasses?: string[];
   
   // Form teacher info
   isFormTeacher?: boolean;
@@ -110,9 +110,17 @@ export interface Teacher {
   
   // Employment details
   employmentDate?: Date;
-  status?: 'active' | 'inactive' | 'on_leave' | 'transferred'; // Added 'transferred' status
+  status?: 'active' | 'inactive' | 'on_leave' | 'transferred';
   qualifications?: string[];
   specialization?: string;
+  
+  // SIGNUP FIELDS - Add these to fix the TypeScript errors
+  nrc?: string; // National Registration Card
+  tsNumber?: string; // Teaching Service Number
+  employeeNumber?: string; // Employee Number
+  dateOfBirth?: string; // Date of birth
+  dateOfFirstAppointment?: string; // First appointment date
+  dateOfCurrentAppointment?: string; // Current appointment date
   
   // System fields
   createdBy?: string;

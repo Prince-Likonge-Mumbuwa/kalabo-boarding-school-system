@@ -761,7 +761,7 @@ export default function ClassManagement() {
         learners: classLearners,
         format,
         includeStats,
-        schoolName: 'Your School Name',
+        schoolName: 'Kalabo Boarding Secondary School',
         academicYear: selectedClass.year.toString()
       });
       

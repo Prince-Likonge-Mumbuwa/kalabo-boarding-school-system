@@ -30,7 +30,8 @@ export const useSchoolTeachers = (classId?: string) => {
 
   // Query: Get all teacher assignments for a class
   const classAssignmentsQuery = useQuery({
-    queryKey: ['teacherAssignments', 'class', classId],
+    // FIXED: Use consistent query key
+    queryKey: ['teacher_assignments', 'class', classId],
     queryFn: () => {
       if (!classId) throw new Error('Class ID is required');
       return teacherService.getTeacherAssignmentsByClass(classId);
@@ -39,12 +40,15 @@ export const useSchoolTeachers = (classId?: string) => {
     staleTime: 30 * 1000,
   });
 
-  // NEW: Query to fetch all assignments for a specific teacher
+  // FIXED: Query to fetch all assignments for a specific teacher
   const fetchTeacherAssignments = async (teacherId: string): Promise<TeacherAssignment[]> => {
     try {
-      const assignmentsRef = collection(db, 'teacherAssignments');
+      // FIXED: Use correct collection name
+      const assignmentsRef = collection(db, 'teacher_assignments');
       const q = query(assignmentsRef, where('teacherId', '==', teacherId));
       const snapshot = await getDocs(q);
+      
+      console.log(`📚 Found ${snapshot.size} assignments for teacher ${teacherId}`);
       
       return snapshot.docs.map(doc => ({
         id: doc.id,
@@ -56,10 +60,11 @@ export const useSchoolTeachers = (classId?: string) => {
     }
   };
 
-  // Hook to get assignments for a specific teacher (to be used in components)
+  // FIXED: Hook to get assignments for a specific teacher
   const useTeacherAssignments = (teacherId: string) => {
     return useQuery({
-      queryKey: ['teacherAssignments', 'teacher', teacherId],
+      // FIXED: Use consistent query key
+      queryKey: ['teacher_assignments', teacherId],
       queryFn: () => fetchTeacherAssignments(teacherId),
       enabled: !!teacherId,
       staleTime: 30 * 1000,
@@ -87,11 +92,11 @@ export const useSchoolTeachers = (classId?: string) => {
       return teacherService.assignTeacherToClass(teacherId, classId, subjectToUse, isFormTeacher);
     },
     onSuccess: (_, variables) => {
-      // Invalidate all relevant queries
+      // FIXED: Use consistent query keys for invalidation
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       queryClient.invalidateQueries({ queryKey: ['teachers', 'class', variables.classId] });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId] });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'teacher', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', 'class', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', variables.teacherId] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },
@@ -116,10 +121,11 @@ export const useSchoolTeachers = (classId?: string) => {
       return Promise.all(promises);
     },
     onSuccess: (_, variables) => {
+      // FIXED: Use consistent query keys for invalidation
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       queryClient.invalidateQueries({ queryKey: ['teachers', 'class', variables.classId] });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId] });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'teacher', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', 'class', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', variables.teacherId] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },
@@ -130,7 +136,7 @@ export const useSchoolTeachers = (classId?: string) => {
     mutationFn: ({ teacherId, updates }: { teacherId: string; updates: Partial<Teacher> }) => {
       return teacherService.updateTeacher(teacherId, updates);
     },
-    onSuccess: (_, variables) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },
@@ -153,8 +159,9 @@ export const useSchoolTeachers = (classId?: string) => {
       return teacherService.removeTeacherSubject(teacherId, classId, subject);
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'teacher', variables.teacherId] });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId] });
+      // FIXED: Use consistent query keys for invalidation
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', 'class', variables.classId] });
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
     },
@@ -176,9 +183,10 @@ export const useSchoolTeachers = (classId?: string) => {
       return teacherService.transferTeacher(teacherId, fromClassId, toClassId, subjectMapping);
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'teacher', variables.teacherId] });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.fromClassId] });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.toClassId] });
+      // FIXED: Use consistent query keys for invalidation
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', 'class', variables.fromClassId] });
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', 'class', variables.toClassId] });
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
     },
@@ -190,10 +198,11 @@ export const useSchoolTeachers = (classId?: string) => {
       return teacherService.removeTeacherFromClass(teacherId, classId);
     },
     onSuccess: (_, variables) => {
+      // FIXED: Use consistent query keys for invalidation
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       queryClient.invalidateQueries({ queryKey: ['teachers', 'class', variables.classId] });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId] });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'teacher', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', 'class', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', variables.teacherId] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },

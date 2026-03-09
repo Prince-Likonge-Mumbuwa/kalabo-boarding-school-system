@@ -958,7 +958,7 @@ export default function ReportCards() {
   const { user } = useAuth();
   const isMobile = useMediaQuery('(max-width: 640px)');
   const { classes, isLoading: loadingClasses } = useSchoolClasses();
-  const { assignments, isLoading: loadingAssignments } = useTeacherAssignments(user?.id || '');
+  const { assignments, isLoading: loadingAssignments } = useTeacherAssignments(user?.uid || '');
   const { learners } = useSchoolLearners();
   
   const [selectedClass, setSelectedClass] = useState<string>('');

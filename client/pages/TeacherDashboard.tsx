@@ -338,25 +338,25 @@ export default function TeacherDashboard() {
     isLoading: resultsLoading,
     isFetching 
   } = useResultsAnalytics({
-    teacherId: user?.id || '',
+    teacherId: user?.uid || '',
     term: selectedTerm,
     year: selectedYear,
   });
 
   // Find classes assigned to this teacher
   const assignedClasses = useMemo(() => {
-    if (!user?.id || !classes.length) return [];
+    if (!user?.uid || !classes.length) return [];
     
     return classes.filter(cls => 
-      cls.teachers?.includes(user.id) || 
-      cls.formTeacherId === user.id
+      cls.teachers?.includes(user.uid) || 
+      cls.formTeacherId === user.uid
     );
-  }, [classes, user?.id]);
+  }, [classes, user?.uid]);
 
   // Get form teacher class (if any)
   const formTeacherClass = useMemo(() => {
-    return assignedClasses.find(cls => cls.formTeacherId === user?.id);
-  }, [assignedClasses, user?.id]);
+    return assignedClasses.find(cls => cls.formTeacherId === user?.uid);
+  }, [assignedClasses, user?.uid]);
 
   // Fetch attendance data for all assigned classes
   useEffect(() => {
@@ -441,7 +441,7 @@ export default function TeacherDashboard() {
               Teacher Dashboard
             </h1>
             <p className="text-sm sm:text-base text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
-              <span>Welcome back, {user?.name?.split(' ')[0] || 'Teacher'}</span>
+              <span>Welcome back, {user?.fullName?.split(' ')[0] || 'Teacher'}</span>
               {stats.isFormTeacher && (
                 <>
                   <span className="text-gray-300">•</span>
@@ -583,8 +583,8 @@ export default function TeacherDashboard() {
                 <ClassCard
                   key={classItem.id}
                   classItem={classItem}
-                  isFormTeacher={classItem.formTeacherId === user?.id}
-                  userId={user?.id}
+                  isFormTeacher={classItem.formTeacherId === user?.uid}
+                  userId={user?.uid}
                 />
               ))}
             </div>

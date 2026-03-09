@@ -901,20 +901,21 @@ export default function ResultsEntry() {
     isLoading: loadingExamConfig 
   } = useExamConfig({ year, term });
   
-  const currentExamConfig = examConfigs?.[0]; // Get the most recent config for this term/year
+  const currentExamConfig = examConfigs?.[0];
   
-  // Determine available exam types based on config - FIXED: Added null check
+  // Determine available exam types based on config
   const availableExamTypes = useMemo(() => {
     return getAvailableExamTypes(currentExamConfig);
   }, [currentExamConfig]);
   
-  // Get total marks from config - FIXED: Added null check and fallback
+  // Get total marks from config
   const totalMarks = useMemo(() => {
     if (!currentExamConfig || !examType) return 100;
     return currentExamConfig[`${examType}TotalMarks`] || 100;
   }, [currentExamConfig, examType]);
   
-  const { assignments, getSubjectsForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.id);
+  // FIXED: Using updated hook with correct collection
+  const { assignments, getSubjectsForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.uid);
   
   const { saveResults, isSaving, checkExisting, editResults, isEditing } = useResults();
   
@@ -927,6 +928,15 @@ export default function ResultsEntry() {
     term,
     year,
   });
+
+  // Debug effect to verify assignments
+  useEffect(() => {
+    if (user?.uid) {
+      console.log('👤 Teacher UID:', user.uid);
+      console.log('📚 Teacher assignments:', assignments);
+      console.log('🎯 getSubjectsForClass function available:', !!getSubjectsForClass);
+    }
+  }, [user, assignments, getSubjectsForClass]);
 
   // Load drafts from localStorage
   useEffect(() => {
@@ -947,25 +957,25 @@ export default function ResultsEntry() {
 
   // Get all classes the teacher is assigned to
   const assignedClasses = useMemo(() => {
-    if (!user?.id || !classes.length) return [];
+    if (!user?.uid || !classes.length) return [];
     return classes.filter((cls: ClassInfo) => 
-      cls.teachers?.includes(user.id) || 
-      cls.formTeacherId === user.id
+      cls.teachers?.includes(user.uid) || 
+      cls.formTeacherId === user.uid
     );
-  }, [classes, user?.id]);
+  }, [classes, user?.uid]);
 
   // Get subjects the teacher actually teaches in the selected class
   const availableSubjects = useMemo(() => {
-    if (!selectedClass || !user?.id) return [];
+    if (!selectedClass || !user?.uid) return [];
     return getSubjectsForClass(selectedClass);
-  }, [selectedClass, user?.id, getSubjectsForClass]);
+  }, [selectedClass, user?.uid, getSubjectsForClass]);
 
   // Check if teacher is ONLY a form teacher (no subjects) in this class
   const isOnlyFormTeacher = useMemo(() => {
-    if (!selectedClass || !user?.id) return false;
+    if (!selectedClass || !user?.uid) return false;
     const subjects = getSubjectsForClass(selectedClass);
     return subjects.length === 0;
-  }, [selectedClass, user?.id, getSubjectsForClass]);
+  }, [selectedClass, user?.uid, getSubjectsForClass]);
 
   const currentSubjectCompletion = useMemo(() => {
     if (!selectedSubject || !completionStatus.length) return null;
@@ -982,14 +992,13 @@ export default function ResultsEntry() {
     );
   }, [drafts, selectedClass, selectedSubject, examType, term, year]);
 
-  // Load draft data - FIXED: Added proper dependencies
+  // Load draft data
   useEffect(() => {
     if (currentDraft && currentDraft.id !== activeDraftId) {
       setStudents(currentDraft.results);
       setActiveDraftId(currentDraft.id);
     } else if (!currentDraft && activeDraftId) {
       setActiveDraftId(null);
-      // Reset students marks when no draft
       setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
     }
   }, [currentDraft, activeDraftId]);
@@ -1000,7 +1009,7 @@ export default function ResultsEntry() {
     return currentSubjectCompletion[`${examType}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
   }, [currentSubjectCompletion, examType]);
 
-  // Check if exam type is enabled (based on previous exams completion) - FIXED: Added null checks
+  // Check if exam type is enabled (based on previous exams completion)
   const isExamTypeEnabled = useCallback((type: 'week4' | 'week8' | 'endOfTerm') => {
     if (!currentSubjectCompletion || !availableExamTypes.length) return type === availableExamTypes[0]?.id;
     
@@ -1012,7 +1021,7 @@ export default function ResultsEntry() {
     return currentSubjectCompletion[`${previousExam.id}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
   }, [currentSubjectCompletion, availableExamTypes]);
 
-  // Auto-select first available exam type - FIXED: Added proper dependencies and null check
+  // Auto-select first available exam type
   useEffect(() => {
     if (availableExamTypes.length > 0) {
       const firstType = availableExamTypes[0].id as 'week4' | 'week8' | 'endOfTerm';
@@ -1022,14 +1031,14 @@ export default function ResultsEntry() {
     }
   }, [availableExamTypes, examType]);
 
-  // Auto-select subject if there's exactly one - FIXED: Added proper dependencies
+  // Auto-select subject if there's exactly one
   useEffect(() => {
     if (availableSubjects.length === 1 && !selectedSubject) {
       setSelectedSubject(availableSubjects[0]);
     }
   }, [availableSubjects, selectedSubject]);
 
-  // Load students - FIXED: Added proper dependencies
+  // Load students
   useEffect(() => {
     const loadStudents = async () => {
       if (!selectedClass) {
@@ -1072,7 +1081,7 @@ export default function ResultsEntry() {
     loadStudents();
   }, [selectedClass, assignedClasses]);
 
-  // Auto-save draft - FIXED: Added proper dependencies and cleanup
+  // Auto-save draft
   useEffect(() => {
     if (!selectedClass || !selectedSubject || !students.length || !selectedClassData || isEditMode) return;
 
@@ -1128,7 +1137,7 @@ export default function ResultsEntry() {
     }
   }, [students]);
 
-  // Fetch all exam data for PDF preview - FIXED: Added proper dependencies
+  // Fetch all exam data for PDF preview
   useEffect(() => {
     const fetchAllExamData = async () => {
       if (!showPDFPreview || !selectedClass || !selectedSubject || !checkExisting || !availableExamTypes.length) return;
@@ -1294,8 +1303,8 @@ export default function ResultsEntry() {
         className: selectedClassData.name,
         subjectId: selectedSubject,
         subjectName: selectedSubject,
-        teacherId: user.id,
-        teacherName: user.name || user.email || 'Unknown',
+        teacherId: user.uid,
+        teacherName: user.fullName|| user.email || 'Unknown',
         examType,
         examName: `${examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'} - ${selectedSubject}`,
         term,
@@ -1354,7 +1363,7 @@ export default function ResultsEntry() {
     try {
       const { generateMarkSchedulePDF } = await import('@/services/pdf/markSchedulePDF');
       
-      const teacherDisplayName = user?.name || user?.email || 'Teacher';
+      const teacherDisplayName = user?.fullName || user?.email || 'Teacher';
       
       const studentsForPDF = students.map(student => {
         let marksValue = student.marks || '';

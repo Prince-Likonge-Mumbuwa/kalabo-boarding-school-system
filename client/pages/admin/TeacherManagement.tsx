@@ -1,7 +1,9 @@
+// @/pages/admin/TeacherManagement.tsx
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
-import { useTeacherAssignments, TeacherAssignment } from '@/hooks/useTeacherAssignments'; // Add this import
+import { useSchoolLearners } from '@/hooks/useSchoolLearners';
+import { useTeacherAssignments, TeacherAssignment } from '@/hooks/useTeacherAssignments';
 import { useAuth } from '@/hooks/useAuth';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useState, useMemo, useEffect } from 'react';
@@ -34,9 +36,17 @@ import {
   Star,
   Info,
   AlertTriangle,
+  Download,
+  FileText,
+  ChevronRight,
+  Calendar,
+  Hash,
+  CreditCard,
+  Eye
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useQueryClient } from '@tanstack/react-query';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
 // Teacher status type
 type TeacherStatus = 'active' | 'inactive' | 'transferred' | 'on_leave';
@@ -45,7 +55,7 @@ type TeacherStatus = 'active' | 'inactive' | 'transferred' | 'on_leave';
 type AssignmentFilter = 'all' | 'assigned' | 'unassigned' | 'form-teachers';
 
 // Modal types
-type ModalType = 'assignment' | 'edit' | 'delete' | 'transfer' | 'subject-remove' | 'success' | 'error' | 'confirm' | null;
+type ModalType = 'assignment' | 'edit' | 'delete' | 'transfer' | 'subject-remove' | 'success' | 'error' | 'confirm' | 'teachers-preview' | 'debug' | null;
 
 // Toast notification type
 interface Toast {
@@ -67,8 +77,53 @@ interface Teacher {
   status?: TeacherStatus;
   isFormTeacher?: boolean;
   assignedClasses?: any[];
+  // Signup fields
+  nrc?: string;
+  dateOfBirth?: string;
+  tsNumber?: string;
+  employeeNumber?: string;
+  dateOfFirstAppointment?: string;
+  dateOfCurrentAppointment?: string;
   [key: string]: any;
 }
+
+// Learner type
+interface Learner {
+  id: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  email?: string;
+  phone?: string;
+  nrc?: string;
+  dateOfBirth?: string;
+  gender?: string;
+  address?: string;
+  emergencyContact?: string;
+  classId?: string;
+  className?: string;
+  enrollmentDate?: string;
+  [key: string]: any;
+}
+
+// Helper function to split long text into lines
+const splitTextToLines = (text: string, maxCharsPerLine: number): string[] => {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let currentLine = '';
+  
+  words.forEach(word => {
+    if ((currentLine + ' ' + word).length <= maxCharsPerLine) {
+      currentLine = currentLine ? currentLine + ' ' + word : word;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
+    }
+  });
+  
+  if (currentLine) lines.push(currentLine);
+  return lines;
+};
 
 // Get status badge configuration
 const getStatusConfig = (status: string) => {
@@ -86,7 +141,585 @@ const getStatusConfig = (status: string) => {
   }
 };
 
-// ==================== TEACHER CARD COMPONENT ====================
+// ==================== TEACHER PDF GENERATION FUNCTION ====================
+const generateTeachersPDF = async (teachers: Teacher[], classes: any[], teacherAssignments: Record<string, any[]>, filterInfo?: string) => {
+  // Create a new PDF document
+  const pdfDoc = await PDFDocument.create();
+  
+  // Add a page
+  let page = pdfDoc.addPage([612, 792]); // Letter size
+  const { width, height } = page.getSize();
+  
+  // Embed fonts
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  
+  // Title
+  const title = 'Teachers Master List';
+  const titleSize = 20;
+  const titleWidth = boldFont.widthOfTextAtSize(title, titleSize);
+  page.drawText(title, {
+    x: (width - titleWidth) / 2,
+    y: height - 40,
+    size: titleSize,
+    font: boldFont,
+    color: rgb(0, 0.2, 0.6),
+  });
+  
+  // School info
+  page.drawText('KalaboBoarding-SRS', {
+    x: 50,
+    y: height - 65,
+    size: 11,
+    font,
+    color: rgb(0.4, 0.4, 0.4),
+  });
+  
+  // Filter info (if any)
+  if (filterInfo) {
+    page.drawText(`Filter: ${filterInfo}`, {
+      x: 50,
+      y: height - 80,
+      size: 10,
+      font,
+      color: rgb(0.4, 0.4, 0.4),
+    });
+  }
+  
+  // Date
+  const date = new Date().toLocaleDateString('en-ZM', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  page.drawText(`Generated on: ${date}`, {
+    x: 50,
+    y: height - 95,
+    size: 9,
+    font,
+    color: rgb(0.4, 0.4, 0.4),
+  });
+  
+  // Total count
+  page.drawText(`Total Teachers: ${teachers.length}`, {
+    x: 50,
+    y: height - 115,
+    size: 12,
+    font: boldFont,
+    color: rgb(0, 0, 0.6),
+  });
+  
+  let yPosition = height - 145;
+  let teacherIndex = 0;
+  
+  // Loop through each teacher
+  for (const teacher of teachers) {
+    teacherIndex++;
+    
+    // Check if we need a new page
+    if (yPosition < 180) {
+      page = pdfDoc.addPage([612, 792]);
+      yPosition = height - 50;
+    }
+    
+    // Teacher header with background
+    page.drawRectangle({
+      x: 40,
+      y: yPosition - 5,
+      width: width - 80,
+      height: 30,
+      color: rgb(0.95, 0.97, 1),
+    });
+    
+    // Teacher name and ID
+    page.drawText(`${teacherIndex}. ${teacher.name}`, {
+      x: 50,
+      y: yPosition + 5,
+      size: 14,
+      font: boldFont,
+      color: rgb(0, 0.2, 0.5),
+    });
+    
+    // Teacher status
+    const status = teacher.status || 'active';
+    const statusText = status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' ');
+    page.drawText(`Status: ${statusText}`, {
+      x: 400,
+      y: yPosition + 5,
+      size: 11,
+      font: boldFont,
+      color: status === 'active' ? rgb(0, 0.6, 0) : rgb(0.6, 0.3, 0),
+    });
+    
+    yPosition -= 30;
+    
+    // Teacher details in columns
+    const details = [
+      { label: 'Email:', value: teacher.email || 'N/A' },
+      { label: 'Phone:', value: teacher.phone || 'N/A' },
+      { label: 'Department:', value: teacher.department || 'N/A' },
+      { label: 'NRC:', value: teacher.nrc || 'N/A' },
+      { label: 'TS Number:', value: teacher.tsNumber || 'N/A' },
+      { label: 'Employee #:', value: teacher.employeeNumber || 'N/A' },
+      { label: 'Date of Birth:', value: teacher.dateOfBirth ? new Date(teacher.dateOfBirth).toLocaleDateString() : 'N/A' },
+      { label: 'First Appointment:', value: teacher.dateOfFirstAppointment ? new Date(teacher.dateOfFirstAppointment).toLocaleDateString() : 'N/A' },
+      { label: 'Current Appointment:', value: teacher.dateOfCurrentAppointment ? new Date(teacher.dateOfCurrentAppointment).toLocaleDateString() : 'N/A' },
+    ];
+    
+    // Draw details in two columns
+    const col1X = 50;
+    const col2X = 320;
+    let detailY = yPosition - 5;
+    
+    details.forEach((detail, idx) => {
+      const x = idx < 5 ? col1X : col2X;
+      const adjustedIdx = idx < 5 ? idx : idx - 5;
+      const y = detailY - (adjustedIdx * 18);
+      
+      page.drawText(detail.label, {
+        x,
+        y,
+        size: 9,
+        font: boldFont,
+        color: rgb(0.3, 0.3, 0.3),
+      });
+      
+      page.drawText(detail.value, {
+        x: x + 70,
+        y,
+        size: 9,
+        font,
+        color: rgb(0, 0, 0),
+      });
+    });
+    
+    yPosition -= 100;
+    
+    // Subjects taught (from signup)
+    if (teacher.subjects && teacher.subjects.length > 0) {
+      page.drawText('Subjects Qualified to Teach:', {
+        x: 50,
+        y: yPosition,
+        size: 10,
+        font: boldFont,
+        color: rgb(0, 0.3, 0.6),
+      });
+      yPosition -= 18;
+      
+      const subjectsText = teacher.subjects.join(' • ');
+      const lines = splitTextToLines(subjectsText, 80);
+      
+      lines.forEach(line => {
+        page.drawText(`• ${line}`, {
+          x: 60,
+          y: yPosition,
+          size: 9,
+          font,
+          color: rgb(0.2, 0.4, 0.6),
+        });
+        yPosition -= 15;
+      });
+      
+      yPosition -= 5;
+    } else {
+      yPosition -= 20;
+    }
+    
+    // Current Assignments
+    const teacherAssignmentData = teacherAssignments[teacher.id] || [];
+    
+    if (teacherAssignmentData.length > 0) {
+      // Section header
+      page.drawRectangle({
+        x: 40,
+        y: yPosition - 5,
+        width: width - 80,
+        height: 25,
+        color: rgb(0.9, 0.95, 1),
+      });
+      
+      page.drawText('CURRENT CLASS ASSIGNMENTS', {
+        x: 50,
+        y: yPosition + 5,
+        size: 11,
+        font: boldFont,
+        color: rgb(0, 0.4, 0.7),
+      });
+      
+      yPosition -= 25;
+      
+      // Group assignments by class
+      const classMap = new Map();
+      teacherAssignmentData.forEach((assignment: any) => {
+        if (!classMap.has(assignment.classId)) {
+          const className = classes.find(c => c.id === assignment.classId)?.name || 'Unknown Class';
+          classMap.set(assignment.classId, {
+            className,
+            subjects: [],
+            isFormTeacher: false
+          });
+        }
+        const classData = classMap.get(assignment.classId);
+        if (assignment.subject && assignment.subject !== 'Form Teacher') {
+          classData.subjects.push(assignment.subject);
+        }
+        if (assignment.isFormTeacher) {
+          classData.isFormTeacher = true;
+        }
+      });
+      
+      // Display assignments
+      for (const [classId, classData] of classMap) {
+        // Check page space
+        if (yPosition < 80) {
+          page = pdfDoc.addPage([612, 792]);
+          yPosition = height - 50;
+        }
+        
+        // Class name with form teacher indicator
+        const className = `${classData.className} ${classData.isFormTeacher ? '★ FORM TEACHER' : ''}`;
+        page.drawText(className, {
+          x: 60,
+          y: yPosition,
+          size: 10,
+          font: classData.isFormTeacher ? boldFont : font,
+          color: classData.isFormTeacher ? rgb(0.6, 0.2, 0.8) : rgb(0, 0, 0.3),
+        });
+        yPosition -= 18;
+        
+        // Subjects for this class
+        if (classData.subjects.length > 0) {
+          const subjectsLine = classData.subjects.join(' • ');
+          const lines = splitTextToLines(subjectsLine, 70);
+          
+          lines.forEach(line => {
+            page.drawText(`  ▸ ${line}`, {
+              x: 70,
+              y: yPosition,
+              size: 9,
+              font,
+              color: rgb(0.3, 0.3, 0.3),
+            });
+            yPosition -= 16;
+          });
+        } else if (classData.isFormTeacher) {
+          page.drawText('  (Form Teacher only - no subjects)', {
+            x: 70,
+            y: yPosition,
+            size: 9,
+            font,
+            color: rgb(0.5, 0.5, 0.5),
+          });
+          yPosition -= 16;
+        }
+        
+        yPosition -= 5;
+      }
+      
+      yPosition -= 10;
+    } else {
+      page.drawText('No current class assignments', {
+        x: 60,
+        y: yPosition,
+        size: 10,
+        font,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+      yPosition -= 25;
+    }
+    
+    // Add separator line between teachers
+    yPosition -= 15;
+    page.drawLine({
+      start: { x: 50, y: yPosition },
+      end: { x: width - 50, y: yPosition },
+      thickness: 1,
+      color: rgb(0.8, 0.8, 0.8),
+    });
+    yPosition -= 25;
+  }
+  
+  // Footer
+  page.drawText(`This document contains ${teachers.length} teacher(s) and is officially generated by KalaboBoarding-SRS.`, {
+    x: 50,
+    y: 30,
+    size: 8,
+    font,
+    color: rgb(0.6, 0.6, 0.6),
+  });
+  
+  // Serialize the PDF to bytes
+  const pdfBytes = await pdfDoc.save();
+  
+  return pdfBytes;
+};
+
+// ==================== TEACHERS PREVIEW MODAL ====================
+const TeachersPreviewModal = ({ 
+  teachers, 
+  classes,
+  assignments,
+  filterInfo,
+  onClose, 
+  onDownload 
+}: { 
+  teachers: Teacher[]; 
+  classes: any[];
+  assignments: Record<string, any[]>;
+  filterInfo?: string;
+  onClose: () => void; 
+  onDownload: () => void;
+}) => {
+  const [downloading, setDownloading] = useState(false);
+  const [expandedTeacher, setExpandedTeacher] = useState<string | null>(null);
+  
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      await onDownload();
+    } finally {
+      setDownloading(false);
+    }
+  };
+  
+  const getClassAssignments = (teacherId: string) => {
+    return assignments[teacherId] || [];
+  };
+  
+  const getClassNames = (teacherId: string) => {
+    const teacherAssignments = getClassAssignments(teacherId);
+    const classMap = new Map();
+    
+    teacherAssignments.forEach((a: any) => {
+      if (!classMap.has(a.classId)) {
+        const className = classes.find(c => c.id === a.classId)?.name || 'Unknown Class';
+        classMap.set(a.classId, {
+          name: className,
+          subjects: [],
+          isFormTeacher: false
+        });
+      }
+      const classData = classMap.get(a.classId);
+      if (a.subject && a.subject !== 'Form Teacher') {
+        classData.subjects.push(a.subject);
+      }
+      if (a.isFormTeacher) {
+        classData.isFormTeacher = true;
+      }
+    });
+    
+    return Array.from(classMap.values());
+  };
+  
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+      
+      <div className="flex min-h-full items-center justify-center p-3 sm:p-4">
+        <div className="relative bg-white rounded-2xl w-full max-w-6xl shadow-2xl max-h-[90vh] overflow-hidden">
+          
+          {/* Modal Header */}
+          <div className="p-5 sm:p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-xl font-bold text-gray-900 truncate flex items-center gap-2">
+                  <FileText size={20} className="text-blue-600" />
+                  Teachers Master List
+                </h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  {filterInfo ? `${filterInfo} • ` : ''}{teachers.length} teacher{teachers.length !== 1 ? 's' : ''} found
+                </p>
+              </div>
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0"
+              >
+                <X size={18} className="text-gray-600" />
+              </button>
+            </div>
+          </div>
+
+          {/* Modal Body - Teachers List */}
+          <div className="p-5 sm:p-6 overflow-y-auto max-h-[calc(90vh-180px)]">
+            <div className="space-y-4">
+              {teachers.map((teacher, index) => {
+                const classAssignments = getClassNames(teacher.id);
+                const isExpanded = expandedTeacher === teacher.id;
+                
+                return (
+                  <div key={teacher.id} className="border border-gray-200 rounded-xl overflow-hidden">
+                    {/* Teacher Summary - Click to expand */}
+                    <div 
+                      className="bg-gray-50 p-4 cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => setExpandedTeacher(isExpanded ? null : teacher.id)}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-sm font-semibold text-gray-500">#{index + 1}</span>
+                            <h3 className="text-lg font-bold text-gray-900">{teacher.name}</h3>
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs
+                              ${teacher.status === 'active' ? 'bg-green-100 text-green-800' : ''}
+                              ${teacher.status === 'inactive' ? 'bg-gray-100 text-gray-800' : ''}
+                              ${teacher.status === 'transferred' ? 'bg-blue-100 text-blue-800' : ''}
+                              ${teacher.status === 'on_leave' ? 'bg-yellow-100 text-yellow-800' : ''}
+                              ${!teacher.status ? 'bg-green-100 text-green-800' : ''}
+                            `}>
+                              {teacher.status ? teacher.status.replace('_', ' ') : 'active'}
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+                            <div><span className="text-gray-500">Email:</span> {teacher.email}</div>
+                            <div><span className="text-gray-500">Phone:</span> {teacher.phone || 'N/A'}</div>
+                            <div><span className="text-gray-500">NRC:</span> {teacher.nrc || 'N/A'}</div>
+                            <div><span className="text-gray-500">TS #:</span> {teacher.tsNumber || 'N/A'}</div>
+                            <div><span className="text-gray-500">Emp #:</span> {teacher.employeeNumber || 'N/A'}</div>
+                            <div><span className="text-gray-500">Dept:</span> {teacher.department || 'N/A'}</div>
+                          </div>
+                          
+                          {classAssignments.length > 0 && (
+                            <div className="mt-2 flex items-center gap-1 text-sm">
+                              <Briefcase size={14} className="text-blue-500" />
+                              <span className="text-gray-600">
+                                {classAssignments.length} class{classAssignments.length !== 1 ? 'es' : ''} assigned
+                              </span>
+                              <ChevronDown 
+                                size={16} 
+                                className={`ml-2 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} 
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Expanded Details */}
+                    {isExpanded && (
+                      <div className="p-4 border-t border-gray-200 bg-white space-y-3">
+                        {/* Signup Details */}
+                        <div className="grid grid-cols-2 gap-3 text-sm bg-blue-50 p-3 rounded-lg">
+                          <div><span className="font-medium text-gray-700">Date of Birth:</span> {teacher.dateOfBirth ? new Date(teacher.dateOfBirth).toLocaleDateString() : 'N/A'}</div>
+                          <div><span className="font-medium text-gray-700">First Appointment:</span> {teacher.dateOfFirstAppointment ? new Date(teacher.dateOfFirstAppointment).toLocaleDateString() : 'N/A'}</div>
+                          <div><span className="font-medium text-gray-700">Current Appointment:</span> {teacher.dateOfCurrentAppointment ? new Date(teacher.dateOfCurrentAppointment).toLocaleDateString() : 'N/A'}</div>
+                        </div>
+                        
+                        {/* Subjects Qualified */}
+                        {teacher.subjects && teacher.subjects.length > 0 && (
+                          <div>
+                            <h4 className="text-sm font-semibold text-gray-700 mb-2">Subjects Qualified to Teach:</h4>
+                            <div className="flex flex-wrap gap-2">
+                              {teacher.subjects.map((subject, idx) => (
+                                <span key={idx} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">
+                                  {subject}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Current Assignments */}
+                        {classAssignments.length > 0 && (
+                          <div>
+                            <h4 className="text-sm font-semibold text-gray-700 mb-2">Current Class Assignments:</h4>
+                            <div className="space-y-3">
+                              {classAssignments.map((cls: any) => (
+                                <div key={cls.name} className="border border-gray-200 rounded-lg p-3">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <GraduationCap size={16} className="text-gray-500" />
+                                    <span className="font-medium text-gray-900">{cls.name}</span>
+                                    {cls.isFormTeacher && (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-800 rounded-full text-xs">
+                                        <Star size={10} className="fill-purple-800" />
+                                        Form Teacher
+                                      </span>
+                                    )}
+                                  </div>
+                                  {cls.subjects.length > 0 && (
+                                    <div className="ml-6">
+                                      <p className="text-xs text-gray-500 mb-1">Teaching:</p>
+                                      <div className="flex flex-wrap gap-1">
+                                        {cls.subjects.map((subject: string) => (
+                                          <span key={subject} className="px-2 py-0.5 bg-green-100 text-green-800 rounded-full text-xs">
+                                            {subject}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Modal Footer */}
+          <div className="p-5 sm:p-6 border-t border-gray-200 bg-gray-50">
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={onClose}
+                className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 font-medium transition-colors text-sm"
+              >
+                Close
+              </button>
+              <button
+                onClick={handleDownload}
+                disabled={downloading}
+                className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {downloading ? (
+                  <>
+                    <Loader2 className="animate-spin" size={16} />
+                    Generating PDF...
+                  </>
+                ) : (
+                  <>
+                    <Download size={16} />
+                    Download Complete List
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==================== DEBUG COMPONENT ====================
+const TeacherAssignmentDebug = ({ teacherId, teacherName }: { teacherId: string; teacherName: string }) => {
+  const { assignments, isLoading } = useTeacherAssignments(teacherId);
+  
+  return (
+    <div className="border-t border-gray-700 py-2">
+      <p className="font-bold text-blue-400">{teacherName}</p>
+      <p className="text-gray-400 text-xs mt-1">
+        Assignments: {isLoading ? 'Loading...' : assignments.length}
+        {assignments.length > 0 && (
+          <span className="block mt-1">
+            {assignments.map(a => (
+              <span key={a.id} className="inline-block bg-blue-900 text-blue-200 px-2 py-0.5 rounded mr-1 mb-1 text-xs">
+                {a.className}: {a.subject}
+              </span>
+            ))}
+          </span>
+        )}
+      </p>
+    </div>
+  );
+};
+
+// ==================== ENHANCED TEACHER CARD COMPONENT ====================
 const TeacherCard = ({ 
   teacher, 
   isUserAdmin, 
@@ -98,7 +731,8 @@ const TeacherCard = ({
   onRemoveFromClass,
   onRemoveFormTeacher,
   onRemoveSubject,
-  onTransfer
+  onTransfer,
+  onViewLearners
 }: { 
   teacher: Teacher; 
   isUserAdmin: boolean; 
@@ -111,8 +745,9 @@ const TeacherCard = ({
   onRemoveFormTeacher: (classId: string, className: string) => void;
   onRemoveSubject: (classId: string, className: string, subject: string) => void;
   onTransfer: (classId: string, className: string) => void;
+  onViewLearners: (classId?: string) => void;
 }) => {
-  // This hook is called at the top level of a component - VALID
+  // FIXED: Using updated hook that queries correct collection
   const { 
     assignments = [], 
     isLoading: isLoadingAssignments,
@@ -120,6 +755,8 @@ const TeacherCard = ({
   } = useTeacherAssignments(teacher.id);
 
   const [showActions, setShowActions] = useState(false);
+  const [expandedClass, setExpandedClass] = useState<string | null>(null);
+  const [expandedDetails, setExpandedDetails] = useState(false);
   const teacherStatus = teacher.status || 'active';
   const StatusIcon = getStatusConfig(teacherStatus).icon;
   
@@ -128,9 +765,19 @@ const TeacherCard = ({
     return getClassesWithSubjects();
   }, [assignments, getClassesWithSubjects]);
 
+  // Debug effect
+  useEffect(() => {
+    console.log(`👤 Teacher ${teacher.name} (${teacher.id}) has ${assignments.length} assignments`);
+  }, [teacher, assignments]);
+
   // Find class name by ID
   const getClassName = (classId: string): string => {
     return classes.find(c => c.id === classId)?.name || 'Unknown Class';
+  };
+
+  // Get class object by ID
+  const getClass = (classId: string) => {
+    return classes.find(c => c.id === classId);
   };
 
   return (
@@ -192,6 +839,20 @@ const TeacherCard = ({
                           
                           {/* Submenu */}
                           <div className="absolute left-full top-0 ml-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 hidden group-hover/submenu:block z-30">
+                            {/* View learners in this class */}
+                            <button
+                              onClick={() => {
+                                setShowActions(false);
+                                onViewLearners(assignment.classId);
+                              }}
+                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2 text-blue-600"
+                            >
+                              <Users size={14} />
+                              <span>View Learners</span>
+                            </button>
+                            
+                            <div className="border-t border-gray-100 my-1"></div>
+
                             {/* Subject removal options */}
                             {assignment.subjects.map(subject => (
                               <button
@@ -345,7 +1006,7 @@ const TeacherCard = ({
         </div>
       </div>
 
-      {/* Teacher Details */}
+      {/* Teacher Details - Basic Info */}
       <div className="space-y-2 mb-4">
         <div className="flex items-center gap-2 text-sm">
           <Mail size={14} className="text-gray-400 flex-shrink-0" />
@@ -357,65 +1018,171 @@ const TeacherCard = ({
             <span className="text-gray-700 truncate">{teacher.phone}</span>
           </div>
         )}
-        <div className="flex items-center gap-2 text-sm">
-          <BookOpen size={14} className="text-gray-400 flex-shrink-0" />
-          <span className="text-gray-700 truncate">
-            {teacher.subjects && Array.isArray(teacher.subjects) && teacher.subjects.length 
-              ? teacher.subjects.slice(0, 3).join(', ') + (teacher.subjects.length > 3 ? ` +${teacher.subjects.length - 3}` : '')
-              : 'No subjects'}
-          </span>
-        </div>
-        {teacher.department && (
-          <div className="flex items-center gap-2 text-sm">
-            <Briefcase size={14} className="text-gray-400 flex-shrink-0" />
-            <span className="text-gray-700 truncate">{teacher.department}</span>
-          </div>
-        )}
+        
+        {/* Expandable Teacher Details Button */}
+        <button
+          onClick={() => setExpandedDetails(!expandedDetails)}
+          className="w-full flex items-center justify-between text-xs text-blue-600 hover:text-blue-800 mt-1"
+        >
+          <span className="font-medium">{expandedDetails ? 'Hide details' : 'Show all details'}</span>
+          <ChevronDown size={14} className={`transition-transform duration-200 ${expandedDetails ? 'rotate-180' : ''}`} />
+        </button>
       </div>
 
-      {/* Assignment Status */}
+      {/* Expanded Teacher Details */}
+      {expandedDetails && (
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg space-y-2 text-xs animate-in slide-in-from-top duration-200">
+          {teacher.nrc && (
+            <div className="flex items-center gap-2">
+              <CreditCard size={12} className="text-gray-500" />
+              <span className="text-gray-700"><span className="font-medium">NRC:</span> {teacher.nrc}</span>
+            </div>
+          )}
+          {teacher.tsNumber && (
+            <div className="flex items-center gap-2">
+              <Hash size={12} className="text-gray-500" />
+              <span className="text-gray-700"><span className="font-medium">TS #:</span> {teacher.tsNumber}</span>
+            </div>
+          )}
+          {teacher.employeeNumber && (
+            <div className="flex items-center gap-2">
+              <Briefcase size={12} className="text-gray-500" />
+              <span className="text-gray-700"><span className="font-medium">Employee #:</span> {teacher.employeeNumber}</span>
+            </div>
+          )}
+          {teacher.department && (
+            <div className="flex items-center gap-2">
+              <BookOpen size={12} className="text-gray-500" />
+              <span className="text-gray-700"><span className="font-medium">Department:</span> {teacher.department}</span>
+            </div>
+          )}
+          {teacher.dateOfBirth && (
+            <div className="flex items-center gap-2">
+              <Calendar size={12} className="text-gray-500" />
+              <span className="text-gray-700"><span className="font-medium">DOB:</span> {new Date(teacher.dateOfBirth).toLocaleDateString()}</span>
+            </div>
+          )}
+          {teacher.dateOfFirstAppointment && (
+            <div className="flex items-center gap-2">
+              <Calendar size={12} className="text-gray-500" />
+              <span className="text-gray-700"><span className="font-medium">First Appt:</span> {new Date(teacher.dateOfFirstAppointment).toLocaleDateString()}</span>
+            </div>
+          )}
+          {teacher.dateOfCurrentAppointment && (
+            <div className="flex items-center gap-2">
+              <Calendar size={12} className="text-gray-500" />
+              <span className="text-gray-700"><span className="font-medium">Current Appt:</span> {new Date(teacher.dateOfCurrentAppointment).toLocaleDateString()}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Subjects Qualified */}
+      {teacher.subjects && teacher.subjects.length > 0 && (
+        <div className="mb-4">
+          <p className="text-xs text-gray-500 mb-1">Subjects Qualified:</p>
+          <div className="flex flex-wrap gap-1">
+            {teacher.subjects.slice(0, 3).map((subject, idx) => (
+              <span key={idx} className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">
+                {subject}
+              </span>
+            ))}
+            {teacher.subjects.length > 3 && (
+              <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full">
+                +{teacher.subjects.length - 3}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Enhanced Assignment Status with Expandable Details */}
       <div className="border-t border-gray-100 pt-4">
         {assignmentsByClass.length > 0 ? (
           <div>
-            <p className="text-xs text-gray-500 mb-1.5">Currently assigned to</p>
+            <p className="text-xs text-gray-500 mb-2">Currently assigned to</p>
             <div className="space-y-3">
               {assignmentsByClass.map(assignment => {
                 const className = getClassName(assignment.classId);
+                const classObj = getClass(assignment.classId);
+                const isExpanded = expandedClass === assignment.classId;
                 
                 return (
-                  <div key={assignment.classId} className="space-y-1">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <GraduationCap size={14} className="text-gray-400 flex-shrink-0" />
-                      <span className="font-medium text-gray-900 text-sm truncate flex items-center gap-1">
-                        {className}
-                        {assignment.isFormTeacher && (
-                          <span className="inline-flex items-center gap-0.5 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full ml-1">
-                            <Star size={10} className="fill-purple-700" />
-                            Form
-                          </span>
-                        )}
-                      </span>
+                  <div key={assignment.classId} className="space-y-2">
+                    {/* Class Header - Click to expand */}
+                    <div 
+                      className="flex items-center justify-between cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
+                      onClick={() => setExpandedClass(isExpanded ? null : assignment.classId)}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <GraduationCap size={14} className="text-gray-400 flex-shrink-0" />
+                        <span className="font-medium text-gray-900 text-sm truncate flex items-center gap-1">
+                          {className}
+                          {assignment.isFormTeacher && (
+                            <span className="inline-flex items-center gap-0.5 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full ml-1">
+                              <Star size={10} className="fill-purple-700" />
+                              Form
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <ChevronRight 
+                        size={14} 
+                        className={`text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} 
+                      />
                     </div>
                     
-                    {/* Show multiple subjects for this class */}
-                    {assignment.subjects.length > 0 ? (
-                      <div className="pl-6">
-                        <div className="flex flex-wrap gap-1">
-                          {assignment.subjects.map((subject, idx) => (
-                            <span 
-                              key={idx}
-                              className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full"
-                            >
-                              {subject}
-                            </span>
-                          ))}
+                    {/* Expanded Details */}
+                    {isExpanded && (
+                      <div className="pl-6 space-y-2 animate-in slide-in-from-top duration-200">
+                        {/* Subjects Taught */}
+                        {assignment.subjects.length > 0 ? (
+                          <div>
+                            <p className="text-xs font-medium text-gray-500 mb-1">Subjects Teaching:</p>
+                            <div className="flex flex-wrap gap-1">
+                              {assignment.subjects.map((subject, idx) => (
+                                <span 
+                                  key={idx}
+                                  className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full"
+                                >
+                                  {subject}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ) : assignment.isFormTeacher ? (
+                          <p className="text-xs text-gray-500 italic">Form teacher only (no subjects)</p>
+                        ) : null}
+                        
+                        {/* Class Stats */}
+                        {classObj && (
+                          <div className="grid grid-cols-2 gap-2 mt-2">
+                            <div className="bg-gray-50 p-2 rounded-lg">
+                              <p className="text-[0.6rem] text-gray-500">Students</p>
+                              <p className="text-sm font-semibold text-gray-900">{classObj.students || 0}</p>
+                            </div>
+                            <div className="bg-gray-50 p-2 rounded-lg">
+                              <p className="text-[0.6rem] text-gray-500">Year</p>
+                              <p className="text-sm font-semibold text-gray-900">{classObj.year || 'N/A'}</p>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Quick Actions */}
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onViewLearners(assignment.classId);
+                            }}
+                            className="flex-1 text-xs px-2 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors flex items-center justify-center gap-1"
+                          >
+                            <Users size={12} />
+                            View Learners
+                          </button>
                         </div>
                       </div>
-                    ) : assignment.isFormTeacher ? (
-                      <div className="pl-6">
-                        <span className="text-xs text-gray-500 italic">Form teacher only (no subjects)</span>
-                      </div>
-                    ) : null}
+                    )}
                   </div>
                 );
               })}
@@ -450,7 +1217,7 @@ export default function TeacherManagement() {
   
   // ==================== HOOKS ====================
   const { 
-    allTeachers: teachers = [], // Provide default empty array
+    allTeachers: teachers = [],
     isLoading: isLoadingTeachers,
     isFetching: isFetchingTeachers,
     isError: teachersError,
@@ -474,19 +1241,25 @@ export default function TeacherManagement() {
   } = useSchoolTeachers();
   
   const { 
-    classes = [], // Provide default empty array
+    classes = [],
     isLoading: isLoadingClasses,
     isError: classesError,
     refetch: refetchClasses
   } = useSchoolClasses({ isActive: true });
+
+  const { 
+    learners = [],
+    isLoading: isLoadingLearners,
+    refetch: refetchLearners
+  } = useSchoolLearners('');
 
   // ==================== STATE ====================
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<TeacherStatus | 'all'>('all');
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all');
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
   
-  // Modal state
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [modalData, setModalData] = useState<any>(null);
   const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
@@ -495,13 +1268,14 @@ export default function TeacherManagement() {
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
   const [currentSubject, setCurrentSubject] = useState<string>('');
   
-  // Toast notifications
+  const [previewTeachers, setPreviewTeachers] = useState<Teacher[]>([]);
+  const [previewAssignments, setPreviewAssignments] = useState<Record<string, any[]>>({});
+  const [previewFilterInfo, setPreviewFilterInfo] = useState<string>('');
+  
   const [toasts, setToasts] = useState<Toast[]>([]);
   
-  // Assignment form state
   const [assignAsFormTeacher, setAssignAsFormTeacher] = useState(false);
   
-  // Edit teacher state
   const [editTeacherData, setEditTeacherData] = useState({
     name: '',
     email: '',
@@ -511,10 +1285,7 @@ export default function TeacherManagement() {
     newSubject: ''
   });
   
-  // Transfer state
   const [targetClassId, setTargetClassId] = useState('');
-  
-  // Subject removal state
   const [selectedSubjectToRemove, setSelectedSubjectToRemove] = useState<string>('');
 
   const debouncedSearch = useDebounce(searchTerm, 300);
@@ -535,7 +1306,6 @@ export default function TeacherManagement() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  // Load teacher data into edit form when selected
   useEffect(() => {
     if (selectedTeacher && activeModal === 'edit') {
       setEditTeacherData({
@@ -549,12 +1319,9 @@ export default function TeacherManagement() {
     }
   }, [selectedTeacher, activeModal]);
 
-  // ==================== STATS CALCULATION ====================
   const stats = useMemo(() => {
-    // Safely handle teachers array
     const teachersArray = teachers || [];
     
-    // Calculate from teacher data directly
     const assignedCount = teachersArray.filter(t => 
       t && t.assignedClasses && Array.isArray(t.assignedClasses) && t.assignedClasses.length > 0
     ).length;
@@ -573,26 +1340,24 @@ export default function TeacherManagement() {
     };
   }, [teachers]);
 
-  // ==================== FILTER TEACHERS ====================
   const filteredTeachers = useMemo(() => {
-    // Safely handle teachers array
     const teachersArray = teachers || [];
     
     return teachersArray.filter(teacher => {
       if (!teacher) return false;
       
-      // Search filter
       const matchesSearch = !debouncedSearch ||
         (teacher.name && teacher.name.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
         (teacher.email && teacher.email.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
         (teacher.phone && teacher.phone.includes(debouncedSearch)) ||
-        (teacher.department && teacher.department.toLowerCase().includes(debouncedSearch.toLowerCase()));
+        (teacher.department && teacher.department.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
+        (teacher.nrc && teacher.nrc.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
+        (teacher.tsNumber && teacher.tsNumber.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
+        (teacher.employeeNumber && teacher.employeeNumber.toLowerCase().includes(debouncedSearch.toLowerCase()));
       
-      // Status filter
       const teacherStatus = teacher.status || 'active';
       const matchesStatus = statusFilter === 'all' || teacherStatus === statusFilter;
       
-      // Assignment filter - use teacher properties
       let matchesAssignment = true;
       const hasAssignments = teacher.assignedClasses && Array.isArray(teacher.assignedClasses) && teacher.assignedClasses.length > 0;
       const isFormTeacher = teacher.isFormTeacher === true;
@@ -615,7 +1380,6 @@ export default function TeacherManagement() {
     });
   }, [teachers, debouncedSearch, statusFilter, assignmentFilter]);
 
-  // ==================== FILTER COUNTS ====================
   const filterCounts = useMemo(() => {
     const teachersArray = teachers || [];
     
@@ -639,9 +1403,138 @@ export default function TeacherManagement() {
     };
   }, [teachers]);
 
-  // ==================== ACTION HANDLERS ====================
-  
-  // Handle teacher status update
+  const handlePreviewTeachers = async () => {
+    try {
+      const teachersToShow = filteredTeachers.length > 0 ? filteredTeachers : teachers;
+      
+      const assignmentsMap: Record<string, any[]> = {};
+      
+      for (const teacher of teachersToShow) {
+        try {
+          const response = await fetch(`/api/teacher-assignments/${teacher.id}`);
+          const data = await response.json();
+          assignmentsMap[teacher.id] = data;
+        } catch (error) {
+          console.error(`Error fetching assignments for teacher ${teacher.id}:`, error);
+          assignmentsMap[teacher.id] = [];
+        }
+      }
+      
+      let filterInfo = 'All Teachers';
+      const filterParts = [];
+      
+      if (searchTerm) {
+        filterParts.push(`search: "${searchTerm}"`);
+      }
+      if (statusFilter !== 'all') {
+        filterParts.push(`status: ${statusFilter.replace('_', ' ')}`);
+      }
+      if (assignmentFilter !== 'all') {
+        filterParts.push(`assignment: ${assignmentFilter.replace('-', ' ')}`);
+      }
+      
+      if (filterParts.length > 0) {
+        filterInfo = filterParts.join(' • ');
+      }
+      
+      setPreviewTeachers(teachersToShow);
+      setPreviewAssignments(assignmentsMap);
+      setPreviewFilterInfo(filterInfo);
+      setActiveModal('teachers-preview');
+    } catch (error) {
+      console.error('Error preparing teachers preview:', error);
+      addToast({
+        type: 'error',
+        title: 'Failed to Load Teachers',
+        message: 'An error occurred while loading teachers data.',
+        duration: 5000
+      });
+    }
+  };
+
+  const handleDownloadTeachersPDF = async () => {
+    try {
+      const pdfBytes = await generateTeachersPDF(
+        previewTeachers, 
+        classes, 
+        previewAssignments, 
+        previewFilterInfo
+      );
+      
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filterStr = previewFilterInfo.toLowerCase().replace(/[^a-z0-9]/g, '-').substring(0, 30);
+      link.download = `teachers-master-list-${filterStr}-${dateStr}.pdf`;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      addToast({
+        type: 'success',
+        title: 'PDF Generated',
+        message: `Successfully downloaded ${previewTeachers.length} teacher(s) with their class assignments.`,
+        duration: 4000
+      });
+      
+      setActiveModal(null);
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      addToast({
+        type: 'error',
+        title: 'PDF Generation Failed',
+        message: 'An error occurred while generating the PDF.',
+        duration: 5000
+      });
+    }
+  };
+
+  const handleViewLearners = async (classId?: string) => {
+    try {
+      let learnersToShow = [...learners];
+      let className = 'All Learners';
+      
+      if (classId) {
+        const classObj = classes.find(c => c.id === classId);
+        className = classObj?.name || 'Unknown Class';
+        learnersToShow = learners.filter(learner => learner.classId === classId);
+        learnersToShow = learnersToShow.map(learner => ({
+          ...learner,
+          className: className
+        }));
+      } else {
+        learnersToShow = learnersToShow.map(learner => {
+          const learnerClass = classes.find(c => c.id === learner.classId);
+          return {
+            ...learner,
+            className: learnerClass?.name || 'Unknown Class'
+          };
+        });
+      }
+      
+      addToast({
+        type: 'info',
+        title: 'Learners Found',
+        message: `${learnersToShow.length} learners in ${className}`,
+        duration: 3000
+      });
+      
+    } catch (error) {
+      console.error('Error loading learners:', error);
+      addToast({
+        type: 'error',
+        title: 'Failed to Load Learners',
+        message: 'An error occurred while loading learners data.',
+        duration: 5000
+      });
+    }
+  };
+
   const handleUpdateStatus = async (teacherId: string, newStatus: TeacherStatus) => {
     if (!isUserAdmin) {
       addToast({
@@ -674,7 +1567,6 @@ export default function TeacherManagement() {
     setActiveModal('confirm');
   };
 
-  // Handle edit teacher
   const handleEditTeacher = async () => {
     if (!selectedTeacher) return;
 
@@ -699,8 +1591,6 @@ export default function TeacherManagement() {
       
       setActiveModal(null);
       setSelectedTeacher(null);
-      
-      // Invalidate queries to refresh data
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
     } catch (error: any) {
       console.error('Update error:', error);
@@ -713,7 +1603,6 @@ export default function TeacherManagement() {
     }
   };
 
-  // Handle delete teacher
   const handleDeleteTeacher = async () => {
     if (!selectedTeacher) return;
 
@@ -729,8 +1618,6 @@ export default function TeacherManagement() {
       
       setActiveModal(null);
       setSelectedTeacher(null);
-      
-      // Invalidate queries
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
     } catch (error: any) {
       console.error('Delete error:', error);
@@ -743,7 +1630,6 @@ export default function TeacherManagement() {
     }
   };
 
-  // Handle adding a subject to teacher's list (edit mode)
   const handleAddSubjectToTeacher = () => {
     if (!editTeacherData.newSubject) {
       addToast({
@@ -779,7 +1665,6 @@ export default function TeacherManagement() {
     });
   };
 
-  // Handle removing a subject from teacher's list (edit mode)
   const handleRemoveSubjectFromTeacher = (subjectToRemove: string) => {
     setEditTeacherData({
       ...editTeacherData,
@@ -794,7 +1679,6 @@ export default function TeacherManagement() {
     });
   };
 
-  // Handle adding a subject to assignment list
   const handleAddSubject = () => {
     if (!currentSubject) {
       addToast({
@@ -820,12 +1704,10 @@ export default function TeacherManagement() {
     setCurrentSubject('');
   };
 
-  // Handle removing a subject from assignment list
   const handleRemoveSubject = (subjectToRemove: string) => {
     setSelectedSubjects(selectedSubjects.filter(s => s !== subjectToRemove));
   };
 
-  // Handle teacher assignment
   const handleAssignTeacher = async () => {
     if (!selectedTeacher || !selectedClassId) {
       addToast({
@@ -895,9 +1777,9 @@ export default function TeacherManagement() {
         duration: 5000
       });
       
-      // Invalidate queries to refresh data
+      // FIXED: Use correct query keys for invalidation
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', selectedTeacher.id] });
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
       
       resetAssignmentModal();
       
@@ -912,7 +1794,6 @@ export default function TeacherManagement() {
     }
   };
 
-  // Handle remove specific subject from class
   const handleRemoveSubjectFromClass = async () => {
     if (!selectedTeacher || !selectedClassId || !selectedSubjectToRemove) return;
 
@@ -930,8 +1811,8 @@ export default function TeacherManagement() {
         duration: 4000
       });
       
-      // Invalidate queries
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', selectedTeacher.id] });
+      // FIXED: Use correct query keys for invalidation
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
       
       setActiveModal(null);
       setSelectedTeacher(null);
@@ -948,12 +1829,10 @@ export default function TeacherManagement() {
     }
   };
 
-  // Handle remove form teacher status only
   const handleRemoveFormTeacherStatus = async () => {
     if (!selectedTeacher || !selectedClassId) return;
 
     try {
-      // Find and remove the form teacher assignment
       await removeTeacherSubject({
         teacherId: selectedTeacher.id,
         classId: selectedClassId,
@@ -967,8 +1846,8 @@ export default function TeacherManagement() {
         duration: 4000
       });
       
-      // Invalidate queries
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', selectedTeacher.id] });
+      // FIXED: Use correct query keys for invalidation
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       
       setActiveModal(null);
@@ -986,7 +1865,6 @@ export default function TeacherManagement() {
     }
   };
 
-  // Handle remove teacher from class (all subjects)
   const handleRemoveFromClass = async () => {
     if (!selectedTeacher || !selectedClassId) return;
 
@@ -1003,8 +1881,8 @@ export default function TeacherManagement() {
         duration: 4000
       });
       
-      // Invalidate queries
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', selectedTeacher.id] });
+      // FIXED: Use correct query keys for invalidation
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       
       setActiveModal(null);
@@ -1022,7 +1900,6 @@ export default function TeacherManagement() {
     }
   };
 
-  // Handle transfer teacher
   const handleTransferTeacher = async () => {
     if (!selectedTeacher || !selectedClassId || !targetClassId) {
       addToast({
@@ -1051,8 +1928,8 @@ export default function TeacherManagement() {
         duration: 5000
       });
       
-      // Invalidate queries
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', selectedTeacher.id] });
+      // FIXED: Use correct query keys for invalidation
+      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
       
       setActiveModal(null);
       setSelectedTeacher(null);
@@ -1069,7 +1946,6 @@ export default function TeacherManagement() {
     }
   };
 
-  // Handle confirmation action
   const handleConfirmAction = async () => {
     if (!modalData) return;
 
@@ -1128,7 +2004,6 @@ export default function TeacherManagement() {
     }
   };
 
-  // Clear all filters
   const clearFilters = () => {
     setSearchTerm('');
     setStatusFilter('all');
@@ -1143,7 +2018,6 @@ export default function TeacherManagement() {
     });
   };
 
-  // Reset assignment modal
   const resetAssignmentModal = () => {
     setActiveModal(null);
     setSelectedTeacher(null);
@@ -1157,9 +2031,6 @@ export default function TeacherManagement() {
     setModalData(null);
   };
 
-  // ==================== RENDER ====================
-  
-  // Error state
   if (teachersError || classesError) {
     return (
       <DashboardLayout activeTab="teachers">
@@ -1187,7 +2058,6 @@ export default function TeacherManagement() {
     );
   }
 
-  // Loading state
   if (isLoadingTeachers || isLoadingClasses) {
     return (
       <DashboardLayout activeTab="teachers">
@@ -1279,38 +2149,93 @@ export default function TeacherManagement() {
                 </p>
               </div>
               
-              {/* Admin Action */}
+              {/* Admin Actions */}
               {isUserAdmin && (
-                <button
-                  onClick={() => {
-                    setSelectedTeacher(null);
-                    setSelectedSubjects([]);
-                    setActiveModal('assignment');
-                  }}
-                  disabled={isAssigningTeacher}
-                  className={`
-                    inline-flex items-center justify-center
-                    bg-blue-600 text-white rounded-xl hover:bg-blue-700
-                    font-medium transition-all active:scale-[0.98]
-                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
-                    disabled:opacity-50 disabled:cursor-not-allowed
-                    ${isMobile 
-                      ? 'p-2.5 w-full sm:w-auto' 
-                      : 'px-4 py-2.5 gap-2'
-                    }
-                  `}
-                  title={isMobile ? 'Assign teacher to class' : undefined}
-                >
-                  {isAssigningTeacher ? (
-                    <Loader2 size={isMobile ? 18 : 20} className="animate-spin" />
-                  ) : (
-                    <UserCheck size={isMobile ? 18 : 20} />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handlePreviewTeachers}
+                    className={`
+                      inline-flex items-center justify-center
+                      bg-green-600 text-white rounded-xl hover:bg-green-700
+                      font-medium transition-all active:scale-[0.98]
+                      focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2
+                      ${isMobile 
+                        ? 'p-2.5' 
+                        : 'px-4 py-2.5 gap-2'
+                      }
+                    `}
+                    title={isMobile ? 'Download Teachers List' : undefined}
+                  >
+                    <Download size={isMobile ? 18 : 20} />
+                    {!isMobile && 'Download Teachers List'}
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      setSelectedTeacher(null);
+                      setSelectedSubjects([]);
+                      setActiveModal('assignment');
+                    }}
+                    disabled={isAssigningTeacher}
+                    className={`
+                      inline-flex items-center justify-center
+                      bg-blue-600 text-white rounded-xl hover:bg-blue-700
+                      font-medium transition-all active:scale-[0.98]
+                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
+                      disabled:opacity-50 disabled:cursor-not-allowed
+                      ${isMobile 
+                        ? 'p-2.5' 
+                        : 'px-4 py-2.5 gap-2'
+                      }
+                    `}
+                    title={isMobile ? 'Assign teacher' : undefined}
+                  >
+                    {isAssigningTeacher ? (
+                      <Loader2 size={isMobile ? 18 : 20} className="animate-spin" />
+                    ) : (
+                      <UserCheck size={isMobile ? 18 : 20} />
+                    )}
+                    {!isMobile && 'Assign to Class'}
+                  </button>
+
+                  {/* Debug Toggle Button */}
+                  {process.env.NODE_ENV === 'development' && (
+                    <button
+                      onClick={() => setShowDebug(!showDebug)}
+                      className={`
+                        inline-flex items-center justify-center
+                        bg-gray-600 text-white rounded-xl hover:bg-gray-700
+                        font-medium transition-all active:scale-[0.98]
+                        focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2
+                        ${isMobile ? 'p-2.5' : 'px-4 py-2.5 gap-2'}
+                      `}
+                    >
+                      <Eye size={isMobile ? 18 : 20} />
+                      {!isMobile && 'Debug'}
+                    </button>
                   )}
-                  {!isMobile && 'Assign to Class'}
-                </button>
+                </div>
               )}
             </div>
           </div>
+
+          {/* Debug Panel */}
+          {showDebug && (
+            <div className="mb-6 bg-gray-900 text-white p-4 rounded-xl overflow-auto text-xs">
+              <h3 className="font-bold mb-2 flex items-center gap-2">
+                <Eye size={14} />
+                🔍 Debug: Teacher Assignments
+              </h3>
+              <p>Total teachers: {teachers?.length || 0}</p>
+              <p>Filtered teachers: {filteredTeachers.length}</p>
+              <p>Classes available: {classes?.length || 0}</p>
+              <div className="mt-3 max-h-60 overflow-y-auto">
+                {filteredTeachers.slice(0, 5).map(t => (
+                  <TeacherAssignmentDebug key={t.id} teacherId={t.id} teacherName={t.name} />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ===== STATS CARDS ===== */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-4 mb-6">
@@ -1443,7 +2368,7 @@ export default function TeacherManagement() {
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
                   <input
                     type="text"
-                    placeholder={isMobile ? "Search teachers..." : "Search by name, email, or phone..."}
+                    placeholder={isMobile ? "Search teachers..." : "Search by name, email, phone, NRC, TS#, or Emp#..."}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg 
@@ -1620,6 +2545,7 @@ export default function TeacherManagement() {
                       setTargetClassId('');
                       setActiveModal('transfer');
                     }}
+                    onViewLearners={(classId) => handleViewLearners(classId)}
                   />
                 );
               })}
@@ -2281,6 +3207,18 @@ export default function TeacherManagement() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ===== TEACHERS PREVIEW MODAL ===== */}
+      {activeModal === 'teachers-preview' && (
+        <TeachersPreviewModal
+          teachers={previewTeachers}
+          classes={classes}
+          assignments={previewAssignments}
+          filterInfo={previewFilterInfo}
+          onClose={() => setActiveModal(null)}
+          onDownload={handleDownloadTeachersPDF}
+        />
       )}
     </>
   );

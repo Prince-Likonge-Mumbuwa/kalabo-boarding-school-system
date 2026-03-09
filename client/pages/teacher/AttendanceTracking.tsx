@@ -139,16 +139,16 @@ export default function AttendanceTracking() {
     refetch: refetchClasses
   } = useTeacherClasses();
 
-  // Get teacher's assignments for subjects
+  // Get teacher's assignments for subjects - FIXED: Using updated hook with correct collection
   const { 
     assignments = [], 
     isLoading: loadingAssignments 
-  } = useTeacherAssignments(user?.id);
+  } = useTeacherAssignments(user?.uid);
 
   // Find if teacher is a form teacher and which class
   const formTeacherClass = useMemo(() => {
-    return classes.find(cls => cls.formTeacherId === user?.id);
-  }, [classes, user?.id]);
+    return classes.find(cls => cls.formTeacherId === user?.uid);
+  }, [classes, user?.uid]);
 
   const isFormTeacher = !!formTeacherClass;
 
@@ -164,12 +164,12 @@ export default function AttendanceTracking() {
 
   // Get available subjects for selected class in periodic mode
   const availableSubjects = useMemo(() => {
-    if (mode !== 'periodic' || !selectedClass || !user?.id) return [];
+    if (mode !== 'periodic' || !selectedClass || !user?.uid) return [];
     
     return assignments
-      .filter(a => a.teacherId === user.id && a.classId === selectedClass)
+      .filter(a => a.teacherId === user.uid && a.classId === selectedClass)
       .map(a => a.subject);
-  }, [mode, selectedClass, assignments, user?.id]);
+  }, [mode, selectedClass, assignments, user?.uid]);
 
   // Get learners for selected class
   const { learners, isLoading: loadingLearners } = useSchoolLearners(selectedClass);
@@ -343,8 +343,8 @@ export default function AttendanceTracking() {
         classId: selectedClass,
         className: classObj?.name || '',
         date: selectedDate,
-        markedBy: user?.id || 'unknown',
-        markedByName: user?.name || 'Teacher',
+        markedBy: user?.uid || 'unknown',
+        markedByName: user?.fullName || 'Teacher',
       });
 
       await loadAttendance();
@@ -358,6 +358,16 @@ export default function AttendanceTracking() {
   };
 
   const isLoading = loadingClasses || loadingLearners || loadingAttendance || loadingAssignments;
+
+  // Debug effect to verify assignments
+  useEffect(() => {
+    if (user?.uid) {
+      console.log('👤 Teacher UID:', user.uid);
+      console.log('📚 Teacher assignments:', assignments);
+      console.log('🏫 Available classes:', availableClasses);
+      console.log('📖 Available subjects:', availableSubjects);
+    }
+  }, [user, assignments, availableClasses, availableSubjects]);
 
   // Error state
   if (classesError) {
@@ -441,7 +451,7 @@ export default function AttendanceTracking() {
                   {availableClasses.map(cls => (
                     <option key={cls.id} value={cls.id}>
                       {cls.name} ({cls.students} students)
-                      {mode === 'daily' && cls.formTeacherId === user?.id && ' (Form)'}
+                      {mode === 'daily' && cls.formTeacherId === user?.uid && ' (Form)'}
                     </option>
                   ))}
                 </select>
