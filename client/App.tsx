@@ -12,13 +12,14 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Landing from "./pages/Landing";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
+import ForgotPassword from "./pages/ForgotPassword"; // NEW IMPORT
 
 // Admin Pages
 import AdminDashboard from "./pages/AdminDashboard";
 import AttendanceOverview from "./pages/admin/AttendanceOverview";
 import ClassManagement from "./pages/admin/ClassManagement";
 import TeacherManagement from "./pages/admin/TeacherManagement";
-import ExamManagement from "./pages/admin/ExamManagement"; // NEW IMPORT
+import ExamManagement from "./pages/admin/ExamManagement";
 import ReportCards from "./pages/admin/ReportCards";
 import AdminResultsAnalysis from "./pages/admin/AdminResultsAnalysis";
 
@@ -45,6 +46,7 @@ const App = () => (
             <Route path="/" element={<Landing />} />
             <Route path="/signin" element={<SignIn />} />
             <Route path="/signup" element={<SignUp />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} /> {/* NEW ROUTE */}
 
             {/* Admin Routes - Protected */}
             <Route path="/dashboard/admin" element={
@@ -67,7 +69,7 @@ const App = () => (
                 <TeacherManagement />
               </ProtectedRoute>
             } />
-            <Route path="/dashboard/admin/exams" element={ // NEW ROUTE
+            <Route path="/dashboard/admin/exams" element={
               <ProtectedRoute allowedRoles={['admin']}>
                 <ExamManagement />
               </ProtectedRoute>
@@ -105,7 +107,7 @@ const App = () => (
               </ProtectedRoute>
             } />
 
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+            {/* Catch-all route */}
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

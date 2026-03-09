@@ -1,6 +1,7 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
+import { useTeacherAssignments, TeacherAssignment } from '@/hooks/useTeacherAssignments'; // Add this import
 import { useAuth } from '@/hooks/useAuth';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useState, useMemo, useEffect } from 'react';
@@ -35,6 +36,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
+import { useQueryClient } from '@tanstack/react-query';
 
 // Teacher status type
 type TeacherStatus = 'active' | 'inactive' | 'transferred' | 'on_leave';
@@ -54,14 +56,401 @@ interface Toast {
   duration?: number;
 }
 
+// Teacher type from your system
+interface Teacher {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  department?: string;
+  subjects?: string[];
+  status?: TeacherStatus;
+  isFormTeacher?: boolean;
+  assignedClasses?: any[];
+  [key: string]: any;
+}
+
+// Get status badge configuration
+const getStatusConfig = (status: string) => {
+  switch(status) {
+    case 'active':
+      return { bg: 'bg-green-100', text: 'text-green-800', icon: CheckCircle, label: 'Active' };
+    case 'inactive':
+      return { bg: 'bg-gray-100', text: 'text-gray-800', icon: PowerOff, label: 'Inactive' };
+    case 'transferred':
+      return { bg: 'bg-blue-100', text: 'text-blue-800', icon: RefreshCw, label: 'Transferred' };
+    case 'on_leave':
+      return { bg: 'bg-yellow-100', text: 'text-yellow-800', icon: XCircle, label: 'On Leave' };
+    default:
+      return { bg: 'bg-green-100', text: 'text-green-800', icon: CheckCircle, label: 'Active' };
+  }
+};
+
+// ==================== TEACHER CARD COMPONENT ====================
+const TeacherCard = ({ 
+  teacher, 
+  isUserAdmin, 
+  classes,
+  onEdit,
+  onDelete,
+  onAssign,
+  onStatusUpdate,
+  onRemoveFromClass,
+  onRemoveFormTeacher,
+  onRemoveSubject,
+  onTransfer
+}: { 
+  teacher: Teacher; 
+  isUserAdmin: boolean; 
+  classes: any[];
+  onEdit: () => void;
+  onDelete: () => void;
+  onAssign: () => void;
+  onStatusUpdate: (status: TeacherStatus) => void;
+  onRemoveFromClass: (classId: string, className: string) => void;
+  onRemoveFormTeacher: (classId: string, className: string) => void;
+  onRemoveSubject: (classId: string, className: string, subject: string) => void;
+  onTransfer: (classId: string, className: string) => void;
+}) => {
+  // This hook is called at the top level of a component - VALID
+  const { 
+    assignments = [], 
+    isLoading: isLoadingAssignments,
+    getClassesWithSubjects 
+  } = useTeacherAssignments(teacher.id);
+
+  const [showActions, setShowActions] = useState(false);
+  const teacherStatus = teacher.status || 'active';
+  const StatusIcon = getStatusConfig(teacherStatus).icon;
+  
+  // Get formatted assignments
+  const assignmentsByClass = useMemo(() => {
+    return getClassesWithSubjects();
+  }, [assignments, getClassesWithSubjects]);
+
+  // Find class name by ID
+  const getClassName = (classId: string): string => {
+    return classes.find(c => c.id === classId)?.name || 'Unknown Class';
+  };
+
+  return (
+    <div className="group bg-white rounded-xl border border-gray-200 p-5 
+                    shadow-sm hover:shadow-lg transition-all duration-300 
+                    hover:border-gray-300 hover:-translate-y-0.5 relative">
+      
+      {/* Loading Overlay */}
+      {isLoadingAssignments && (
+        <div className="absolute inset-0 bg-white/80 rounded-xl flex items-center justify-center z-10">
+          <Loader2 size={24} className="animate-spin text-blue-600" />
+        </div>
+      )}
+
+      {/* Actions Dropdown - Only for Admin */}
+      {isUserAdmin && !isLoadingAssignments && (
+        <div className="absolute top-4 right-4">
+          <button
+            onClick={() => setShowActions(!showActions)}
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <MoreVertical size={16} className="text-gray-500" />
+          </button>
+          
+          {/* Dropdown Menu */}
+          {showActions && (
+            <div className="absolute right-0 mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20 max-h-96 overflow-y-auto">
+              <button
+                onClick={() => {
+                  setShowActions(false);
+                  onEdit();
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Edit size={14} className="text-blue-600" />
+                <span>Edit Teacher</span>
+              </button>
+              
+              {assignmentsByClass.length > 0 && (
+                <>
+                  <div className="border-t border-gray-100 my-1"></div>
+                  <div className="px-4 py-1 text-xs font-medium text-gray-500">CLASS ASSIGNMENTS</div>
+                  
+                  {assignmentsByClass.map(assignment => {
+                    const className = getClassName(assignment.classId);
+                    
+                    return (
+                      <div key={assignment.classId} className="relative group/submenu">
+                        <div className="px-4 py-2 text-left text-sm hover:bg-gray-50 cursor-default">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1">
+                              <span className="font-medium truncate">{className}</span>
+                              {assignment.isFormTeacher && (
+                                <Star size={12} className="text-purple-600 fill-purple-600" />
+                              )}
+                            </div>
+                            <ChevronDown size={14} className="rotate-270 ml-2 flex-shrink-0" />
+                          </div>
+                          
+                          {/* Submenu */}
+                          <div className="absolute left-full top-0 ml-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 hidden group-hover/submenu:block z-30">
+                            {/* Subject removal options */}
+                            {assignment.subjects.map(subject => (
+                              <button
+                                key={subject}
+                                onClick={() => {
+                                  setShowActions(false);
+                                  onRemoveSubject(assignment.classId, className, subject);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                              >
+                                <XCircle size={14} className="text-red-500" />
+                                <span>Remove {subject}</span>
+                              </button>
+                            ))}
+                            
+                            {/* Remove form teacher status option */}
+                            {assignment.isFormTeacher && (
+                              <button
+                                onClick={() => {
+                                  setShowActions(false);
+                                  onRemoveFormTeacher(assignment.classId, className);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                              >
+                                <Star size={14} className="text-purple-500" />
+                                <span>Remove Form Teacher</span>
+                              </button>
+                            )}
+                            
+                            {assignment.subjects.length > 0 && (
+                              <div className="border-t border-gray-100 my-1"></div>
+                            )}
+                            
+                            {/* Remove all from class */}
+                            <button
+                              onClick={() => {
+                                setShowActions(false);
+                                onRemoveFromClass(assignment.classId, className);
+                              }}
+                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 text-red-600 flex items-center gap-2"
+                            >
+                              <UserX size={14} />
+                              <span>Remove All from Class</span>
+                            </button>
+                            
+                            {/* Transfer to another class */}
+                            <button
+                              onClick={() => {
+                                setShowActions(false);
+                                onTransfer(assignment.classId, className);
+                              }}
+                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                            >
+                              <ArrowRight size={14} className="text-blue-600" />
+                              <span>Transfer Class</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+              
+              <div className="border-t border-gray-100 my-1"></div>
+              
+              <button
+                onClick={() => {
+                  setShowActions(false);
+                  onStatusUpdate('active');
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                disabled={teacherStatus === 'active'}
+              >
+                <CheckCircle size={14} className="text-green-600" />
+                <span>Set Active</span>
+                {teacherStatus === 'active' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+              </button>
+              <button
+                onClick={() => {
+                  setShowActions(false);
+                  onStatusUpdate('inactive');
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                disabled={teacherStatus === 'inactive'}
+              >
+                <PowerOff size={14} className="text-gray-600" />
+                <span>Set Inactive</span>
+                {teacherStatus === 'inactive' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+              </button>
+              <button
+                onClick={() => {
+                  setShowActions(false);
+                  onStatusUpdate('on_leave');
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                disabled={teacherStatus === 'on_leave'}
+              >
+                <XCircle size={14} className="text-yellow-600" />
+                <span>Set On Leave</span>
+                {teacherStatus === 'on_leave' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+              </button>
+              <button
+                onClick={() => {
+                  setShowActions(false);
+                  onStatusUpdate('transferred');
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                disabled={teacherStatus === 'transferred'}
+              >
+                <RefreshCw size={14} className="text-blue-600" />
+                <span>Set Transferred</span>
+                {teacherStatus === 'transferred' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+              </button>
+              
+              <div className="border-t border-gray-100 my-1"></div>
+              
+              <button
+                onClick={() => {
+                  setShowActions(false);
+                  onDelete();
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 text-red-600 flex items-center gap-2"
+              >
+                <Trash2 size={14} />
+                <span>Delete Teacher</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Teacher Header */}
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-12 h-12 bg-gradient-to-br from-blue-50 to-blue-100 
+                        rounded-full flex items-center justify-center flex-shrink-0">
+            <User size={22} className="text-blue-600" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="font-bold text-gray-900 truncate">
+              {teacher.name}
+            </h3>
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getStatusConfig(teacherStatus).bg} ${getStatusConfig(teacherStatus).text}`}>
+                <StatusIcon size={10} />
+                {getStatusConfig(teacherStatus).label}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Teacher Details */}
+      <div className="space-y-2 mb-4">
+        <div className="flex items-center gap-2 text-sm">
+          <Mail size={14} className="text-gray-400 flex-shrink-0" />
+          <span className="text-gray-700 truncate">{teacher.email}</span>
+        </div>
+        {teacher.phone && (
+          <div className="flex items-center gap-2 text-sm">
+            <Phone size={14} className="text-gray-400 flex-shrink-0" />
+            <span className="text-gray-700 truncate">{teacher.phone}</span>
+          </div>
+        )}
+        <div className="flex items-center gap-2 text-sm">
+          <BookOpen size={14} className="text-gray-400 flex-shrink-0" />
+          <span className="text-gray-700 truncate">
+            {teacher.subjects && Array.isArray(teacher.subjects) && teacher.subjects.length 
+              ? teacher.subjects.slice(0, 3).join(', ') + (teacher.subjects.length > 3 ? ` +${teacher.subjects.length - 3}` : '')
+              : 'No subjects'}
+          </span>
+        </div>
+        {teacher.department && (
+          <div className="flex items-center gap-2 text-sm">
+            <Briefcase size={14} className="text-gray-400 flex-shrink-0" />
+            <span className="text-gray-700 truncate">{teacher.department}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Assignment Status */}
+      <div className="border-t border-gray-100 pt-4">
+        {assignmentsByClass.length > 0 ? (
+          <div>
+            <p className="text-xs text-gray-500 mb-1.5">Currently assigned to</p>
+            <div className="space-y-3">
+              {assignmentsByClass.map(assignment => {
+                const className = getClassName(assignment.classId);
+                
+                return (
+                  <div key={assignment.classId} className="space-y-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <GraduationCap size={14} className="text-gray-400 flex-shrink-0" />
+                      <span className="font-medium text-gray-900 text-sm truncate flex items-center gap-1">
+                        {className}
+                        {assignment.isFormTeacher && (
+                          <span className="inline-flex items-center gap-0.5 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full ml-1">
+                            <Star size={10} className="fill-purple-700" />
+                            Form
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    
+                    {/* Show multiple subjects for this class */}
+                    {assignment.subjects.length > 0 ? (
+                      <div className="pl-6">
+                        <div className="flex flex-wrap gap-1">
+                          {assignment.subjects.map((subject, idx) => (
+                            <span 
+                              key={idx}
+                              className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full"
+                            >
+                              {subject}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : assignment.isFormTeacher ? (
+                      <div className="pl-6">
+                        <span className="text-xs text-gray-500 italic">Form teacher only (no subjects)</span>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-500">Not assigned</span>
+            {isUserAdmin && teacherStatus === 'active' && (
+              <button
+                onClick={onAssign}
+                className="text-xs text-blue-600 hover:text-blue-800 font-medium 
+                         px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 rounded-lg
+                         transition-colors"
+              >
+                Assign
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ==================== MAIN COMPONENT ====================
 export default function TeacherManagement() {
   const { user } = useAuth();
   const isUserAdmin = user?.userType === 'admin';
   const isMobile = useMediaQuery('(max-width: 640px)');
+  const queryClient = useQueryClient();
   
   // ==================== HOOKS ====================
   const { 
-    allTeachers: teachers, 
+    allTeachers: teachers = [], // Provide default empty array
     isLoading: isLoadingTeachers,
     isFetching: isFetchingTeachers,
     isError: teachersError,
@@ -82,35 +471,27 @@ export default function TeacherManagement() {
     deleteTeacher,
     transferTeacher,
     refetchTeachers,
-    teacherAssignments: classSpecificAssignments, // Renamed to avoid confusion
-    getTeacherSubjectsForClass,
-    isTeacherAssignedToClass,
   } = useSchoolTeachers();
   
   const { 
-    classes, 
+    classes = [], // Provide default empty array
     isLoading: isLoadingClasses,
     isError: classesError,
     refetch: refetchClasses
   } = useSchoolClasses({ isActive: true });
 
   // ==================== STATE ====================
-  // Search and filter
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<TeacherStatus | 'all'>('all');
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all');
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [showActionsFor, setShowActionsFor] = useState<string | null>(null);
-  
-  // Teacher assignments cache - key: teacherId, value: assignments array
-  const [teacherAssignmentsCache, setTeacherAssignmentsCache] = useState<Record<string, any[]>>({});
-  const [loadingAssignmentsFor, setLoadingAssignmentsFor] = useState<Set<string>>(new Set());
   
   // Modal state
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [modalData, setModalData] = useState<any>(null);
-  const [selectedTeacher, setSelectedTeacher] = useState<any>(null);
+  const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const [selectedClassName, setSelectedClassName] = useState<string>('');
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
   const [currentSubject, setCurrentSubject] = useState<string>('');
   
@@ -154,42 +535,6 @@ export default function TeacherManagement() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  // ==================== LOAD TEACHER ASSIGNMENTS ====================
-  // Since getTeacherAssignments isn't available from the hook, we'll use a workaround
-  // This function would need to be implemented in the hook or we'd need to fetch from assignments collection
-  const fetchTeacherAssignments = async (teacherId: string) => {
-    // This is a placeholder - you'll need to implement this based on your actual data structure
-    // For now, we'll return an empty array
-    return [];
-  };
-
-  // Load assignments for a teacher when needed
-  const loadTeacherAssignments = async (teacherId: string) => {
-    if (teacherAssignmentsCache[teacherId] || loadingAssignmentsFor.has(teacherId)) return;
-    
-    setLoadingAssignmentsFor(prev => new Set(prev).add(teacherId));
-    
-    try {
-      const assignments = await fetchTeacherAssignments(teacherId);
-      setTeacherAssignmentsCache(prev => ({
-        ...prev,
-        [teacherId]: assignments || []
-      }));
-    } catch (error) {
-      console.error(`Failed to load assignments for teacher ${teacherId}:`, error);
-      setTeacherAssignmentsCache(prev => ({
-        ...prev,
-        [teacherId]: [] // Empty array on error
-      }));
-    } finally {
-      setLoadingAssignmentsFor(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(teacherId);
-        return newSet;
-      });
-    }
-  };
-
   // Load teacher data into edit form when selected
   useEffect(() => {
     if (selectedTeacher && activeModal === 'edit') {
@@ -198,7 +543,7 @@ export default function TeacherManagement() {
         email: selectedTeacher.email || '',
         phone: selectedTeacher.phone || '',
         department: selectedTeacher.department || '',
-        subjects: selectedTeacher.subjects || [],
+        subjects: Array.isArray(selectedTeacher.subjects) ? selectedTeacher.subjects : [],
         newSubject: ''
       });
     }
@@ -206,36 +551,40 @@ export default function TeacherManagement() {
 
   // ==================== STATS CALCULATION ====================
   const stats = useMemo(() => {
-    let assignedCount = 0;
-    let formTeacherCount = 0;
+    // Safely handle teachers array
+    const teachersArray = teachers || [];
     
-    // Count from cache
-    Object.entries(teacherAssignmentsCache).forEach(([teacherId, assignments]) => {
-      if (assignments && assignments.length > 0) {
-        assignedCount++;
-        if (assignments.some(a => a.isFormTeacher)) {
-          formTeacherCount++;
-        }
-      }
-    });
+    // Calculate from teacher data directly
+    const assignedCount = teachersArray.filter(t => 
+      t && t.assignedClasses && Array.isArray(t.assignedClasses) && t.assignedClasses.length > 0
+    ).length;
+    
+    const formTeacherCount = teachersArray.filter(t => 
+      t && t.isFormTeacher === true
+    ).length;
     
     return {
-      totalTeachers: teachers.length,
-      activeTeachers: teachers.filter(t => t.status === 'active' || !t.status).length,
-      inactiveTeachers: teachers.filter(t => t.status === 'inactive').length,
-      onLeaveTeachers: teachers.filter(t => t.status === 'on_leave').length,
+      totalTeachers: teachersArray.length,
+      activeTeachers: teachersArray.filter(t => t && (t.status === 'active' || !t.status)).length,
+      inactiveTeachers: teachersArray.filter(t => t && t.status === 'inactive').length,
+      onLeaveTeachers: teachersArray.filter(t => t && t.status === 'on_leave').length,
       assignedTeachers: assignedCount,
       formTeachers: formTeacherCount,
     };
-  }, [teachers, teacherAssignmentsCache]);
+  }, [teachers]);
 
   // ==================== FILTER TEACHERS ====================
   const filteredTeachers = useMemo(() => {
-    return teachers.filter(teacher => {
+    // Safely handle teachers array
+    const teachersArray = teachers || [];
+    
+    return teachersArray.filter(teacher => {
+      if (!teacher) return false;
+      
       // Search filter
       const matchesSearch = !debouncedSearch ||
-        teacher.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        teacher.email.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+        (teacher.name && teacher.name.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
+        (teacher.email && teacher.email.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
         (teacher.phone && teacher.phone.includes(debouncedSearch)) ||
         (teacher.department && teacher.department.toLowerCase().includes(debouncedSearch.toLowerCase()));
       
@@ -243,11 +592,10 @@ export default function TeacherManagement() {
       const teacherStatus = teacher.status || 'active';
       const matchesStatus = statusFilter === 'all' || teacherStatus === statusFilter;
       
-      // Assignment filter
+      // Assignment filter - use teacher properties
       let matchesAssignment = true;
-      const teacherAssignments = teacherAssignmentsCache[teacher.id] || [];
-      const hasAssignments = teacherAssignments.length > 0;
-      const isFormTeacher = teacherAssignments.some(a => a.isFormTeacher);
+      const hasAssignments = teacher.assignedClasses && Array.isArray(teacher.assignedClasses) && teacher.assignedClasses.length > 0;
+      const isFormTeacher = teacher.isFormTeacher === true;
       
       switch(assignmentFilter) {
         case 'assigned':
@@ -265,81 +613,31 @@ export default function TeacherManagement() {
       
       return matchesSearch && matchesStatus && matchesAssignment;
     });
-  }, [teachers, debouncedSearch, statusFilter, assignmentFilter, teacherAssignmentsCache]);
+  }, [teachers, debouncedSearch, statusFilter, assignmentFilter]);
 
-  // Load assignments for visible teachers
-  useEffect(() => {
-    if (!filteredTeachers.length) return;
+  // ==================== FILTER COUNTS ====================
+  const filterCounts = useMemo(() => {
+    const teachersArray = teachers || [];
     
-    filteredTeachers.forEach(teacher => {
-      if (!teacherAssignmentsCache[teacher.id] && !loadingAssignmentsFor.has(teacher.id)) {
-        loadTeacherAssignments(teacher.id);
-      }
-    });
-  }, [filteredTeachers, teacherAssignmentsCache, loadingAssignmentsFor]);
-
-  // ==================== HELPER FUNCTIONS ====================
-  
-  // Get assignments for a specific teacher (from cache) - RENAMED to avoid conflict
-  const getTeacherAssignmentsFromCache = (teacherId: string) => {
-    return teacherAssignmentsCache[teacherId] || [];
-  };
-
-  // Get all assignments for a teacher grouped by class
-  const getTeacherAssignmentsByClass = (teacherId: string) => {
-    const assignments = getTeacherAssignmentsFromCache(teacherId);
-    if (!assignments.length) return [];
+    const assignedCount = teachersArray.filter(t => 
+      t && t.assignedClasses && Array.isArray(t.assignedClasses) && t.assignedClasses.length > 0
+    ).length;
     
-    const grouped = new Map();
+    const formTeacherCount = teachersArray.filter(t => 
+      t && t.isFormTeacher === true
+    ).length;
     
-    assignments.forEach(a => {
-      if (!grouped.has(a.classId)) {
-        grouped.set(a.classId, {
-          classId: a.classId,
-          className: a.className || 'Unknown Class',
-          subjects: [],
-          isFormTeacher: false
-        });
-      }
-      const classData = grouped.get(a.classId);
-      
-      // Add subject if it's not "Form Teacher" placeholder
-      if (a.subject && a.subject !== 'Form Teacher') {
-        if (!classData.subjects.includes(a.subject)) {
-          classData.subjects.push(a.subject);
-        }
-      }
-      
-      // Mark as form teacher if any assignment has isFormTeacher=true
-      if (a.isFormTeacher) {
-        classData.isFormTeacher = true;
-      }
-    });
-    
-    return Array.from(grouped.values());
-  };
-
-  // Check if teacher is form teacher for a specific class
-  const isFormTeacherForClass = (teacherId: string, classId: string): boolean => {
-    const assignments = getTeacherAssignmentsFromCache(teacherId);
-    return assignments.some(a => a.classId === classId && a.isFormTeacher);
-  };
-
-  // Get status badge configuration
-  const getStatusConfig = (status: string) => {
-    switch(status) {
-      case 'active':
-        return { bg: 'bg-green-100', text: 'text-green-800', icon: CheckCircle, label: 'Active' };
-      case 'inactive':
-        return { bg: 'bg-gray-100', text: 'text-gray-800', icon: PowerOff, label: 'Inactive' };
-      case 'transferred':
-        return { bg: 'bg-blue-100', text: 'text-blue-800', icon: RefreshCw, label: 'Transferred' };
-      case 'on_leave':
-        return { bg: 'bg-yellow-100', text: 'text-yellow-800', icon: XCircle, label: 'On Leave' };
-      default:
-        return { bg: 'bg-green-100', text: 'text-green-800', icon: CheckCircle, label: 'Active' };
-    }
-  };
+    return {
+      all: teachersArray.length,
+      active: teachersArray.filter(t => t && (t.status === 'active' || !t.status)).length,
+      inactive: teachersArray.filter(t => t && t.status === 'inactive').length,
+      onLeave: teachersArray.filter(t => t && t.status === 'on_leave').length,
+      transferred: teachersArray.filter(t => t && t.status === 'transferred').length,
+      assigned: assignedCount,
+      unassigned: teachersArray.length - assignedCount,
+      formTeachers: formTeacherCount
+    };
+  }, [teachers]);
 
   // ==================== ACTION HANDLERS ====================
   
@@ -354,7 +652,7 @@ export default function TeacherManagement() {
       return;
     }
 
-    const teacher = teachers.find(t => t.id === teacherId);
+    const teacher = (teachers || []).find(t => t && t.id === teacherId);
     if (!teacher) return;
 
     const statusLabels = {
@@ -401,7 +699,9 @@ export default function TeacherManagement() {
       
       setActiveModal(null);
       setSelectedTeacher(null);
-      setShowActionsFor(null);
+      
+      // Invalidate queries to refresh data
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
     } catch (error: any) {
       console.error('Update error:', error);
       addToast({
@@ -417,19 +717,6 @@ export default function TeacherManagement() {
   const handleDeleteTeacher = async () => {
     if (!selectedTeacher) return;
 
-    // Check if teacher has any assignments
-    const hasAssignments = getTeacherAssignmentsFromCache(selectedTeacher.id).length > 0;
-    
-    if (hasAssignments) {
-      addToast({
-        type: 'warning',
-        title: 'Cannot Delete Teacher',
-        message: 'This teacher has existing class assignments. Remove all assignments first.',
-        duration: 5000
-      });
-      return;
-    }
-
     try {
       await deleteTeacher(selectedTeacher.id);
       
@@ -442,7 +729,9 @@ export default function TeacherManagement() {
       
       setActiveModal(null);
       setSelectedTeacher(null);
-      setShowActionsFor(null);
+      
+      // Invalidate queries
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
     } catch (error: any) {
       console.error('Delete error:', error);
       addToast({
@@ -568,7 +857,7 @@ export default function TeacherManagement() {
       return;
     }
 
-    const selectedClass = classes.find(c => c.id === selectedClassId);
+    const selectedClass = (classes || []).find(c => c && c.id === selectedClassId);
     if (!selectedClass) {
       addToast({
         type: 'error',
@@ -581,7 +870,6 @@ export default function TeacherManagement() {
 
     try {
       if (selectedSubjects.length > 0) {
-        // Use the multiple subjects mutation
         await assignTeacherWithMultipleSubjects({
           teacherId: selectedTeacher.id,
           classId: selectedClassId,
@@ -589,7 +877,6 @@ export default function TeacherManagement() {
           isFormTeacher: assignAsFormTeacher
         });
       } else if (assignAsFormTeacher) {
-        // Form teacher only - use single subject with placeholder
         await assignTeacherToClass({
           teacherId: selectedTeacher.id,
           classId: selectedClassId,
@@ -608,10 +895,9 @@ export default function TeacherManagement() {
         duration: 5000
       });
       
-      // Refresh assignments for this teacher
-      if (selectedTeacher) {
-        await loadTeacherAssignments(selectedTeacher.id);
-      }
+      // Invalidate queries to refresh data
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', selectedTeacher.id] });
       
       resetAssignmentModal();
       
@@ -644,8 +930,8 @@ export default function TeacherManagement() {
         duration: 4000
       });
       
-      // Refresh assignments for this teacher
-      await loadTeacherAssignments(selectedTeacher.id);
+      // Invalidate queries
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', selectedTeacher.id] });
       
       setActiveModal(null);
       setSelectedTeacher(null);
@@ -663,87 +949,31 @@ export default function TeacherManagement() {
   };
 
   // Handle remove form teacher status only
-  const handleRemoveFormTeacherStatus = async (teacherId: string, classId: string) => {
-    if (!isUserAdmin) {
-      addToast({
-        type: 'error',
-        title: 'Permission Denied',
-        message: 'Only administrators can update form teacher status',
-        duration: 4000
-      });
-      return;
-    }
-
-    const teacher = teachers.find(t => t.id === teacherId);
-    if (!teacher) return;
-
-    const className = classes.find(c => c.id === classId)?.name || 'Unknown Class';
-
-    setModalData({
-      teacher,
-      classId,
-      className,
-      action: 'remove-form-teacher',
-      title: 'Remove Form Teacher Status',
-      message: `Remove ${teacher.name} as Form Teacher of ${className}? They will remain as subject teacher.`,
-      confirmText: 'Remove Status',
-      cancelText: 'Cancel'
-    });
-    setActiveModal('confirm');
-  };
-
-  // Execute remove form teacher status after confirmation
-  const executeRemoveFormTeacherStatus = async () => {
-    if (!modalData) return;
-    
-    const { teacher, classId } = modalData;
+  const handleRemoveFormTeacherStatus = async () => {
+    if (!selectedTeacher || !selectedClassId) return;
 
     try {
-      // Find the form teacher assignment
-      const assignments = getTeacherAssignmentsFromCache(teacher.id);
-      const formTeacherAssignment = assignments.find(a => 
-        a.classId === classId && a.isFormTeacher === true
-      );
-
-      if (formTeacherAssignment) {
-        // If it's a dedicated form teacher assignment, remove it
-        if (formTeacherAssignment.subject === 'Form Teacher') {
-          await removeTeacherSubject({
-            teacherId: teacher.id,
-            classId,
-            subject: 'Form Teacher'
-          });
-        } else {
-          // Otherwise, remove and reassign without form teacher status
-          await removeTeacherSubject({
-            teacherId: teacher.id,
-            classId,
-            subject: formTeacherAssignment.subject
-          });
-          
-          // Reassign the subject without form teacher status
-          await assignTeacherToClass({
-            teacherId: teacher.id,
-            classId,
-            subject: formTeacherAssignment.subject,
-            isFormTeacher: false
-          });
-        }
-      }
+      // Find and remove the form teacher assignment
+      await removeTeacherSubject({
+        teacherId: selectedTeacher.id,
+        classId: selectedClassId,
+        subject: 'Form Teacher'
+      });
       
       addToast({
         type: 'success',
         title: 'Status Updated',
-        message: `${teacher.name} is no longer Form Teacher of this class.`,
+        message: `${selectedTeacher.name} is no longer Form Teacher of this class.`,
         duration: 4000
       });
       
-      // Refresh assignments
-      await loadTeacherAssignments(teacher.id);
+      // Invalidate queries
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', selectedTeacher.id] });
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
       
       setActiveModal(null);
-      setModalData(null);
-      setShowActionsFor(null);
+      setSelectedTeacher(null);
+      setSelectedClassId('');
       
     } catch (error: any) {
       console.error('Remove form teacher error:', error);
@@ -757,60 +987,29 @@ export default function TeacherManagement() {
   };
 
   // Handle remove teacher from class (all subjects)
-  const handleRemoveFromClass = async (teacherId: string, classId: string) => {
-    if (!isUserAdmin) {
-      addToast({
-        type: 'error',
-        title: 'Permission Denied',
-        message: 'Only administrators can remove teachers from classes',
-        duration: 4000
-      });
-      return;
-    }
-
-    const teacher = teachers.find(t => t.id === teacherId);
-    if (!teacher) return;
-
-    const className = classes.find(c => c.id === classId)?.name || 'Unknown Class';
-
-    setModalData({
-      teacher,
-      classId,
-      className,
-      action: 'remove-from-class',
-      title: 'Remove Teacher from Class',
-      message: `Remove ${teacher.name} completely from ${className}? This will remove all subject assignments and form teacher status.`,
-      confirmText: 'Remove Completely',
-      cancelText: 'Cancel'
-    });
-    setActiveModal('confirm');
-  };
-
-  // Execute remove from class after confirmation
-  const executeRemoveFromClass = async () => {
-    if (!modalData) return;
-    
-    const { teacher, classId } = modalData;
+  const handleRemoveFromClass = async () => {
+    if (!selectedTeacher || !selectedClassId) return;
 
     try {
       await removeTeacherFromClass({
-        teacherId: teacher.id,
-        classId
+        teacherId: selectedTeacher.id,
+        classId: selectedClassId
       });
       
       addToast({
         type: 'success',
         title: 'Teacher Removed',
-        message: `${teacher.name} has been removed from the class.`,
+        message: `${selectedTeacher.name} has been removed from the class.`,
         duration: 4000
       });
       
-      // Refresh assignments
-      await loadTeacherAssignments(teacher.id);
+      // Invalidate queries
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', selectedTeacher.id] });
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
       
       setActiveModal(null);
-      setModalData(null);
-      setShowActionsFor(null);
+      setSelectedTeacher(null);
+      setSelectedClassId('');
       
     } catch (error: any) {
       console.error('Remove error:', error);
@@ -835,8 +1034,8 @@ export default function TeacherManagement() {
       return;
     }
 
-    const targetClass = classes.find(c => c.id === targetClassId);
-    const sourceClass = classes.find(c => c.id === selectedClassId);
+    const targetClass = (classes || []).find(c => c && c.id === targetClassId);
+    const sourceClass = (classes || []).find(c => c && c.id === selectedClassId);
 
     try {
       await transferTeacher({
@@ -852,8 +1051,8 @@ export default function TeacherManagement() {
         duration: 5000
       });
       
-      // Refresh assignments
-      await loadTeacherAssignments(selectedTeacher.id);
+      // Invalidate queries
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', selectedTeacher.id] });
       
       setActiveModal(null);
       setSelectedTeacher(null);
@@ -898,7 +1097,6 @@ export default function TeacherManagement() {
           
           setActiveModal(null);
           setModalData(null);
-          setShowActionsFor(null);
         } catch (error: any) {
           console.error('Status update error:', error);
           addToast({
@@ -910,12 +1108,18 @@ export default function TeacherManagement() {
         }
         break;
       
-      case 'remove-form-teacher':
-        await executeRemoveFormTeacherStatus();
+      case 'remove-from-class':
+        setSelectedTeacher(modalData.teacher);
+        setSelectedClassId(modalData.classId);
+        await handleRemoveFromClass();
+        setModalData(null);
         break;
       
-      case 'remove-from-class':
-        await executeRemoveFromClass();
+      case 'remove-form-teacher':
+        setSelectedTeacher(modalData.teacher);
+        setSelectedClassId(modalData.classId);
+        await handleRemoveFormTeacherStatus();
+        setModalData(null);
         break;
       
       default:
@@ -944,6 +1148,7 @@ export default function TeacherManagement() {
     setActiveModal(null);
     setSelectedTeacher(null);
     setSelectedClassId('');
+    setSelectedClassName('');
     setSelectedSubjects([]);
     setCurrentSubject('');
     setAssignAsFormTeacher(false);
@@ -951,33 +1156,6 @@ export default function TeacherManagement() {
     setSelectedSubjectToRemove('');
     setModalData(null);
   };
-
-  // ==================== FILTER COUNTS ====================
-  const filterCounts = useMemo(() => {
-    const counts = {
-      all: teachers.length,
-      active: teachers.filter(t => t.status === 'active' || !t.status).length,
-      inactive: teachers.filter(t => t.status === 'inactive').length,
-      onLeave: teachers.filter(t => t.status === 'on_leave').length,
-      transferred: teachers.filter(t => t.status === 'transferred').length,
-      assigned: 0,
-      unassigned: 0,
-      formTeachers: 0
-    };
-    
-    Object.entries(teacherAssignmentsCache).forEach(([teacherId, assignments]) => {
-      if (assignments && assignments.length > 0) {
-        counts.assigned++;
-        if (assignments.some(a => a.isFormTeacher)) {
-          counts.formTeachers++;
-        }
-      }
-    });
-    
-    counts.unassigned = teachers.length - counts.assigned;
-    
-    return counts;
-  }, [teachers, teacherAssignmentsCache]);
 
   // ==================== RENDER ====================
   
@@ -1134,7 +1312,7 @@ export default function TeacherManagement() {
             </div>
           </div>
 
-          {/* ===== STATS CARDS - 6 CARDS ===== */}
+          {/* ===== STATS CARDS ===== */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-4 mb-6">
             {/* Total Teachers */}
             <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
@@ -1374,309 +1552,75 @@ export default function TeacherManagement() {
           {filteredTeachers.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
               {filteredTeachers.map((teacher) => {
-                const teacherStatus = teacher.status || 'active';
-                const StatusIcon = getStatusConfig(teacherStatus).icon;
-                const assignments = getTeacherAssignmentsByClass(teacher.id);
-                const isLoading = loadingAssignmentsFor.has(teacher.id);
+                if (!teacher || !teacher.id) return null;
                 
                 return (
-                  <div
+                  <TeacherCard
                     key={teacher.id}
-                    className="group bg-white rounded-xl border border-gray-200 p-5 
-                             shadow-sm hover:shadow-lg transition-all duration-300 
-                             hover:border-gray-300 hover:-translate-y-0.5 relative"
-                  >
-                    {/* Loading Overlay */}
-                    {isLoading && (
-                      <div className="absolute inset-0 bg-white/80 rounded-xl flex items-center justify-center z-10">
-                        <Loader2 size={24} className="animate-spin text-blue-600" />
-                      </div>
-                    )}
-
-                    {/* Actions Dropdown - Only for Admin */}
-                    {isUserAdmin && !isLoading && (
-                      <div className="absolute top-4 right-4">
-                        <button
-                          onClick={() => setShowActionsFor(showActionsFor === teacher.id ? null : teacher.id)}
-                          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-                        >
-                          <MoreVertical size={16} className="text-gray-500" />
-                        </button>
-                        
-                        {/* Dropdown Menu */}
-                        {showActionsFor === teacher.id && (
-                          <div className="absolute right-0 mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 max-h-96 overflow-y-auto">
-                            <button
-                              onClick={() => {
-                                setSelectedTeacher(teacher);
-                                setActiveModal('edit');
-                                setShowActionsFor(null);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                            >
-                              <Edit size={14} className="text-blue-600" />
-                              <span>Edit Teacher</span>
-                            </button>
-                            
-                            {assignments.length > 0 && (
-                              <>
-                                <div className="border-t border-gray-100 my-1"></div>
-                                <div className="px-4 py-1 text-xs font-medium text-gray-500">CLASS ASSIGNMENTS</div>
-                                
-                                {assignments.map(assignment => (
-                                  <div key={assignment.classId} className="relative group/submenu">
-                                    <div className="px-4 py-2 text-left text-sm hover:bg-gray-50 cursor-default">
-                                      <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-1">
-                                          <span className="font-medium truncate">{assignment.className}</span>
-                                          {assignment.isFormTeacher && (
-                                            <Star size={12} className="text-purple-600 fill-purple-600" />
-                                          )}
-                                        </div>
-                                        <ChevronDown size={14} className="rotate-270 ml-2 flex-shrink-0" />
-                                      </div>
-                                      
-                                      {/* Submenu */}
-                                      <div className="absolute left-full top-0 ml-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 hidden group-hover/submenu:block">
-                                        {/* Subject removal options */}
-                                        {assignment.subjects.map(subject => (
-                                          <button
-                                            key={subject}
-                                            onClick={() => {
-                                              setSelectedTeacher(teacher);
-                                              setSelectedClassId(assignment.classId);
-                                              setSelectedSubjectToRemove(subject);
-                                              setActiveModal('subject-remove');
-                                              setShowActionsFor(null);
-                                            }}
-                                            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                                          >
-                                            <XCircle size={14} className="text-red-500" />
-                                            <span>Remove {subject}</span>
-                                          </button>
-                                        ))}
-                                        
-                                        {/* Remove form teacher status option */}
-                                        {assignment.isFormTeacher && (
-                                          <button
-                                            onClick={() => {
-                                              handleRemoveFormTeacherStatus(teacher.id, assignment.classId);
-                                              setShowActionsFor(null);
-                                            }}
-                                            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                                          >
-                                            <Star size={14} className="text-purple-500" />
-                                            <span>Remove Form Teacher</span>
-                                          </button>
-                                        )}
-                                        
-                                        {assignment.subjects.length > 0 && (
-                                          <div className="border-t border-gray-100 my-1"></div>
-                                        )}
-                                        
-                                        {/* Remove all from class */}
-                                        <button
-                                          onClick={() => {
-                                            handleRemoveFromClass(teacher.id, assignment.classId);
-                                            setShowActionsFor(null);
-                                          }}
-                                          className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 text-red-600 flex items-center gap-2"
-                                        >
-                                          <UserX size={14} />
-                                          <span>Remove All from Class</span>
-                                        </button>
-                                        
-                                        {/* Transfer to another class */}
-                                        <button
-                                          onClick={() => {
-                                            setSelectedTeacher(teacher);
-                                            setSelectedClassId(assignment.classId);
-                                            setActiveModal('transfer');
-                                            setShowActionsFor(null);
-                                          }}
-                                          className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                                        >
-                                          <ArrowRight size={14} className="text-blue-600" />
-                                          <span>Transfer Class</span>
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </>
-                            )}
-                            
-                            <div className="border-t border-gray-100 my-1"></div>
-                            
-                            <button
-                              onClick={() => handleUpdateStatus(teacher.id, 'active')}
-                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                              disabled={teacherStatus === 'active'}
-                            >
-                              <CheckCircle size={14} className="text-green-600" />
-                              <span>Set Active</span>
-                              {teacherStatus === 'active' && <span className="ml-auto text-xs text-gray-400">✓</span>}
-                            </button>
-                            <button
-                              onClick={() => handleUpdateStatus(teacher.id, 'inactive')}
-                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                              disabled={teacherStatus === 'inactive'}
-                            >
-                              <PowerOff size={14} className="text-gray-600" />
-                              <span>Set Inactive</span>
-                              {teacherStatus === 'inactive' && <span className="ml-auto text-xs text-gray-400">✓</span>}
-                            </button>
-                            <button
-                              onClick={() => handleUpdateStatus(teacher.id, 'on_leave')}
-                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                              disabled={teacherStatus === 'on_leave'}
-                            >
-                              <XCircle size={14} className="text-yellow-600" />
-                              <span>Set On Leave</span>
-                              {teacherStatus === 'on_leave' && <span className="ml-auto text-xs text-gray-400">✓</span>}
-                            </button>
-                            <button
-                              onClick={() => handleUpdateStatus(teacher.id, 'transferred')}
-                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                              disabled={teacherStatus === 'transferred'}
-                            >
-                              <RefreshCw size={14} className="text-blue-600" />
-                              <span>Set Transferred</span>
-                              {teacherStatus === 'transferred' && <span className="ml-auto text-xs text-gray-400">✓</span>}
-                            </button>
-                            
-                            <div className="border-t border-gray-100 my-1"></div>
-                            
-                            <button
-                              onClick={() => {
-                                setSelectedTeacher(teacher);
-                                setActiveModal('delete');
-                                setShowActionsFor(null);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 text-red-600 flex items-center gap-2"
-                            >
-                              <Trash2 size={14} />
-                              <span>Delete Teacher</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Teacher Header */}
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-12 h-12 bg-gradient-to-br from-blue-50 to-blue-100 
-                                      rounded-full flex items-center justify-center flex-shrink-0">
-                          <User size={22} className="text-blue-600" />
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="font-bold text-gray-900 truncate">
-                            {teacher.name}
-                          </h3>
-                          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getStatusConfig(teacherStatus).bg} ${getStatusConfig(teacherStatus).text}`}>
-                              <StatusIcon size={10} />
-                              {getStatusConfig(teacherStatus).label}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Teacher Details */}
-                    <div className="space-y-2 mb-4">
-                      <div className="flex items-center gap-2 text-sm">
-                        <Mail size={14} className="text-gray-400 flex-shrink-0" />
-                        <span className="text-gray-700 truncate">{teacher.email}</span>
-                      </div>
-                      {teacher.phone && (
-                        <div className="flex items-center gap-2 text-sm">
-                          <Phone size={14} className="text-gray-400 flex-shrink-0" />
-                          <span className="text-gray-700 truncate">{teacher.phone}</span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2 text-sm">
-                        <BookOpen size={14} className="text-gray-400 flex-shrink-0" />
-                        <span className="text-gray-700 truncate">
-                          {teacher.subjects?.length 
-                            ? teacher.subjects.slice(0, 3).join(', ') + (teacher.subjects.length > 3 ? ` +${teacher.subjects.length - 3}` : '')
-                            : 'No subjects'}
-                        </span>
-                      </div>
-                      {teacher.department && (
-                        <div className="flex items-center gap-2 text-sm">
-                          <Briefcase size={14} className="text-gray-400 flex-shrink-0" />
-                          <span className="text-gray-700 truncate">{teacher.department}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Assignment Status */}
-                    <div className="border-t border-gray-100 pt-4">
-                      {assignments.length > 0 ? (
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1.5">Currently assigned to</p>
-                          <div className="space-y-3">
-                            {assignments.map(assignment => (
-                              <div key={assignment.classId} className="space-y-1">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <GraduationCap size={14} className="text-gray-400 flex-shrink-0" />
-                                  <span className="font-medium text-gray-900 text-sm truncate flex items-center gap-1">
-                                    {assignment.className}
-                                    {assignment.isFormTeacher && (
-                                      <span className="inline-flex items-center gap-0.5 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full ml-1">
-                                        <Star size={10} className="fill-purple-700" />
-                                        Form
-                                      </span>
-                                    )}
-                                  </span>
-                                </div>
-                                
-                                {/* Show multiple subjects for this class */}
-                                {assignment.subjects.length > 0 ? (
-                                  <div className="pl-6">
-                                    <div className="flex flex-wrap gap-1">
-                                      {assignment.subjects.map((subject, idx) => (
-                                        <span 
-                                          key={idx}
-                                          className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full"
-                                        >
-                                          {subject}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ) : assignment.isFormTeacher ? (
-                                  <div className="pl-6">
-                                    <span className="text-xs text-gray-500 italic">Form teacher only (no subjects)</span>
-                                  </div>
-                                ) : null}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-500">Not assigned</span>
-                          {isUserAdmin && teacherStatus === 'active' && (
-                            <button
-                              onClick={() => {
-                                setSelectedTeacher(teacher);
-                                setSelectedSubjects([]);
-                                setActiveModal('assignment');
-                              }}
-                              className="text-xs text-blue-600 hover:text-blue-800 font-medium 
-                                       px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 rounded-lg
-                                       transition-colors"
-                            >
-                              Assign
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                    teacher={teacher}
+                    isUserAdmin={isUserAdmin}
+                    classes={classes}
+                    onEdit={() => {
+                      setSelectedTeacher(teacher);
+                      setActiveModal('edit');
+                    }}
+                    onDelete={() => {
+                      setSelectedTeacher(teacher);
+                      setActiveModal('delete');
+                    }}
+                    onAssign={() => {
+                      setSelectedTeacher(teacher);
+                      setSelectedSubjects([]);
+                      setActiveModal('assignment');
+                    }}
+                    onStatusUpdate={(status) => handleUpdateStatus(teacher.id, status)}
+                    onRemoveFromClass={(classId, className) => {
+                      setSelectedTeacher(teacher);
+                      setSelectedClassId(classId);
+                      setSelectedClassName(className);
+                      setModalData({
+                        teacher,
+                        classId,
+                        className,
+                        action: 'remove-from-class',
+                        title: 'Remove Teacher from Class',
+                        message: `Remove ${teacher.name} completely from ${className}? This will remove all subject assignments and form teacher status.`,
+                        confirmText: 'Remove Completely',
+                        cancelText: 'Cancel'
+                      });
+                      setActiveModal('confirm');
+                    }}
+                    onRemoveFormTeacher={(classId, className) => {
+                      setSelectedTeacher(teacher);
+                      setSelectedClassId(classId);
+                      setSelectedClassName(className);
+                      setModalData({
+                        teacher,
+                        classId,
+                        className,
+                        action: 'remove-form-teacher',
+                        title: 'Remove Form Teacher Status',
+                        message: `Remove ${teacher.name} as Form Teacher of ${className}? They will remain as subject teacher.`,
+                        confirmText: 'Remove Status',
+                        cancelText: 'Cancel'
+                      });
+                      setActiveModal('confirm');
+                    }}
+                    onRemoveSubject={(classId, className, subject) => {
+                      setSelectedTeacher(teacher);
+                      setSelectedClassId(classId);
+                      setSelectedClassName(className);
+                      setSelectedSubjectToRemove(subject);
+                      setActiveModal('subject-remove');
+                    }}
+                    onTransfer={(classId, className) => {
+                      setSelectedTeacher(teacher);
+                      setSelectedClassId(classId);
+                      setSelectedClassName(className);
+                      setTargetClassId('');
+                      setActiveModal('transfer');
+                    }}
+                  />
                 );
               })}
             </div>
@@ -1710,7 +1654,7 @@ export default function TeacherManagement() {
           {/* ===== BOTTOM METADATA ===== */}
           {filteredTeachers.length > 0 && (
             <div className="mt-6 text-xs sm:text-sm text-gray-500 text-center sm:text-left">
-              Showing {filteredTeachers.length} of {teachers.length} teachers
+              Showing {filteredTeachers.length} of {teachers?.length || 0} teachers
               {searchTerm && ` matching "${searchTerm}"`}
               {statusFilter !== 'all' && ` • ${statusFilter.replace('_', ' ')} status`}
               {assignmentFilter !== 'all' && ` • ${assignmentFilter.replace('-', ' ')}`}
@@ -1794,7 +1738,7 @@ export default function TeacherManagement() {
                                focus:ring-2 focus:ring-blue-500 focus:border-transparent
                                text-sm bg-white hover:border-gray-400 transition-colors"
                       onChange={(e) => {
-                        const teacher = teachers.find(t => t.id === e.target.value);
+                        const teacher = (teachers || []).find(t => t && t.id === e.target.value);
                         setSelectedTeacher(teacher || null);
                         setSelectedSubjects([]);
                         setCurrentSubject('');
@@ -1802,8 +1746,8 @@ export default function TeacherManagement() {
                       value=""
                     >
                       <option value="">Choose a teacher...</option>
-                      {teachers
-                        .filter(t => t.status === 'active' || !t.status)
+                      {(teachers || [])
+                        .filter(t => t && (t.status === 'active' || !t.status))
                         .map(teacher => (
                           <option key={teacher.id} value={teacher.id}>
                             {teacher.name} • {teacher.email}
@@ -1816,7 +1760,7 @@ export default function TeacherManagement() {
                   <div className="p-3 bg-blue-50/80 rounded-lg border border-blue-100">
                     <p className="text-xs text-blue-700 font-medium mb-1">Selected Teacher</p>
                     <p className="text-sm font-semibold text-gray-900">{selectedTeacher.name}</p>
-                    {selectedTeacher.subjects?.length > 0 && (
+                    {selectedTeacher.subjects && Array.isArray(selectedTeacher.subjects) && selectedTeacher.subjects.length > 0 && (
                       <div className="mt-2">
                         <p className="text-xs text-blue-700 mb-1">Available subjects:</p>
                         <div className="flex flex-wrap gap-1">
@@ -1847,7 +1791,7 @@ export default function TeacherManagement() {
                              text-sm bg-white hover:border-gray-400 transition-colors"
                   >
                     <option value="">Choose a class...</option>
-                    {classes.map(cls => (
+                    {(classes || []).map(cls => (
                       <option key={cls.id} value={cls.id}>
                         {cls.name} • Year {cls.year} • {cls.students} learners
                       </option>
@@ -1887,7 +1831,7 @@ export default function TeacherManagement() {
                     )}
 
                     {/* Add Subject Dropdown */}
-                    {selectedTeacher.subjects && selectedTeacher.subjects.length > 0 && (
+                    {selectedTeacher.subjects && Array.isArray(selectedTeacher.subjects) && selectedTeacher.subjects.length > 0 && (
                       <div className="flex gap-2">
                         <select
                           value={currentSubject}
@@ -1919,7 +1863,7 @@ export default function TeacherManagement() {
                       </div>
                     )}
 
-                    {selectedTeacher.subjects && selectedTeacher.subjects.length === 0 && (
+                    {selectedTeacher.subjects && Array.isArray(selectedTeacher.subjects) && selectedTeacher.subjects.length === 0 && (
                       <p className="text-xs text-amber-600 mt-1.5 flex items-center gap-1">
                         <AlertCircle size={12} />
                         This teacher has no subjects listed. They can only be assigned as Form Teacher.
@@ -1952,7 +1896,7 @@ export default function TeacherManagement() {
                   <div className="bg-blue-50 rounded-lg p-3 text-xs">
                     <p className="font-medium text-blue-800 mb-1">Assignment Summary:</p>
                     <ul className="space-y-1 text-blue-700">
-                      <li>• Class: {classes.find(c => c.id === selectedClassId)?.name}</li>
+                      <li>• Class: {(classes || []).find(c => c && c.id === selectedClassId)?.name}</li>
                       {selectedSubjects.length > 0 && (
                         <li>• Teaching: {selectedSubjects.join(', ')}</li>
                       )}
@@ -2233,7 +2177,7 @@ export default function TeacherManagement() {
                 </div>
                 <h2 className="text-xl font-bold text-gray-900 mb-2">Remove Subject</h2>
                 <p className="text-sm text-gray-600 mb-6">
-                  Remove <span className="font-semibold">{selectedSubjectToRemove}</span> from <span className="font-semibold">{selectedTeacher.name}</span>'s assignments in this class?
+                  Remove <span className="font-semibold">{selectedSubjectToRemove}</span> from <span className="font-semibold">{selectedTeacher.name}</span>'s assignments in {selectedClassName || 'this class'}?
                 </p>
                 <div className="flex gap-3">
                   <button
@@ -2282,7 +2226,7 @@ export default function TeacherManagement() {
                   </label>
                   <input
                     type="text"
-                    value={classes.find(c => c.id === selectedClassId)?.name || ''}
+                    value={selectedClassName || (classes || []).find(c => c && c.id === selectedClassId)?.name || ''}
                     disabled
                     className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-700"
                   />
@@ -2298,8 +2242,8 @@ export default function TeacherManagement() {
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                   >
                     <option value="">Select target class...</option>
-                    {classes
-                      .filter(c => c.id !== selectedClassId)
+                    {(classes || [])
+                      .filter(c => c && c.id !== selectedClassId)
                       .map(cls => (
                         <option key={cls.id} value={cls.id}>
                           {cls.name} • Year {cls.year} • {cls.students} learners

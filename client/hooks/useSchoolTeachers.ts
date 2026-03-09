@@ -1,6 +1,9 @@
+// @/hooks/useSchoolTeachers.ts
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { teacherService } from '@/services/schoolService';
 import { Teacher, TeacherStatusUpdate, TeacherAssignment } from '@/types/school';
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 
 export const useSchoolTeachers = (classId?: string) => {
   const queryClient = useQueryClient();
@@ -9,8 +12,8 @@ export const useSchoolTeachers = (classId?: string) => {
   const teachersQuery = useQuery({
     queryKey: ['teachers'],
     queryFn: teacherService.getTeachers,
-    staleTime: 30 * 1000, // 30 seconds
-    gcTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
   });
 
@@ -25,7 +28,7 @@ export const useSchoolTeachers = (classId?: string) => {
     staleTime: 30 * 1000,
   });
 
-  // Query: Get all teacher assignments for a class (detailed)
+  // Query: Get all teacher assignments for a class
   const classAssignmentsQuery = useQuery({
     queryKey: ['teacherAssignments', 'class', classId],
     queryFn: () => {
@@ -36,18 +39,34 @@ export const useSchoolTeachers = (classId?: string) => {
     staleTime: 30 * 1000,
   });
 
-  // Query: Get assignments for a specific teacher
-  const teacherAssignmentsQuery = useQuery({
-    queryKey: ['teacherAssignments', 'teacher', classId], // Note: classId param is actually teacherId here
-    queryFn: () => {
-      if (!classId) throw new Error('Teacher ID is required');
-      return teacherService.getTeacherAssignments(classId);
-    },
-    enabled: false, // Don't auto-run, we'll call this manually when needed
-    staleTime: 30 * 1000,
-  });
+  // NEW: Query to fetch all assignments for a specific teacher
+  const fetchTeacherAssignments = async (teacherId: string): Promise<TeacherAssignment[]> => {
+    try {
+      const assignmentsRef = collection(db, 'teacherAssignments');
+      const q = query(assignmentsRef, where('teacherId', '==', teacherId));
+      const snapshot = await getDocs(q);
+      
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as TeacherAssignment[];
+    } catch (error) {
+      console.error(`Error fetching assignments for teacher ${teacherId}:`, error);
+      return [];
+    }
+  };
 
-  // Mutation: Assign teacher to class with subject (single subject per call - matches your system)
+  // Hook to get assignments for a specific teacher (to be used in components)
+  const useTeacherAssignments = (teacherId: string) => {
+    return useQuery({
+      queryKey: ['teacherAssignments', 'teacher', teacherId],
+      queryFn: () => fetchTeacherAssignments(teacherId),
+      enabled: !!teacherId,
+      staleTime: 30 * 1000,
+    });
+  };
+
+  // Mutation: Assign teacher to class with single subject
   const assignTeacherMutation = useMutation({
     mutationFn: async ({ 
       teacherId, 
@@ -57,134 +76,28 @@ export const useSchoolTeachers = (classId?: string) => {
     }: {
       teacherId: string;
       classId: string;
-      subject?: string; // Made optional for form-teacher-only assignments
+      subject?: string;
       isFormTeacher?: boolean;
     }) => {
-      console.log('Assigning teacher:', { teacherId, classId, subject, isFormTeacher });
-      
-      // For form-teacher-only assignments, we still need a subject? 
-      // Your current system requires a subject. Let's check with the existing service.
-      
       if (!subject && !isFormTeacher) {
         throw new Error('Subject is required when assigning a teacher to a class');
       }
       
-      // If this is a form-teacher-only assignment, we need to decide:
-      // Option 1: Use a placeholder subject like "Form Teacher"
-      // Option 2: Create a separate method in your service
-      
-      // Since your current assignTeacherToClass requires a subject,
-      // we'll use a placeholder for form-teacher-only assignments
       const subjectToUse = subject || 'Form Teacher';
-      
       return teacherService.assignTeacherToClass(teacherId, classId, subjectToUse, isFormTeacher);
     },
-    onMutate: async ({ teacherId, classId, subject, isFormTeacher }) => {
-      // Cancel outgoing queries
-      await queryClient.cancelQueries({ queryKey: ['teachers'] });
-      await queryClient.cancelQueries({ queryKey: ['teachers', 'class', classId] });
-      await queryClient.cancelQueries({ queryKey: ['teacherAssignments', 'class', classId] });
-
-      // Snapshot for rollback
-      const previousTeachers = queryClient.getQueryData(['teachers']);
-      const previousClassTeachers = queryClient.getQueryData(['teachers', 'class', classId]);
-      const previousAssignments = queryClient.getQueryData(['teacherAssignments', 'class', classId]);
-
-      // Find teacher name for optimistic update
-      const teachers = queryClient.getQueryData<Teacher[]>(['teachers']) || [];
-      const teacher = teachers.find(t => t.id === teacherId);
-      const teacherName = teacher?.name || '';
-
-      // Optimistically update the teachers list
-      queryClient.setQueryData(['teachers'], (old: Teacher[] = []) => {
-        return old.map(t => 
-          t.id === teacherId 
-            ? { 
-                ...t, 
-                assignedClasses: [...(t.assignedClasses || []), classId],
-                assignedClassId: classId, // Keep for backward compatibility
-                isFormTeacher: isFormTeacher || t.isFormTeacher,
-              } 
-            : t
-        );
-      });
-
-      // Optimistically update class teachers list
-      queryClient.setQueryData(['teachers', 'class', classId], (old: Teacher[] = []) => {
-        // Check if teacher is already in the list
-        if (old.some(t => t.id === teacherId)) {
-          return old.map(t => 
-            t.id === teacherId 
-              ? { ...t, isFormTeacher: isFormTeacher || t.isFormTeacher }
-              : t
-          );
-        } else {
-          // Add teacher to the list with partial data
-          return [...old, { id: teacherId, name: teacherName, isFormTeacher } as Teacher];
-        }
-      });
-
-      // Optimistically update assignments list
-      queryClient.setQueryData(['teacherAssignments', 'class', classId], (old: TeacherAssignment[] = []) => {
-        const newAssignment: TeacherAssignment = {
-          id: `temp-${Date.now()}`,
-          teacherId,
-          teacherName,
-          classId,
-          subject: subject || 'Form Teacher',
-          isFormTeacher,
-          assignedAt: new Date(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        } as TeacherAssignment;
-        
-        return [...old, newAssignment];
-      });
-
-      return { previousTeachers, previousClassTeachers, previousAssignments };
-    },
-    onError: (error, variables, context) => {
-      // Rollback on error
-      if (context?.previousTeachers) {
-        queryClient.setQueryData(['teachers'], context.previousTeachers);
-      }
-      if (context?.previousClassTeachers) {
-        queryClient.setQueryData(['teachers', 'class', variables.classId], context.previousClassTeachers);
-      }
-      if (context?.previousAssignments) {
-        queryClient.setQueryData(['teacherAssignments', 'class', variables.classId], context.previousAssignments);
-      }
-      console.error('Failed to assign teacher:', error);
-    },
-    onSuccess: (data, variables) => {
-      console.log('Teacher assigned successfully:', data);
-    },
-    onSettled: (data, error, variables) => {
-      // Always refetch after mutation
-      queryClient.invalidateQueries({ 
-        queryKey: ['teachers'],
-        refetchType: 'active'
-      });
-      queryClient.invalidateQueries({ 
-        queryKey: ['teachers', 'class', variables.classId],
-        refetchType: 'active'
-      });
-      queryClient.invalidateQueries({ 
-        queryKey: ['teacherAssignments', 'class', variables.classId],
-        refetchType: 'active'
-      });
-      queryClient.invalidateQueries({ 
-        queryKey: ['classes'],
-        refetchType: 'active'
-      });
-      queryClient.invalidateQueries({ 
-        queryKey: ['dashboardStats'],
-        refetchType: 'active'
-      });
+    onSuccess: (_, variables) => {
+      // Invalidate all relevant queries
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
+      queryClient.invalidateQueries({ queryKey: ['teachers', 'class', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'teacher', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },
   });
 
-  // NEW: Mutation: Assign teacher to class with multiple subjects (makes multiple calls)
+  // Mutation: Assign teacher with multiple subjects
   const assignTeacherWithMultipleSubjectsMutation = useMutation({
     mutationFn: async ({ 
       teacherId, 
@@ -197,192 +110,57 @@ export const useSchoolTeachers = (classId?: string) => {
       subjects: string[];
       isFormTeacher?: boolean;
     }) => {
-      console.log('Assigning teacher with multiple subjects:', { teacherId, classId, subjects, isFormTeacher });
-      
-      // Make multiple API calls - one per subject
       const promises = subjects.map(subject => 
         teacherService.assignTeacherToClass(teacherId, classId, subject, isFormTeacher)
       );
-      
       return Promise.all(promises);
     },
-    onMutate: async ({ teacherId, classId, subjects, isFormTeacher }) => {
-      // Cancel outgoing queries
-      await queryClient.cancelQueries({ queryKey: ['teachers'] });
-      await queryClient.cancelQueries({ queryKey: ['teachers', 'class', classId] });
-      await queryClient.cancelQueries({ queryKey: ['teacherAssignments', 'class', classId] });
-
-      // Snapshot for rollback
-      const previousTeachers = queryClient.getQueryData(['teachers']);
-      const previousClassTeachers = queryClient.getQueryData(['teachers', 'class', classId]);
-      const previousAssignments = queryClient.getQueryData(['teacherAssignments', 'class', classId]);
-
-      // Find teacher name for optimistic update
-      const teachers = queryClient.getQueryData<Teacher[]>(['teachers']) || [];
-      const teacher = teachers.find(t => t.id === teacherId);
-      const teacherName = teacher?.name || '';
-
-      // Optimistically update the teachers list
-      queryClient.setQueryData(['teachers'], (old: Teacher[] = []) => {
-        return old.map(t => 
-          t.id === teacherId 
-            ? { 
-                ...t, 
-                assignedClasses: [...(t.assignedClasses || []), classId],
-                assignedClassId: classId, // Keep for backward compatibility
-                isFormTeacher: isFormTeacher || t.isFormTeacher,
-              } 
-            : t
-        );
-      });
-
-      // Optimistically update class teachers list
-      queryClient.setQueryData(['teachers', 'class', classId], (old: Teacher[] = []) => {
-        if (old.some(t => t.id === teacherId)) {
-          return old; // Already in list
-        } else {
-          return [...old, { id: teacherId, name: teacherName, isFormTeacher } as Teacher];
-        }
-      });
-
-      // Optimistically update assignments list (add multiple assignments)
-      queryClient.setQueryData(['teacherAssignments', 'class', classId], (old: TeacherAssignment[] = []) => {
-        const newAssignments = subjects.map((subject, index) => ({
-          id: `temp-${Date.now()}-${index}`,
-          teacherId,
-          teacherName,
-          classId,
-          subject,
-          isFormTeacher,
-          assignedAt: new Date(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        } as TeacherAssignment));
-        
-        return [...old, ...newAssignments];
-      });
-
-      return { previousTeachers, previousClassTeachers, previousAssignments };
-    },
-    onError: (error, variables, context) => {
-      // Rollback on error
-      if (context?.previousTeachers) {
-        queryClient.setQueryData(['teachers'], context.previousTeachers);
-      }
-      if (context?.previousClassTeachers) {
-        queryClient.setQueryData(['teachers', 'class', variables.classId], context.previousClassTeachers);
-      }
-      if (context?.previousAssignments) {
-        queryClient.setQueryData(['teacherAssignments', 'class', variables.classId], context.previousAssignments);
-      }
-      console.error('Failed to assign teacher with multiple subjects:', error);
-    },
-    onSuccess: (data, variables) => {
-      console.log(`Teacher assigned with ${variables.subjects.length} subjects successfully:`, data);
-    },
-    onSettled: (data, error, variables) => {
-      // Invalidate all relevant queries
-      queryClient.invalidateQueries({ queryKey: ['teachers'], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['teachers', 'class', variables.classId], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['classes'], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['dashboardStats'], refetchType: 'active' });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
+      queryClient.invalidateQueries({ queryKey: ['teachers', 'class', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'teacher', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },
   });
 
-  // NEW MUTATION: Update teacher information
+  // Mutation: Update teacher information
   const updateTeacherMutation = useMutation({
     mutationFn: ({ teacherId, updates }: { teacherId: string; updates: Partial<Teacher> }) => {
       return teacherService.updateTeacher(teacherId, updates);
     },
-    onMutate: async ({ teacherId, updates }) => {
-      await queryClient.cancelQueries({ queryKey: ['teachers'] });
-      
-      const previousTeachers = queryClient.getQueryData(['teachers']);
-      
-      queryClient.setQueryData(['teachers'], (old: Teacher[] = []) => {
-        return old.map(teacher => 
-          teacher.id === teacherId 
-            ? { ...teacher, ...updates, updatedAt: new Date() } 
-            : teacher
-        );
-      });
-      
-      return { previousTeachers };
-    },
-    onError: (error, variables, context) => {
-      if (context?.previousTeachers) {
-        queryClient.setQueryData(['teachers'], context.previousTeachers);
-      }
-      console.error('Failed to update teacher:', error);
-    },
-    onSettled: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },
   });
 
-  // NEW MUTATION: Delete teacher (hard delete)
+  // Mutation: Delete teacher
   const deleteTeacherMutation = useMutation({
     mutationFn: async (teacherId: string) => {
       return teacherService.deleteTeacher(teacherId);
     },
-    onMutate: async (teacherId) => {
-      await queryClient.cancelQueries({ queryKey: ['teachers'] });
-      
-      const previousTeachers = queryClient.getQueryData(['teachers']);
-      
-      queryClient.setQueryData(['teachers'], (old: Teacher[] = []) => {
-        return old.filter(teacher => teacher.id !== teacherId);
-      });
-      
-      return { previousTeachers };
-    },
-    onError: (error, teacherId, context) => {
-      if (context?.previousTeachers) {
-        queryClient.setQueryData(['teachers'], context.previousTeachers);
-      }
-      console.error('Failed to delete teacher:', error);
-    },
-    onSettled: () => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },
   });
 
-  // NEW MUTATION: Remove specific subject from teacher in class
+  // Mutation: Remove specific subject from teacher in class
   const removeTeacherSubjectMutation = useMutation({
     mutationFn: ({ teacherId, classId, subject }: { teacherId: string; classId: string; subject: string }) => {
       return teacherService.removeTeacherSubject(teacherId, classId, subject);
     },
-    onMutate: async ({ teacherId, classId, subject }) => {
-      await queryClient.cancelQueries({ queryKey: ['teacherAssignments', teacherId] });
-      await queryClient.cancelQueries({ queryKey: ['teacherAssignments', 'class', classId] });
-      
-      const previousAssignments = queryClient.getQueryData(['teacherAssignments', 'class', classId]);
-      
-      // Optimistically remove the subject
-      queryClient.setQueryData(['teacherAssignments', 'class', classId], (old: TeacherAssignment[] = []) => {
-        return old.filter(a => !(a.teacherId === teacherId && a.subject === subject));
-      });
-      
-      return { previousAssignments };
-    },
-    onError: (error, variables, context) => {
-      if (context?.previousAssignments) {
-        queryClient.setQueryData(['teacherAssignments', 'class', variables.classId], context.previousAssignments);
-      }
-      console.error('Failed to remove teacher subject:', error);
-    },
-    onSettled: (data, error, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', variables.teacherId] });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'teacher', variables.teacherId] });
       queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId] });
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
     },
   });
 
-  // NEW MUTATION: Transfer teacher between classes
+  // Mutation: Transfer teacher between classes
   const transferTeacherMutation = useMutation({
     mutationFn: ({ 
       teacherId, 
@@ -398,7 +176,7 @@ export const useSchoolTeachers = (classId?: string) => {
       return teacherService.transferTeacher(teacherId, fromClassId, toClassId, subjectMapping);
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'teacher', variables.teacherId] });
       queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.fromClassId] });
       queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.toClassId] });
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
@@ -409,160 +187,43 @@ export const useSchoolTeachers = (classId?: string) => {
   // Mutation: Remove teacher from class (all subjects)
   const removeTeacherMutation = useMutation({
     mutationFn: async ({ teacherId, classId }: { teacherId: string; classId: string }) => {
-      console.log('Removing teacher from class:', { teacherId, classId });
       return teacherService.removeTeacherFromClass(teacherId, classId);
     },
-    onMutate: async ({ teacherId, classId }) => {
-      await queryClient.cancelQueries({ queryKey: ['teachers'] });
-      await queryClient.cancelQueries({ queryKey: ['teachers', 'class', classId] });
-      await queryClient.cancelQueries({ queryKey: ['teacherAssignments', 'class', classId] });
-
-      const previousTeachers = queryClient.getQueryData(['teachers']);
-      const previousClassTeachers = queryClient.getQueryData(['teachers', 'class', classId]);
-      const previousAssignments = queryClient.getQueryData(['teacherAssignments', 'class', classId]);
-
-      // Optimistically update teachers list
-      queryClient.setQueryData(['teachers'], (old: Teacher[] = []) => {
-        return old.map(teacher => 
-          teacher.id === teacherId 
-            ? { 
-                ...teacher, 
-                assignedClasses: (teacher.assignedClasses || []).filter(id => id !== classId),
-                assignedClassId: teacher.assignedClassId === classId ? undefined : teacher.assignedClassId,
-                isFormTeacher: teacher.assignedClassId === classId ? false : teacher.isFormTeacher,
-              } 
-            : teacher
-        );
-      });
-
-      // Optimistically remove from class teachers list
-      queryClient.setQueryData(['teachers', 'class', classId], (old: Teacher[] = []) => {
-        return old.filter(t => t.id !== teacherId);
-      });
-
-      // Optimistically remove all assignments for this teacher in this class
-      queryClient.setQueryData(['teacherAssignments', 'class', classId], (old: TeacherAssignment[] = []) => {
-        return old.filter(a => a.teacherId !== teacherId);
-      });
-
-      return { previousTeachers, previousClassTeachers, previousAssignments };
-    },
-    onError: (error, variables, context) => {
-      if (context?.previousTeachers) {
-        queryClient.setQueryData(['teachers'], context.previousTeachers);
-      }
-      if (context?.previousClassTeachers) {
-        queryClient.setQueryData(['teachers', 'class', variables.classId], context.previousClassTeachers);
-      }
-      if (context?.previousAssignments) {
-        queryClient.setQueryData(['teacherAssignments', 'class', variables.classId], context.previousAssignments);
-      }
-      console.error('Failed to remove teacher:', error);
-    },
-    onSuccess: (data) => {
-      console.log('Teacher removed successfully:', data);
-    },
-    onSettled: (data, error, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['teachers'], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['teachers', 'class', variables.classId], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['classes'], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['dashboardStats'], refetchType: 'active' });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
+      queryClient.invalidateQueries({ queryKey: ['teachers', 'class', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'class', variables.classId] });
+      queryClient.invalidateQueries({ queryKey: ['teacherAssignments', 'teacher', variables.teacherId] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },
   });
 
   // Mutation: Update teacher status
   const updateTeacherStatusMutation = useMutation({
     mutationFn: async ({ teacherId, status }: TeacherStatusUpdate) => {
-      console.log('Updating teacher status:', { teacherId, status });
       return teacherService.updateTeacherStatus(teacherId, status);
     },
-    onMutate: async ({ teacherId, status }) => {
-      await queryClient.cancelQueries({ queryKey: ['teachers'] });
-
-      const previousTeachers = queryClient.getQueryData(['teachers']);
-
-      // Optimistically update
-      queryClient.setQueryData(['teachers'], (old: Teacher[] = []) => {
-        return old.map(teacher => 
-          teacher.id === teacherId 
-            ? { ...teacher, status } 
-            : teacher
-        );
-      });
-
-      return { previousTeachers };
-    },
-    onError: (error, variables, context) => {
-      if (context?.previousTeachers) {
-        queryClient.setQueryData(['teachers'], context.previousTeachers);
-      }
-      console.error('Failed to update teacher status:', error);
-    },
-    onSuccess: (data, variables) => {
-      console.log(`Teacher status updated to ${variables.status} successfully:`, data);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['teachers'], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['dashboardStats'], refetchType: 'active' });
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['teachers'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
     },
   });
 
-  // Helper: Get available teachers (not assigned to any class OR can teach multiple classes)
+  // Helper: Get available teachers
   const getAvailableTeachers = (): Teacher[] => {
     const allTeachers = teachersQuery.data || [];
-    // Return all active teachers (including those with status 'active' or undefined)
     return allTeachers.filter(teacher => 
       teacher.status === 'active' || !teacher.status
     );
-  };
-
-  // Helper: Get form teacher for class
-  const getFormTeacher = (): Teacher | undefined => {
-    const classTeachers = classTeachersQuery.data || [];
-    return classTeachers.find(teacher => teacher.isFormTeacher);
-  };
-
-  // Helper: Get subjects taught by a teacher in a specific class
-  const getTeacherSubjectsForClass = (teacherId: string, classId: string): string[] => {
-    const assignments = classAssignmentsQuery.data || [];
-    return assignments
-      .filter(a => a.teacherId === teacherId)
-      .map(a => a.subject);
-  };
-
-  // Helper: Check if teacher is assigned to a class
-  const isTeacherAssignedToClass = (teacherId: string, classId: string): boolean => {
-    const assignments = classAssignmentsQuery.data || [];
-    return assignments.some(a => a.teacherId === teacherId);
-  };
-
-  // Helper: Get all teachers with their subjects for a class (for display)
-  const getTeachersWithSubjects = (): Array<Teacher & { subjects: string[] }> => {
-    const teachers = classTeachersQuery.data || [];
-    const assignments = classAssignmentsQuery.data || [];
-    
-    return teachers.map(teacher => ({
-      ...teacher,
-      subjects: assignments
-        .filter(a => a.teacherId === teacher.id)
-        .map(a => a.subject)
-    }));
-  };
-
-  // Helper: Get all assignments for a specific teacher
-  const getTeacherAssignments = (teacherId: string): TeacherAssignment[] => {
-    return teacherAssignmentsQuery.data || [];
   };
 
   return {
     // Data
     allTeachers: teachersQuery.data || [],
     classTeachers: classTeachersQuery.data || [],
-    teacherAssignments: classAssignmentsQuery.data || [], // For current class
+    teacherAssignments: classAssignmentsQuery.data || [],
     availableTeachers: getAvailableTeachers(),
-    formTeacher: getFormTeacher(),
-    teachersWithSubjects: getTeachersWithSubjects(),
     
     // Query states
     isLoading: teachersQuery.isLoading,
@@ -591,15 +252,25 @@ export const useSchoolTeachers = (classId?: string) => {
     deleteTeacher: deleteTeacherMutation.mutateAsync,
     transferTeacher: transferTeacherMutation.mutateAsync,
     
+    // Custom hook for teacher assignments
+    useTeacherAssignments,
+    
     // Helper functions
-    getTeacherSubjectsForClass,
-    isTeacherAssignedToClass,
-    getTeacherAssignments,
+    getTeacherSubjectsForClass: (teacherId: string, classId: string): string[] => {
+      const assignments = classAssignmentsQuery.data || [];
+      return assignments
+        .filter(a => a.teacherId === teacherId && a.classId === classId)
+        .map(a => a.subject);
+    },
+    
+    isTeacherAssignedToClass: (teacherId: string, classId: string): boolean => {
+      const assignments = classAssignmentsQuery.data || [];
+      return assignments.some(a => a.teacherId === teacherId && a.classId === classId);
+    },
     
     // Refetch
     refetchTeachers: teachersQuery.refetch,
     refetchClassTeachers: classTeachersQuery.refetch,
     refetchAssignments: classAssignmentsQuery.refetch,
-    refetchTeacherAssignments: teacherAssignmentsQuery.refetch,
   };
 };

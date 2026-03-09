@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/hooks/useAuth';
-import { Mail, Lock, ArrowRight, Eye, EyeOff, XCircle, AlertCircle } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Eye, EyeOff, XCircle, AlertCircle, CheckCircle } from 'lucide-react';
 
-// Modal Dialog Component (Simplified - only error and info)
+// Modal Dialog Component
 interface DialogProps {
   isOpen: boolean;
-  type: 'error' | 'info';
+  type: 'error' | 'info' | 'success';
   title: string;
   message: string;
   onClose: () => void;
@@ -16,27 +16,52 @@ interface DialogProps {
 const DialogModal = ({ isOpen, type, title, message, onClose }: DialogProps) => {
   if (!isOpen) return null;
 
-  const iconColor = type === 'error' ? 'text-red-500' : 'text-blue-500';
-  const bgColor = type === 'error' ? 'bg-red-50' : 'bg-blue-50';
-  const borderColor = type === 'error' ? 'border-red-200' : 'border-blue-200';
+  const getStyles = () => {
+    switch(type) {
+      case 'error':
+        return {
+          icon: <XCircle size={28} className="text-red-500" />,
+          bgColor: 'bg-red-50',
+          borderColor: 'border-red-200',
+          buttonColor: 'bg-red-600 hover:bg-red-700'
+        };
+      case 'success':
+        return {
+          icon: <CheckCircle size={28} className="text-green-500" />,
+          bgColor: 'bg-green-50',
+          borderColor: 'border-green-200',
+          buttonColor: 'bg-green-600 hover:bg-green-700'
+        };
+      case 'info':
+      default:
+        return {
+          icon: <AlertCircle size={28} className="text-blue-500" />,
+          bgColor: 'bg-blue-50',
+          borderColor: 'border-blue-200',
+          buttonColor: 'bg-blue-600 hover:bg-blue-700'
+        };
+    }
+  };
+
+  const styles = getStyles();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
-      <div className={`w-full max-w-md rounded-2xl ${bgColor} border ${borderColor} shadow-2xl transform transition-all duration-300 scale-100 animate-scaleIn`}>
+      <div className={`w-full max-w-md rounded-2xl ${styles.bgColor} border ${styles.borderColor} shadow-2xl transform transition-all duration-300 scale-100 animate-scaleIn`}>
         <div className="p-6">
           <div className="flex items-start gap-4">
-            <div className={`${iconColor} flex-shrink-0`}>
-              {type === 'error' ? <XCircle size={28} /> : <AlertCircle size={28} />}
+            <div className="flex-shrink-0">
+              {styles.icon}
             </div>
             <div className="flex-1">
               <h3 className="text-lg font-semibold text-gray-900 mb-1">{title}</h3>
-              <p className="text-gray-600">{message}</p>
+              <p className="text-gray-600 whitespace-pre-line">{message}</p>
             </div>
           </div>
           <div className="mt-6 flex justify-end">
             <button
               onClick={onClose}
-              className="px-6 py-2.5 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors duration-300"
+              className={`px-6 py-2.5 text-white font-medium rounded-lg transition-colors duration-300 ${styles.buttonColor}`}
             >
               OK
             </button>
@@ -54,9 +79,13 @@ export default function SignIn() {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showResendVerification, setShowResendVerification] = useState(false);
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [resendLoading, setResendLoading] = useState(false);
+  
   const [dialog, setDialog] = useState<{
     isOpen: boolean;
-    type: 'error' | 'info';
+    type: 'error' | 'info' | 'success';
     title: string;
     message: string;
   }>({
@@ -66,7 +95,7 @@ export default function SignIn() {
     message: ''
   });
 
-  const { login, user, isAuthenticated } = useAuth();
+  const { login, user, isAuthenticated, resendVerificationEmail } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -74,9 +103,8 @@ export default function SignIn() {
   useEffect(() => {
     if (isAuthenticated && user) {
       console.log('✅ User authenticated, redirecting based on role:', user.userType);
-      setLoading(false); // Stop loading
+      setLoading(false);
       
-      // Immediate redirect - no delay
       if (user.userType === 'admin') {
         navigate('/dashboard/admin', { replace: true });
       } else {
@@ -84,6 +112,13 @@ export default function SignIn() {
       }
     }
   }, [isAuthenticated, user, navigate]);
+
+  // Check for email from signup redirect
+  useEffect(() => {
+    if (location.state?.email) {
+      setFormData(prev => ({ ...prev, email: location.state.email }));
+    }
+  }, [location.state]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -93,6 +128,7 @@ export default function SignIn() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setShowResendVerification(false);
 
     if (!formData.email || !formData.password) {
       setDialog({
@@ -107,16 +143,49 @@ export default function SignIn() {
 
     try {
       await login(formData.email, formData.password);
-      // Auth state will update and useEffect will handle redirect
-      // Don't setLoading(false) here - the useEffect will handle it
     } catch (err: any) {
+      // Check if error is about email verification
+      if (err.message.includes('verify your email')) {
+        setUnverifiedEmail(formData.email);
+        setShowResendVerification(true);
+        setDialog({
+          isOpen: true,
+          type: 'info',
+          title: 'Email Not Verified',
+          message: 'Please verify your email before signing in.\n\nCheck your inbox for the verification link.'
+        });
+      } else {
+        setDialog({
+          isOpen: true,
+          type: 'error',
+          title: 'Login Failed',
+          message: err.message || 'Unable to sign in. Please check your credentials.'
+        });
+      }
+      setLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    setResendLoading(true);
+    try {
+      await resendVerificationEmail();
+      setDialog({
+        isOpen: true,
+        type: 'success',
+        title: 'Verification Email Sent',
+        message: `A new verification email has been sent to ${unverifiedEmail}.\n\nPlease check your inbox and spam folder.`
+      });
+      setShowResendVerification(false);
+    } catch (error: any) {
       setDialog({
         isOpen: true,
         type: 'error',
-        title: 'Login Failed',
-        message: err.message || 'Unable to sign in. Please check your credentials.'
+        title: 'Failed to Resend',
+        message: error.message || 'Unable to resend verification email. Please try again.'
       });
-      setLoading(false);
+    } finally {
+      setResendLoading(false);
     }
   };
 
@@ -125,12 +194,7 @@ export default function SignIn() {
   };
 
   const handleForgotPassword = () => {
-    setDialog({
-      isOpen: true,
-      type: 'info',
-      title: 'Forgot Password',
-      message: 'Please contact your school administrator to reset your password.'
-    });
+    navigate('/forgot-password', { state: { email: formData.email } });
   };
 
   return (
@@ -145,7 +209,7 @@ export default function SignIn() {
       
       <Layout className="flex items-center justify-center min-h-screen py-4 px-4">
         <div className="w-full max-w-md mx-auto">
-          {/* Compact Header for Mobile */}
+          {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
               Welcome Back
@@ -155,21 +219,17 @@ export default function SignIn() {
             </p>
           </div>
 
-          {/* Success message from signup redirect - Compact */}
+          {/* Success message from signup */}
           {location.state?.message && (
             <div className="mb-6 p-4 bg-green-50 rounded-xl border border-green-200 animate-fadeIn">
               <div className="flex items-start gap-3">
-                <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
+                <CheckCircle className="text-green-500 flex-shrink-0" size={20} />
                 <div>
-                  <p className="text-green-700 text-sm font-medium mb-1">Account Created!</p>
+                  <p className="text-green-700 text-sm font-medium mb-1">Account Created Successfully!</p>
                   <p className="text-green-600 text-xs">
                     {location.state.message}
                     {location.state?.email && (
-                      <span className="block mt-1">Email: {location.state.email}</span>
+                      <span className="block mt-1 font-mono">{location.state.email}</span>
                     )}
                   </p>
                 </div>
@@ -246,6 +306,30 @@ export default function SignIn() {
                   Forgot password?
                 </button>
               </div>
+
+              {/* Resend Verification Section */}
+              {showResendVerification && (
+                <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                  <p className="text-sm text-yellow-700 mb-3">
+                    Haven't received the verification email?
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleResendVerification}
+                    disabled={resendLoading}
+                    className="w-full py-2 px-4 bg-yellow-600 text-white text-sm font-medium rounded-lg hover:bg-yellow-700 disabled:bg-yellow-300 transition-colors flex items-center justify-center gap-2"
+                  >
+                    {resendLoading ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                        <span>Sending...</span>
+                      </>
+                    ) : (
+                      'Resend Verification Email'
+                    )}
+                  </button>
+                </div>
+              )}
 
               {/* Submit Button */}
               <button

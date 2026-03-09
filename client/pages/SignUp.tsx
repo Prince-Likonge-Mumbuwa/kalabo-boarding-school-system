@@ -2,7 +2,23 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/hooks/useAuth';
-import { ArrowRight, Mail, Lock, User, BookOpen, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { 
+  ArrowRight, 
+  Mail, 
+  Lock, 
+  User, 
+  BookOpen, 
+  CheckCircle, 
+  XCircle, 
+  AlertCircle,
+  Calendar,
+  Hash,
+  Briefcase,
+  CreditCard,
+  Eye,
+  EyeOff,
+  FileText
+} from 'lucide-react';
 
 // Modal Dialog Component
 interface DialogProps {
@@ -54,16 +70,95 @@ const DialogModal = ({ isOpen, type, title, message, onClose }: DialogProps) => 
   );
 };
 
+// Password strength checker
+interface PasswordStrength {
+  score: number;
+  message: string;
+  color: string;
+  requirements: {
+    length: boolean;
+    uppercase: boolean;
+    lowercase: boolean;
+    number: boolean;
+    special: boolean;
+  };
+}
+
+const checkPasswordStrength = (password: string): PasswordStrength => {
+  const requirements = {
+    length: password.length >= 8,
+    uppercase: /[A-Z]/.test(password),
+    lowercase: /[a-z]/.test(password),
+    number: /[0-9]/.test(password),
+    special: /[^A-Za-z0-9]/.test(password)
+  };
+
+  const fulfilledCount = Object.values(requirements).filter(Boolean).length;
+
+  let score = 0;
+  let message = '';
+  let color = '';
+
+  if (password.length === 0) {
+    score = 0;
+    message = 'Enter a password';
+    color = 'gray';
+  } else if (fulfilledCount <= 2) {
+    score = 1;
+    message = 'Weak password';
+    color = 'red';
+  } else if (fulfilledCount === 3) {
+    score = 2;
+    message = 'Fair password';
+    color = 'yellow';
+  } else if (fulfilledCount === 4) {
+    score = 3;
+    message = 'Good password';
+    color = 'blue';
+  } else if (fulfilledCount === 5) {
+    score = 4;
+    message = 'Strong password';
+    color = 'green';
+  }
+
+  return { score, message, color, requirements };
+};
+
 export default function SignUp() {
   const [userType, setUserType] = useState<'admin' | 'teacher'>('teacher');
   const [formData, setFormData] = useState({
+    // Common fields
     email: '',
     password: '',
     confirmPassword: '',
-    name: '',
+    fullName: '',
+    
+    // Teacher-specific fields
+    nrc: '',
+    dateOfBirth: '',
+    tsNumber: '',
+    employeeNumber: '',
+    dateOfFirstAppointment: '',
+    dateOfCurrentAppointment: '',
     subjects: '',
   });
+  
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [passwordStrength, setPasswordStrength] = useState<PasswordStrength>({
+    score: 0,
+    message: '',
+    color: 'gray',
+    requirements: {
+      length: false,
+      uppercase: false,
+      lowercase: false,
+      number: false,
+      special: false
+    }
+  });
+
   const [dialog, setDialog] = useState<{
     isOpen: boolean;
     type: 'success' | 'error';
@@ -79,6 +174,11 @@ export default function SignUp() {
 
   const { signup, user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+
+  // Update password strength when password changes
+  useEffect(() => {
+    setPasswordStrength(checkPasswordStrength(formData.password));
+  }, [formData.password]);
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -100,16 +200,71 @@ export default function SignUp() {
   const handleUserTypeChange = (type: 'admin' | 'teacher') => {
     setUserType(type);
     if (type === 'admin') {
-      setFormData(prev => ({ ...prev, subjects: '' }));
+      // Clear teacher-specific fields when switching to admin
+      setFormData(prev => ({
+        ...prev,
+        nrc: '',
+        dateOfBirth: '',
+        tsNumber: '',
+        employeeNumber: '',
+        dateOfFirstAppointment: '',
+        dateOfCurrentAppointment: '',
+        subjects: '',
+      }));
     }
+  };
+
+  const validateTeacherFields = () => {
+    const errors: string[] = [];
+
+    // NRC validation (Zambian NRC format: 123456/78/1)
+    const nrcRegex = /^\d{6}\/\d{2}\/\d{1}$/;
+    if (!nrcRegex.test(formData.nrc)) {
+      errors.push('NRC must be in format: 123456/78/1');
+    }
+
+    // Date of birth validation (must be at least 18 years ago)
+    const dob = new Date(formData.dateOfBirth);
+    const today = new Date();
+    const age = today.getFullYear() - dob.getFullYear();
+    if (age < 18) {
+      errors.push('Teacher must be at least 18 years old');
+    }
+
+    // TS Number validation (Teaching Service Number format: TS followed by 6 digits)
+    const tsRegex = /^TS\d{6}$/;
+    if (!tsRegex.test(formData.tsNumber)) {
+      errors.push('TS Number must be in format: TS123456');
+    }
+
+    // Employee number validation (EMP followed by 5 digits)
+    const empRegex = /^EMP\d{5}$/;
+    if (!empRegex.test(formData.employeeNumber)) {
+      errors.push('Employee Number must be in format: EMP12345');
+    }
+
+    // Date validations
+    const firstAppointment = new Date(formData.dateOfFirstAppointment);
+    const currentAppointment = new Date(formData.dateOfCurrentAppointment);
+    
+    if (currentAppointment < firstAppointment) {
+      errors.push('Current appointment date cannot be before first appointment');
+    }
+
+    // Subjects validation
+    if (!formData.subjects.trim()) {
+      errors.push('Please specify at least one subject');
+    }
+
+    return errors;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    // Validation
-    if (!formData.email || !formData.password || !formData.name) {
+    // Common validation
+    if (!formData.email || !formData.password || !formData.fullName) {
       setDialog({
         isOpen: true,
         type: 'error',
@@ -131,47 +286,66 @@ export default function SignUp() {
       return;
     }
 
-    if (formData.password.length < 6) {
+    // Enhanced password validation
+    if (passwordStrength.score < 2) {
       setDialog({
         isOpen: true,
         type: 'error',
         title: 'Weak Password',
-        message: 'Password must be at least 6 characters long'
+        message: 'Please use a stronger password. It should be at least 8 characters and include uppercase, lowercase, numbers, and special characters.'
       });
       setLoading(false);
       return;
     }
 
-    if (userType === 'teacher' && !formData.subjects.trim()) {
-      setDialog({
-        isOpen: true,
-        type: 'error',
-        title: 'Subjects Required',
-        message: 'Please specify the subjects you teach'
-      });
-      setLoading(false);
-      return;
+    // Teacher-specific validation
+    if (userType === 'teacher') {
+      const teacherErrors = validateTeacherFields();
+      if (teacherErrors.length > 0) {
+        setDialog({
+          isOpen: true,
+          type: 'error',
+          title: 'Invalid Teacher Information',
+          message: teacherErrors.join('\n')
+        });
+        setLoading(false);
+        return;
+      }
     }
 
     try {
-      const subjects = userType === 'teacher' 
-        ? formData.subjects.split(',').map(s => s.trim()).filter(s => s)
-        : undefined;
+      // Prepare data based on user type
+      if (userType === 'teacher') {
+        const subjects = formData.subjects.split(',').map(s => s.trim()).filter(s => s);
+        
+        await signup({
+          email: formData.email,
+          password: formData.password,
+          fullName: formData.fullName,
+          userType: 'teacher',
+          nrc: formData.nrc,
+          dateOfBirth: formData.dateOfBirth,
+          tsNumber: formData.tsNumber,
+          employeeNumber: formData.employeeNumber,
+          dateOfFirstAppointment: formData.dateOfFirstAppointment,
+          dateOfCurrentAppointment: formData.dateOfCurrentAppointment,
+          subjects
+        });
+      } else {
+        await signup({
+          email: formData.email,
+          password: formData.password,
+          fullName: formData.fullName,
+          userType: 'admin'
+        });
+      }
       
-      await signup(
-        formData.email, 
-        formData.password, 
-        formData.name, 
-        userType,
-        subjects
-      );
-      
-      // Show success dialog - DON'T redirect yet
+      // Show success dialog
       setDialog({
         isOpen: true,
         type: 'success',
-        title: 'Account Created!',
-        message: `Your ${userType} account has been created successfully.`,
+        title: 'Verification Email Sent!',
+        message: `Your ${userType} account has been created. Please check your email (${formData.email}) to verify your account before signing in.`,
         redirectTo: '/signin'
       });
       
@@ -188,16 +362,61 @@ export default function SignUp() {
 
   const handleDialogClose = () => {
     setDialog(prev => ({ ...prev, isOpen: false }));
-    // Only redirect if it's a success dialog with redirect path
     if (dialog.type === 'success' && dialog.redirectTo) {
       navigate(dialog.redirectTo, { 
         state: { 
-          message: `Your ${userType} account has been created successfully! Please sign in.`,
+          message: `Your ${userType} account has been created successfully! Please check your email to verify your account before signing in.`,
           email: formData.email
         } 
       });
     }
   };
+
+  // Password strength indicator component
+  const PasswordStrengthIndicator = () => (
+    <div className="mt-2 space-y-2">
+      <div className="flex items-center gap-2">
+        <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+          <div 
+            className={`h-full transition-all duration-300 ${
+              passwordStrength.color === 'red' ? 'bg-red-500' :
+              passwordStrength.color === 'yellow' ? 'bg-yellow-500' :
+              passwordStrength.color === 'blue' ? 'bg-blue-500' :
+              passwordStrength.color === 'green' ? 'bg-green-500' : 'bg-gray-300'
+            }`}
+            style={{ width: `${(passwordStrength.score / 4) * 100}%` }}
+          />
+        </div>
+        <span className={`text-xs font-medium text-${passwordStrength.color}-600`}>
+          {passwordStrength.message}
+        </span>
+      </div>
+
+      {/* Password requirements checklist */}
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className={`flex items-center gap-1 ${passwordStrength.requirements.length ? 'text-green-600' : 'text-gray-400'}`}>
+          {passwordStrength.requirements.length ? <CheckCircle size={12} /> : <XCircle size={12} />}
+          <span>8+ characters</span>
+        </div>
+        <div className={`flex items-center gap-1 ${passwordStrength.requirements.uppercase ? 'text-green-600' : 'text-gray-400'}`}>
+          {passwordStrength.requirements.uppercase ? <CheckCircle size={12} /> : <XCircle size={12} />}
+          <span>Uppercase</span>
+        </div>
+        <div className={`flex items-center gap-1 ${passwordStrength.requirements.lowercase ? 'text-green-600' : 'text-gray-400'}`}>
+          {passwordStrength.requirements.lowercase ? <CheckCircle size={12} /> : <XCircle size={12} />}
+          <span>Lowercase</span>
+        </div>
+        <div className={`flex items-center gap-1 ${passwordStrength.requirements.number ? 'text-green-600' : 'text-gray-400'}`}>
+          {passwordStrength.requirements.number ? <CheckCircle size={12} /> : <XCircle size={12} />}
+          <span>Number</span>
+        </div>
+        <div className={`flex items-center gap-1 ${passwordStrength.requirements.special ? 'text-green-600' : 'text-gray-400'}`}>
+          {passwordStrength.requirements.special ? <CheckCircle size={12} /> : <XCircle size={12} />}
+          <span>Special char</span>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -210,7 +429,7 @@ export default function SignUp() {
       />
       
       <Layout className="flex items-center justify-center min-h-screen py-4 px-4">
-        <div className="w-full max-w-md mx-auto">
+        <div className="w-full max-w-2xl mx-auto">
           {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
@@ -267,14 +486,14 @@ export default function SignUp() {
               <div className="mt-3 p-3 bg-blue-50 rounded-lg">
                 <p className="text-xs text-blue-700">
                   <span className="font-medium">Creating:</span> {userType} account
-                  {userType === 'admin' && ' (Only one per school)'}
+                  {userType === 'admin' && ' (Maximum 5 administrators per school)'}
                 </p>
               </div>
             </div>
 
             {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Name */}
+              {/* Full Name */}
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-gray-700">
                   Full Name *
@@ -283,8 +502,8 @@ export default function SignUp() {
                   <User className="absolute left-3 top-3.5 text-gray-400" size={20} />
                   <input
                     type="text"
-                    name="name"
-                    value={formData.name}
+                    name="fullName"
+                    value={formData.fullName}
                     onChange={handleChange}
                     placeholder="John Doe"
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
@@ -316,29 +535,158 @@ export default function SignUp() {
                 </div>
               </div>
 
-              {/* Subjects (Teacher Only) */}
+              {/* Teacher-specific fields */}
               {userType === 'teacher' && (
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-gray-700">
-                    Subjects You Teach *
-                  </label>
-                  <div className="relative">
-                    <BookOpen className="absolute left-3 top-3.5 text-gray-400" size={20} />
-                    <textarea
-                      name="subjects"
-                      value={formData.subjects}
-                      onChange={handleChange}
-                      placeholder="Mathematics, English, Science"
-                      rows={2}
-                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
-                      required
-                      disabled={loading}
-                    />
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* NRC */}
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        NRC Number *
+                      </label>
+                      <div className="relative">
+                        <CreditCard className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                        <input
+                          type="text"
+                          name="nrc"
+                          value={formData.nrc}
+                          onChange={handleChange}
+                          placeholder="123456/78/1"
+                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          required
+                          disabled={loading}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500">Format: 123456/78/1</p>
+                    </div>
+
+                    {/* Date of Birth */}
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Date of Birth *
+                      </label>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                        <input
+                          type="date"
+                          name="dateOfBirth"
+                          value={formData.dateOfBirth}
+                          onChange={handleChange}
+                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          required
+                          disabled={loading}
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-xs text-gray-500">
-                    Separate subjects with commas
-                  </p>
-                </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* TS Number */}
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        TS Number *
+                      </label>
+                      <div className="relative">
+                        <Hash className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                        <input
+                          type="text"
+                          name="tsNumber"
+                          value={formData.tsNumber}
+                          onChange={handleChange}
+                          placeholder="TS123456"
+                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          required
+                          disabled={loading}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500">Teaching Service Number (TS123456)</p>
+                    </div>
+
+                    {/* Employee Number */}
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Employee Number *
+                      </label>
+                      <div className="relative">
+                        <Briefcase className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                        <input
+                          type="text"
+                          name="employeeNumber"
+                          value={formData.employeeNumber}
+                          onChange={handleChange}
+                          placeholder="EMP12345"
+                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          required
+                          disabled={loading}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500">Format: EMP12345</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Date of First Appointment */}
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        First Appointment Date *
+                      </label>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                        <input
+                          type="date"
+                          name="dateOfFirstAppointment"
+                          value={formData.dateOfFirstAppointment}
+                          onChange={handleChange}
+                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          required
+                          disabled={loading}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Date of Current Appointment */}
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Current Appointment Date *
+                      </label>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                        <input
+                          type="date"
+                          name="dateOfCurrentAppointment"
+                          value={formData.dateOfCurrentAppointment}
+                          onChange={handleChange}
+                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          required
+                          disabled={loading}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Subjects (Teacher Only) */}
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Subjects You Teach *
+                    </label>
+                    <div className="relative">
+                      <BookOpen className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                      <textarea
+                        name="subjects"
+                        value={formData.subjects}
+                        onChange={handleChange}
+                        placeholder="Mathematics, English, Science, Physics, Chemistry"
+                        rows={2}
+                        className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                        required
+                        disabled={loading}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      Separate subjects with commas
+                    </p>
+                  </div>
+                </>
               )}
 
               {/* Password */}
@@ -349,18 +697,28 @@ export default function SignUp() {
                 <div className="relative">
                   <Lock className="absolute left-3 top-3.5 text-gray-400" size={20} />
                   <input
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     name="password"
                     value={formData.password}
                     onChange={handleChange}
                     placeholder="••••••••"
-                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    className={`w-full pl-10 pr-12 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed ${
+                      formData.password && passwordStrength.score < 2 ? 'border-red-300' : 'border-gray-300'
+                    }`}
                     required
-                    minLength={6}
+                    minLength={8}
                     disabled={loading}
                     autoComplete="new-password"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-3.5 text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
                 </div>
+                {formData.password && <PasswordStrengthIndicator />}
               </div>
 
               {/* Confirm Password */}
@@ -371,17 +729,31 @@ export default function SignUp() {
                 <div className="relative">
                   <Lock className="absolute left-3 top-3.5 text-gray-400" size={20} />
                   <input
-                    type="password"
+                    type={showConfirmPassword ? 'text' : 'password'}
                     name="confirmPassword"
                     value={formData.confirmPassword}
                     onChange={handleChange}
                     placeholder="••••••••"
-                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    className={`w-full pl-10 pr-12 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed ${
+                      formData.confirmPassword && formData.password !== formData.confirmPassword ? 'border-red-300' : 'border-gray-300'
+                    }`}
                     required
                     disabled={loading}
                     autoComplete="new-password"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-3.5 text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
                 </div>
+                {formData.confirmPassword && formData.password !== formData.confirmPassword && (
+                  <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                    <XCircle size={12} /> Passwords do not match
+                  </p>
+                )}
               </div>
 
               {/* Admin Note */}
@@ -390,7 +762,8 @@ export default function SignUp() {
                   <div className="flex items-start gap-2">
                     <AlertCircle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
                     <p className="text-xs text-amber-700">
-                      <span className="font-medium">Important:</span> Only one administrator account is allowed per school.
+                      <span className="font-medium">Important:</span> Only one administrator account is allowed per school. 
+                      Maximum of 5 administrators system-wide.
                     </p>
                   </div>
                 </div>

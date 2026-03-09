@@ -218,15 +218,15 @@ const classService = {
       }
 
       const snapshot = await getDocs(q);
-      const classes = await Promise.all(snapshot.docs.map(async doc => {
-        const data = doc.data() as DocumentData;
+      const classes = await Promise.all(snapshot.docs.map(async docSnapshot => {
+        const data = docSnapshot.data() as DocumentData;
         
         // Get gender stats for this class
-        const learners = await learnerService.getLearnersByClass(doc.id);
+        const learners = await learnerService.getLearnersByClass(docSnapshot.id);
         const genderStats = calculateGenderStats(learners);
         
         return {
-          id: doc.id,
+          id: docSnapshot.id,
           name: data.name || '',
           year: data.year || new Date().getFullYear(),
           type: data.type || 'grade',
@@ -522,11 +522,11 @@ const classService = {
       );
       const teachersSnapshot = await getDocs(teachersQuery);
       
-      const teachers = teachersSnapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
+      const teachers = teachersSnapshot.docs.map(docSnapshot => {
+        const data = docSnapshot.data() as DocumentData;
         return {
-          id: doc.id,
-          name: data.name || '',
+          id: docSnapshot.id,
+          name: data.fullName || data.name || '',
           email: data.email || '',
           phone: data.phone || '',
           department: data.department || 'General',
@@ -581,13 +581,13 @@ const classService = {
       );
       
       const snapshot = await getDocs(q);
-      const assignments = snapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
+      const assignments = snapshot.docs.map(docSnapshot => {
+        const data = docSnapshot.data() as DocumentData;
         const subject = data.subject || '';
         const normalizedSubject = normalizeSubjectName(subject);
         
         return {
-          id: doc.id,
+          id: docSnapshot.id,
           teacherId: data.teacherId,
           teacherName: data.teacherName || '',
           teacherEmail: data.teacherEmail,
@@ -641,10 +641,10 @@ const learnerService = {
       );
       
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
+      return snapshot.docs.map(docSnapshot => {
+        const data = docSnapshot.data() as DocumentData;
         return {
-          id: doc.id,
+          id: docSnapshot.id,
           
           // Core Identification
           studentId: data.studentId || '',
@@ -712,10 +712,10 @@ const learnerService = {
       );
       
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
+      return snapshot.docs.map(docSnapshot => {
+        const data = docSnapshot.data() as DocumentData;
         return {
-          id: doc.id,
+          id: docSnapshot.id,
           studentId: data.studentId || '',
           studentIndex: data.studentIndex || 0,
           classPrefix: data.classPrefix || '',
@@ -1250,10 +1250,10 @@ const learnerService = {
       );
       
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
+      return snapshot.docs.map(docSnapshot => {
+        const data = docSnapshot.data() as DocumentData;
         return {
-          id: doc.id,
+          id: docSnapshot.id,
           ...data,
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
@@ -1385,10 +1385,10 @@ const learnerService = {
       }
       
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
+      return snapshot.docs.map(docSnapshot => {
+        const data = docSnapshot.data() as DocumentData;
         return {
-          id: doc.id,
+          id: docSnapshot.id,
           ...data,
         } as Learner;
       });
@@ -1415,11 +1415,11 @@ const learnerService = {
         return null;
       }
       
-      const doc = snapshot.docs[0];
-      const data = doc.data() as DocumentData;
+      const docSnapshot = snapshot.docs[0];
+      const data = docSnapshot.data() as DocumentData;
       
       return {
-        id: doc.id,
+        id: docSnapshot.id,
         ...data,
         createdAt: toDate(data.createdAt),
         updatedAt: toDate(data.updatedAt),
@@ -1432,43 +1432,69 @@ const learnerService = {
   },
 };
 
-// ==================== TEACHER SERVICE (WITH SUBJECT NORMALIZATION) ====================
+// ==================== TEACHER SERVICE (UPDATED TO HANDLE BOTH OLD AND NEW FIELDS) ====================
 
 const teacherService = {
   /**
    * Get all teachers from users collection
+   * UPDATED: Handles both old and new field structures
    */
   getTeachers: async (): Promise<Teacher[]> => {
     try {
+      console.log('🔍 Fetching all teachers from users collection...');
       const usersRef = collection(db, 'users');
       const q = query(
         usersRef,
         where('userType', '==', 'teacher'),
-        orderBy('name', 'asc')
+        orderBy('fullName', 'asc')
       );
       
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
+      console.log(`📊 Found ${snapshot.docs.length} teacher documents`);
+      
+      const teachers = snapshot.docs.map((docSnapshot) => {
+        const data = docSnapshot.data() as DocumentData;
+        
+        // Handle both old and new field structures
         return {
-          id: doc.id,
-          name: data.name || '',
+          id: docSnapshot.id,
+          // Support both 'fullName' (new) and 'name' (old)
+          name: data.fullName || data.name || 'Unknown',
           email: data.email || '',
-          phone: data.phone || '',
+          // Support phone number from various possible fields
+          phone: data.phone || data.contactNumber || '',
+          // Department handling
           department: data.department || 'General',
+          // Subjects array
           subjects: data.subjects || [],
+          // Class assignments
           assignedClasses: data.assignedClasses || [],
+          // Form teacher status
           isFormTeacher: data.isFormTeacher || false,
           assignedClassId: data.assignedClassId,
           assignedClassName: data.assignedClassName,
+          // Status
           status: data.status || 'active',
+          // Employment details
           employmentDate: toDate(data.employmentDate) || toDate(data.createdAt) || new Date(),
+          // New fields from signup (keep for reference but not in Teacher interface)
+          fullName: data.fullName,
+          nrc: data.nrc,
+          dateOfBirth: data.dateOfBirth,
+          tsNumber: data.tsNumber,
+          employeeNumber: data.employeeNumber,
+          dateOfFirstAppointment: data.dateOfFirstAppointment,
+          dateOfCurrentAppointment: data.dateOfCurrentAppointment,
+          // Timestamps
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
         } as Teacher;
       });
+      
+      console.log('✅ Teacher data processed:', teachers);
+      return teachers;
     } catch (error) {
-      console.error('Error fetching teachers:', error);
+      console.error('❌ Error fetching teachers:', error);
       throw error;
     }
   },
@@ -1478,20 +1504,22 @@ const teacherService = {
    */
   getTeachersByClass: async (classId: string): Promise<Teacher[]> => {
     try {
+      console.log(`🔍 Fetching teachers for class ${classId}...`);
       const usersRef = collection(db, 'users');
       const q = query(
         usersRef,
         where('userType', '==', 'teacher'),
         where('assignedClasses', 'array-contains', classId),
-        orderBy('name', 'asc')
+        orderBy('fullName', 'asc')
       );
       
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
+      
+      return snapshot.docs.map((docSnapshot) => {
+        const data = docSnapshot.data() as DocumentData;
         return {
-          id: doc.id,
-          name: data.name || '',
+          id: docSnapshot.id,
+          name: data.fullName || data.name || 'Unknown',
           email: data.email || '',
           phone: data.phone || '',
           department: data.department || 'General',
@@ -1500,6 +1528,7 @@ const teacherService = {
           isFormTeacher: data.isFormTeacher || false,
           assignedClassId: data.assignedClassId,
           assignedClassName: data.assignedClassName,
+          status: data.status || 'active',
         } as Teacher;
       });
     } catch (error) {
@@ -1513,6 +1542,7 @@ const teacherService = {
    */
   getTeacherAssignments: async (teacherId: string): Promise<TeacherAssignment[]> => {
     try {
+      console.log(`🔍 Fetching assignments for teacher ${teacherId}...`);
       const assignmentsRef = collection(db, 'teacher_assignments');
       const q = query(
         assignmentsRef,
@@ -1520,18 +1550,33 @@ const teacherService = {
       );
       
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
+      
+      const assignments = await Promise.all(snapshot.docs.map(async (docSnapshot) => {
+        const data = docSnapshot.data() as DocumentData;
         const subject = data.subject || '';
         const normalizedSubject = normalizeSubjectName(subject);
         
+        // Get class name if not present
+        let className = data.className || '';
+        if (!className && data.classId) {
+          try {
+            const classDoc = await getDoc(doc(db, 'classes', data.classId));
+            if (classDoc.exists()) {
+              const classData = classDoc.data();
+              className = classData.name || '';
+            }
+          } catch (error) {
+            console.error('Error fetching class name:', error);
+          }
+        }
+        
         return {
-          id: doc.id,
+          id: docSnapshot.id,
           teacherId: data.teacherId,
           teacherName: data.teacherName || '',
           teacherEmail: data.teacherEmail,
           classId: data.classId,
-          className: data.className || '',
+          className,
           subject: subject,
           normalizedSubjectId: normalizedSubject,
           isFormTeacher: data.isFormTeacher || false,
@@ -1539,10 +1584,13 @@ const teacherService = {
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
         } as TeacherAssignment;
-      });
+      }));
+      
+      console.log(`📚 Found ${assignments.length} assignments for teacher ${teacherId}`);
+      return assignments;
     } catch (error) {
       console.error('Error fetching teacher assignments:', error);
-      throw error;
+      return [];
     }
   },
 
@@ -1554,13 +1602,13 @@ const teacherService = {
       const assignmentsRef = collection(db, 'teacher_assignments');
       const snapshot = await getDocs(assignmentsRef);
       
-      return snapshot.docs.map(doc => {
-        const data = doc.data() as DocumentData;
+      return snapshot.docs.map((docSnapshot) => {
+        const data = docSnapshot.data() as DocumentData;
         const subject = data.subject || '';
         const normalizedSubject = normalizeSubjectName(subject);
         
         return {
-          id: doc.id,
+          id: docSnapshot.id,
           teacherId: data.teacherId,
           teacherName: data.teacherName || '',
           teacherEmail: data.teacherEmail,
@@ -1587,12 +1635,8 @@ const teacherService = {
     return classService.getTeacherAssignmentsByClass(classId);
   },
 
-  // ==================== FIXED ASSIGNMENT METHODS ====================
-
   /**
    * Assign a teacher to a class with a specific subject
-   * FIXED: Allows multiple subjects per teacher per class
-   * FIXED: Properly handles form teacher assignments without subject validation
    */
   assignTeacherToClass: async (
     teacherId: string, 
@@ -1632,9 +1676,13 @@ const teacherService = {
       
       // Validate that the teacher actually teaches this subject (skip for form teacher assignments)
       if (!isFormTeacherAssignment) {
-        const teacherSubjects = (teacherData.subjects || []).map((s: string) => normalizeSubjectName(s));
-        if (!teacherSubjects.includes(normalizedSubject)) {
-          throw new Error(`Teacher does not teach ${subject} (normalized: ${normalizedSubject}). Their subjects are: ${teacherData.subjects.join(', ')}`);
+        const teacherSubjects = (teacherData.subjects || []).map((s: string) => s.toString());
+        const normalizedTeacherSubjects = teacherSubjects.map((s: string) => normalizeSubjectName(s));
+        
+        if (!normalizedTeacherSubjects.includes(normalizedSubject)) {
+          console.warn(`Teacher does not have ${subject} in their subjects list:`, teacherSubjects);
+          // We'll allow it anyway, but log a warning
+          console.warn('Proceeding with assignment anyway...');
         }
       }
       
@@ -1649,8 +1697,7 @@ const teacherService = {
       
       console.log('Teacher and class data retrieved successfully');
       
-      // FIXED: Check if this specific subject assignment already exists
-      // We now allow multiple subjects per teacher per class, but not duplicates of the same subject
+      // Check if this specific subject assignment already exists
       const existingAssignmentsRef = collection(db, 'teacher_assignments');
       
       // Check for existing assignment with the SAME SUBJECT
@@ -1685,7 +1732,7 @@ const teacherService = {
             
             batch.update(classRef, {
               formTeacherId: teacherId,
-              formTeacherName: teacherData.name,
+              formTeacherName: teacherData.fullName || teacherData.name,
               updatedAt: serverTimestamp(),
             });
           } else if (existingData.isFormTeacher && !isFormTeacher) {
@@ -1713,7 +1760,7 @@ const teacherService = {
         return;
       }
       
-      // FIXED: Check for form teacher conflict - only one form teacher per class
+      // Check for form teacher conflict - only one form teacher per class
       if (isFormTeacher) {
         // Check if class already has a different form teacher
         if (classData.formTeacherId && classData.formTeacherId !== teacherId) {
@@ -1728,7 +1775,7 @@ const teacherService = {
       const assignmentRef = doc(collection(db, 'teacher_assignments'));
       batch.set(assignmentRef, {
         teacherId,
-        teacherName: teacherData.name,
+        teacherName: teacherData.fullName || teacherData.name,
         teacherEmail: teacherData.email,
         classId,
         className: classData.name,
@@ -1756,7 +1803,7 @@ const teacherService = {
       if (isFormTeacher) {
         batch.update(classRef, {
           formTeacherId: teacherId,
-          formTeacherName: teacherData.name,
+          formTeacherName: teacherData.fullName || teacherData.name,
           updatedAt: serverTimestamp(),
         });
       }
@@ -1779,9 +1826,7 @@ const teacherService = {
         teacherUpdates.isFormTeacher = true;
       }
       
-      // For backward compatibility, we might still set assignedClassId
-      // But we should only do this if it's the ONLY class or we need a primary class
-      // For now, let's keep the last assigned class as the "primary"
+      // For backward compatibility, set the last assigned class as "primary"
       teacherUpdates.assignedClassId = classId;
       teacherUpdates.assignedClassName = classData.name;
       
@@ -1801,7 +1846,6 @@ const teacherService = {
 
   /**
    * Assign a teacher as form teacher only (no subject)
-   * NEW: Helper function for form teacher only assignments
    */
   assignFormTeacherOnly: async (
     teacherId: string,
@@ -1812,7 +1856,6 @@ const teacherService = {
 
   /**
    * Get all subjects a teacher teaches in a specific class
-   * NEW: Helper function for ResultsEntry dropdown
    */
   getTeacherSubjectsForClass: async (teacherId: string, classId: string): Promise<string[]> => {
     try {
@@ -1825,8 +1868,8 @@ const teacherService = {
       
       const snapshot = await getDocs(q);
       const subjects = snapshot.docs
-        .map(doc => {
-          const data = doc.data();
+        .map(docSnapshot => {
+          const data = docSnapshot.data();
           // Filter out "Form Teacher" if it's just a form teacher assignment
           if (data.subject === 'Form Teacher' && !data.isFormTeacher) {
             return null;
@@ -1845,7 +1888,6 @@ const teacherService = {
 
   /**
    * Check if teacher is form teacher for a class
-   * NEW: Helper function
    */
   isFormTeacherForClass: async (teacherId: string, classId: string): Promise<boolean> => {
     try {
@@ -1881,22 +1923,52 @@ const teacherService = {
 
   /**
    * Update teacher information (name, email, phone, department, subjects)
+   * UPDATED: Handles both old and new field structures
    */
   updateTeacher: async (teacherId: string, updates: Partial<Teacher>): Promise<void> => {
     try {
       const teacherRef = doc(db, 'users', teacherId);
       
-      // Remove undefined fields
-      const cleanUpdates = Object.entries(updates).reduce((acc, [key, value]) => {
-        if (value !== undefined) {
-          acc[key] = value;
-        }
-        return acc;
-      }, {} as Record<string, any>);
+      // Get current teacher data
+      const teacherDoc = await getDoc(teacherRef);
+      if (!teacherDoc.exists()) {
+        throw new Error('Teacher not found');
+      }
       
-      cleanUpdates.updatedAt = serverTimestamp();
+      const currentData = teacherDoc.data();
       
-      await updateDoc(teacherRef, cleanUpdates);
+      // Prepare updates for Firestore
+      const firestoreUpdates: any = {
+        updatedAt: serverTimestamp()
+      };
+      
+      // Map Teacher interface fields to Firestore fields
+      if (updates.name !== undefined) {
+        firestoreUpdates.fullName = updates.name;
+        firestoreUpdates.name = updates.name; // Keep old field for compatibility
+      }
+      
+      if (updates.email !== undefined) {
+        firestoreUpdates.email = updates.email;
+      }
+      
+      if (updates.phone !== undefined) {
+        firestoreUpdates.phone = updates.phone;
+      }
+      
+      if (updates.department !== undefined) {
+        firestoreUpdates.department = updates.department;
+      }
+      
+      if (updates.subjects !== undefined) {
+        firestoreUpdates.subjects = updates.subjects;
+      }
+      
+      if (updates.status !== undefined) {
+        firestoreUpdates.status = updates.status;
+      }
+      
+      await updateDoc(teacherRef, firestoreUpdates);
       console.log(`✅ Updated teacher ${teacherId}`);
     } catch (error) {
       console.error('Error updating teacher:', error);
@@ -1928,7 +2000,6 @@ const teacherService = {
 
   /**
    * Remove a specific subject assignment from a teacher in a class
-   * FIXED: More precise removal - only removes the specified subject
    */
   removeTeacherSubject: async (teacherId: string, classId: string, subject: string): Promise<void> => {
     try {
@@ -1953,10 +2024,10 @@ const teacherService = {
       let wasFormTeacher = false;
       
       // Delete the specific assignment
-      snapshot.forEach(doc => {
-        const data = doc.data();
+      snapshot.forEach(docSnapshot => {
+        const data = docSnapshot.data();
         wasFormTeacher = data.isFormTeacher || false;
-        batch.delete(doc.ref);
+        batch.delete(docSnapshot.ref);
       });
       
       // Check if this teacher has any other assignments in this class
@@ -2009,7 +2080,7 @@ const teacherService = {
         if (wasFormTeacher) {
           // Check if any remaining assignment has isFormTeacher true
           const hasFormTeacherRemaining = remainingSnapshot.docs.some(
-            doc => doc.data().isFormTeacher === true
+            docSnapshot => docSnapshot.data().isFormTeacher === true
           );
           
           if (!hasFormTeacherRemaining) {
@@ -2074,8 +2145,8 @@ const teacherService = {
       );
       
       const assignmentSnapshot = await getDocs(q);
-      assignmentSnapshot.forEach(doc => {
-        batch.delete(doc.ref);
+      assignmentSnapshot.forEach(docSnapshot => {
+        batch.delete(docSnapshot.ref);
       });
       
       console.log('Teacher assignment documents queued for deletion');
@@ -2124,7 +2195,6 @@ const teacherService = {
 
   /**
    * Get all classes a teacher is assigned to with their subjects
-   * NEW: Comprehensive teacher assignment overview
    */
   getTeacherFullAssignments: async (teacherId: string): Promise<{
     classId: string;
@@ -2199,6 +2269,10 @@ const teacherService = {
       }
       const toClassData = toClassDoc.data() as DocumentData;
       
+      // Get teacher data
+      const teacherDoc = await getDoc(doc(db, 'users', teacherId));
+      const teacherData = teacherDoc.exists() ? teacherDoc.data() : {};
+      
       // For each assignment, create new assignment in target class
       for (const assignment of fromClassAssignments) {
         const newSubject = subjectMapping?.[assignment.subject] || assignment.subject;
@@ -2207,8 +2281,8 @@ const teacherService = {
         const newAssignmentRef = doc(collection(db, 'teacher_assignments'));
         batch.set(newAssignmentRef, {
           teacherId: assignment.teacherId,
-          teacherName: assignment.teacherName,
-          teacherEmail: assignment.teacherEmail,
+          teacherName: teacherData.fullName || teacherData.name,
+          teacherEmail: teacherData.email,
           classId: toClassId,
           className: toClassData.name,
           subject: newSubject,
@@ -2257,7 +2331,7 @@ const teacherService = {
       // If teacher was form teacher in source class, set as form teacher in target class
       if (fromClassAssignments.some(a => a.isFormTeacher)) {
         updateData.formTeacherId = teacherId;
-        updateData.formTeacherName = fromClassAssignments[0].teacherName;
+        updateData.formTeacherName = teacherData.fullName || teacherData.name;
       }
       
       batch.update(toClassRef, updateData);

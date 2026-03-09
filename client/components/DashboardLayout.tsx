@@ -81,10 +81,10 @@ export function DashboardLayout({ children, activeTab = 'dashboard' }: Dashboard
         <div className="p-6 border-b border-gray-800">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold">
-              {user?.name?.[0]?.toUpperCase() || 'U'}
+              {user?.fullName?.[0]?.toUpperCase() || 'U'}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-semibold text-sm truncate">{user?.name}</p>
+              <p className="font-semibold text-sm truncate">{user?.fullName}</p>
               <p className="text-xs text-gray-400 capitalize truncate">{user?.userType}</p>
             </div>
           </div>
