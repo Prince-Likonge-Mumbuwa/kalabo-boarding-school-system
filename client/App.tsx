@@ -12,7 +12,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Landing from "./pages/Landing";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
-import ForgotPassword from "./pages/ForgotPassword"; // NEW IMPORT
+import ForgotPassword from "./pages/ForgotPassword";
 
 // Admin Pages
 import AdminDashboard from "./pages/AdminDashboard";
@@ -28,6 +28,9 @@ import TeacherDashboard from "./pages/TeacherDashboard";
 import AttendanceTracking from "./pages/teacher/AttendanceTracking";
 import ResultsEntry from "./pages/teacher/ResultsEntry";
 import TeacherResultsAnalysis from "./pages/teacher/TeacherResultsAnalysis";
+
+// Settings Page (works for both admin and teacher)
+import Settings from "./pages/Settings";
 
 import NotFound from "./pages/NotFound";
 
@@ -46,7 +49,7 @@ const App = () => (
             <Route path="/" element={<Landing />} />
             <Route path="/signin" element={<SignIn />} />
             <Route path="/signup" element={<SignUp />} />
-            <Route path="/forgot-password" element={<ForgotPassword />} /> {/* NEW ROUTE */}
+            <Route path="/forgot-password" element={<ForgotPassword />} />
 
             {/* Admin Routes - Protected */}
             <Route path="/dashboard/admin" element={
@@ -84,6 +87,12 @@ const App = () => (
                 <AdminResultsAnalysis />
               </ProtectedRoute>
             } />
+            {/* Admin Settings */}
+            <Route path="/dashboard/admin/settings" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <Settings />
+              </ProtectedRoute>
+            } />
 
             {/* Teacher Routes - Protected */}
             <Route path="/dashboard/teacher" element={
@@ -104,6 +113,12 @@ const App = () => (
             <Route path="/dashboard/teacher/results-analysis" element={
               <ProtectedRoute allowedRoles={['teacher']}>
                 <TeacherResultsAnalysis />
+              </ProtectedRoute>
+            } />
+            {/* Teacher Settings */}
+            <Route path="/dashboard/teacher/settings" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <Settings />
               </ProtectedRoute>
             } />
 

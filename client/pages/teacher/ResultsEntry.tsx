@@ -1,4 +1,4 @@
-// @/pages/teacher/ResultsEntry.tsx - FIXED VERSION
+// @/pages/teacher/ResultsEntry.tsx - COMPLETE FIXED VERSION
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
@@ -349,6 +349,13 @@ const SubjectProgress = ({
     return states;
   }, [examTypes]);
 
+  // FIXED: Calculate overall progress based on configured exams only
+  const totalConfiguredExams = examTypes.length;
+  const completedExams = examTypes.filter(exam => exam.isComplete).length;
+  const progressPercentage = totalConfiguredExams > 0 
+    ? Math.round((completedExams / totalConfiguredExams) * 100) 
+    : 0;
+
   // Grid columns based on number of exam types
   const gridCols = examTypes.length === 3 ? 'grid-cols-3' : examTypes.length === 2 ? 'grid-cols-2' : 'grid-cols-1';
 
@@ -367,14 +374,14 @@ const SubjectProgress = ({
           )}
         </div>
         <span className="text-xs text-gray-500">
-          {completion.percentComplete}% complete
+          {progressPercentage}% complete ({completedExams}/{totalConfiguredExams} exams)
         </span>
       </div>
       
       <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-4">
         <div 
           className="h-full bg-blue-500 rounded-full transition-all duration-500"
-          style={{ width: `${completion.percentComplete}%` }}
+          style={{ width: `${progressPercentage}%` }}
         />
       </div>
       
@@ -557,13 +564,27 @@ const MarksPDFPreview = ({
         isFromSaved = true;
       }
       
+      // Calculate percentage and grade for display
+      let percentage = null;
+      let grade = null;
+      const marksNum = displayMarks && displayMarks.toLowerCase() !== 'x' ? parseInt(displayMarks) : null;
+      
+      if (marksNum !== null) {
+        percentage = ((marksNum / totalMarks) * 100).toFixed(1);
+        grade = calculateGrade(parseFloat(percentage));
+      } else if (displayMarks?.toLowerCase() === 'x') {
+        grade = -1;
+      }
+      
       return {
         ...student,
         displayMarks,
-        isFromSaved
+        isFromSaved,
+        percentage,
+        grade
       };
     });
-  }, [students, savedMarksMap]);
+  }, [students, savedMarksMap, totalMarks]);
 
   if (!isOpen) return null;
 
@@ -671,6 +692,7 @@ const MarksPDFPreview = ({
                           <th className="px-2 sm:px-3 py-2 text-left font-semibold text-gray-700 border border-gray-300">Student Name</th>
                           <th className="px-2 sm:px-3 py-2 text-left font-semibold text-gray-700 border border-gray-300 hidden sm:table-cell">Student ID</th>
                           <th className="px-2 sm:px-3 py-2 text-center font-semibold text-gray-700 border border-gray-300 w-16 sm:w-20">Marks</th>
+                          <th className="px-2 sm:px-3 py-2 text-center font-semibold text-gray-700 border border-gray-300 w-16 sm:w-20">%</th>
                           <th className="px-2 sm:px-3 py-2 text-center font-semibold text-gray-700 border border-gray-300 w-12 sm:w-16">Grade</th>
                         </tr>
                       </thead>
@@ -684,9 +706,9 @@ const MarksPDFPreview = ({
                             marksNum = parseInt(marks);
                           }
                           
-                          const percentage = marksNum !== null ? ((marksNum / totalMarks) * 100) : null;
+                          const percentage = marksNum !== null ? ((marksNum / totalMarks) * 100).toFixed(1) : null;
                           const grade = marksNum !== null 
-                            ? calculateGrade(percentage || 0)
+                            ? calculateGrade(parseFloat(percentage || '0'))
                             : isAbsent ? -1 : null;
 
                           return (
@@ -704,6 +726,13 @@ const MarksPDFPreview = ({
                                   <span className={`font-medium ${isAbsent ? 'text-gray-500 italic' : student.isFromSaved ? 'text-green-700' : ''}`}>
                                     {isAbsent ? 'ABS' : marks}
                                   </span>
+                                ) : (
+                                  <span className="text-gray-300">—</span>
+                                )}
+                              </td>
+                              <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-center border border-gray-300">
+                                {percentage ? (
+                                  <span className="font-medium text-gray-700">{percentage}%</span>
                                 ) : (
                                   <span className="text-gray-300">—</span>
                                 )}
@@ -914,7 +943,6 @@ export default function ResultsEntry() {
     return currentExamConfig[`${examType}TotalMarks`] || 100;
   }, [currentExamConfig, examType]);
   
-  // FIXED: Using updated hook with correct collection
   const { assignments, getSubjectsForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.uid);
   
   const { saveResults, isSaving, checkExisting, editResults, isEditing } = useResults();
@@ -1359,28 +1387,51 @@ export default function ResultsEntry() {
     setShowPDFPreview(true);
   }, []);
 
+  // FIXED: PDF Generation with complete data
   const handleGeneratePDF = async () => {
     try {
       const { generateMarkSchedulePDF } = await import('@/services/pdf/markSchedulePDF');
       
       const teacherDisplayName = user?.fullName || user?.email || 'Teacher';
       
+      // Create a map of saved marks for quick lookup
+      const savedMarksMap = new Map();
+      if (allExamData && allExamData[examType]) {
+        allExamData[examType].forEach((item: ExamDataItem) => {
+          if (item.studentId) savedMarksMap.set(item.studentId, item.marks);
+          if (item.student_id) savedMarksMap.set(item.student_id, item.marks);
+        });
+      }
+      
       const studentsForPDF = students.map(student => {
+        // Get marks from current input or saved data
         let marksValue = student.marks || '';
+        let marksNum = null;
+        let percentage = null;
+        let grade = null;
         
-        if (marksValue === '' && allExamData && allExamData[examType]) {
-          const savedMark = allExamData[examType].find(
-            (item: ExamDataItem) => item.studentId === student.studentId || item.student_id === student.studentId
-          );
-          if (savedMark) {
-            marksValue = savedMark.marks === -1 ? 'X' : savedMark.marks.toString();
-          }
+        // If no current marks, try to get from saved data
+        if (marksValue === '' && savedMarksMap.has(student.studentId)) {
+          const savedMark = savedMarksMap.get(student.studentId);
+          marksValue = savedMark === -1 ? 'X' : savedMark.toString();
+        }
+        
+        // Calculate numeric values if not absent
+        const isAbsent = marksValue.toLowerCase() === 'x';
+        if (!isAbsent && marksValue && marksValue !== '') {
+          marksNum = parseInt(marksValue);
+          percentage = ((marksNum / totalMarks) * 100).toFixed(1);
+          grade = calculateGrade(parseFloat(percentage || '0'));
         }
         
         return {
           name: student.name,
           studentId: student.studentId,
-          marks: marksValue
+          marks: marksValue,
+          marksNum: marksNum,
+          percentage: percentage,
+          grade: grade,
+          isAbsent: isAbsent
         };
       });
 
@@ -1659,7 +1710,7 @@ export default function ResultsEntry() {
           </div>
         </div>
 
-        {/* Subject Progress */}
+        {/* Subject Progress - FIXED: Now shows correct percentage based on configured exams */}
         {selectedClass && selectedSubject && currentSubjectCompletion && availableExamTypes.length > 0 && (
           <SubjectProgress 
             completion={currentSubjectCompletion}
@@ -1705,7 +1756,7 @@ export default function ResultsEntry() {
                     )}
                   </div>
                   
-                  {/* Progress */}
+                  {/* Progress - This shows marks entry progress, not exam completion */}
                   <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
                     <span className="text-[10px] sm:text-xs text-gray-500">
                       {filledCount}/{totalStudents}
