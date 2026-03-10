@@ -1,6 +1,5 @@
-// @/services/pdf/markSchedulePDF.ts - FIXED VERSION
-
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+// @/services/pdf/markSchedulePDF.ts - FIXED VERSION WITH CENTERED LOGO
+import { PDFDocument, rgb, StandardFonts, PDFImage } from 'pdf-lib';
 
 interface MarkScheduleOptions {
   className: string;
@@ -13,7 +12,11 @@ interface MarkScheduleOptions {
     name: string;
     studentId: string;
     marks: string;
-    id?: string; // Add optional id field
+    id?: string;
+    marksNum?: number | null;
+    percentage?: string | null;
+    grade?: number | null;
+    isAbsent?: boolean;
   }>;
   teacherName: string;
   schoolName: string;
@@ -24,6 +27,39 @@ interface MarkScheduleOptions {
   };
   isNotConducted?: boolean;
 }
+
+/**
+ * Helper function to embed school logo
+ */
+const embedSchoolLogo = async (pdfDoc: PDFDocument): Promise<PDFImage | null> => {
+  try {
+    // Try to load logo from public/images/school-logo.png
+    const logoUrl = '/images/school-logo.png';
+    const response = await fetch(logoUrl);
+    
+    if (!response.ok) {
+      console.warn('Logo image not found at /images/school-logo.png');
+      return null;
+    }
+    
+    const logoImageBytes = await response.arrayBuffer();
+    
+    // Try to embed as PNG first, then as JPG
+    try {
+      return await pdfDoc.embedPng(logoImageBytes);
+    } catch {
+      try {
+        return await pdfDoc.embedJpg(logoImageBytes);
+      } catch {
+        console.warn('Logo image format not supported. Please use PNG or JPG.');
+        return null;
+      }
+    }
+  } catch (error) {
+    console.warn('Could not load logo image:', error);
+    return null;
+  }
+};
 
 export const generateMarkSchedulePDF = async ({
   className,
@@ -60,6 +96,9 @@ export const generateMarkSchedulePDF = async ({
     const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const helveticaOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
     
+    // Embed logo
+    const logoImage = await embedSchoolLogo(pdfDoc);
+    
     const pageWidth = 595.28; // A4 width
     const pageHeight = 841.89; // A4 height
     const margin = 50;
@@ -74,33 +113,72 @@ export const generateMarkSchedulePDF = async ({
       return (pageWidth - textWidth) / 2;
     };
 
-    // Helper function to add header to page
-    const addHeader = (page: typeof currentPage, pageNum: number) => {
-      const headerY = pageHeight - margin;
+    // Helper function to add header to page with centered logo
+    const addHeader = async (page: typeof currentPage, pageNum: number) => {
+      let headerY = pageHeight - margin;
       
-      // School header
-      const schoolText = schoolName.toUpperCase();
-      page.drawText(schoolText, {
-        x: centerText(schoolText, 20),
-        y: headerY,
-        size: 20,
-        font: helveticaBold,
-        color: rgb(0, 0.2, 0.4),
-      });
-      
-      const ministryText = 'MINISTRY OF EDUCATION';
-      page.drawText(ministryText, {
-        x: centerText(ministryText, 14),
-        y: headerY - 25,
-        size: 14,
-        font: helveticaBold,
-        color: rgb(0.3, 0.3, 0.3),
-      });
+      if (logoImage) {
+        // Scale logo appropriately
+        const logoDims = logoImage.scale(0.12);
+        const logoX = (pageWidth - logoDims.width) / 2;
+        
+        // Draw logo centered at top
+        page.drawImage(logoImage, {
+          x: logoX,
+          y: headerY - logoDims.height,
+          width: logoDims.width,
+          height: logoDims.height,
+        });
+        
+        headerY -= logoDims.height + 10;
+        
+        // School name
+        const schoolText = schoolName.toUpperCase();
+        page.drawText(schoolText, {
+          x: centerText(schoolText, 18),
+          y: headerY,
+          size: 18,
+          font: helveticaBold,
+          color: rgb(0, 0.2, 0.4),
+        });
+        headerY -= 20;
+        
+        // Ministry of Education text
+        const ministryText = 'MINISTRY OF EDUCATION';
+        page.drawText(ministryText, {
+          x: centerText(ministryText, 12),
+          y: headerY,
+          size: 12,
+          font: helveticaBold,
+          color: rgb(0.3, 0.3, 0.3),
+        });
+        headerY -= 25;
+      } else {
+        // Fallback without logo
+        const schoolText = schoolName.toUpperCase();
+        page.drawText(schoolText, {
+          x: centerText(schoolText, 20),
+          y: headerY,
+          size: 20,
+          font: helveticaBold,
+          color: rgb(0, 0.2, 0.4),
+        });
+        
+        const ministryText = 'MINISTRY OF EDUCATION';
+        page.drawText(ministryText, {
+          x: centerText(ministryText, 14),
+          y: headerY - 25,
+          size: 14,
+          font: helveticaBold,
+          color: rgb(0.3, 0.3, 0.3),
+        });
+        headerY -= 45;
+      }
 
       // Decorative line
       page.drawLine({
-        start: { x: margin + 50, y: headerY - 40 },
-        end: { x: pageWidth - margin - 50, y: headerY - 40 },
+        start: { x: margin + 50, y: headerY - 5 },
+        end: { x: pageWidth - margin - 50, y: headerY - 5 },
         thickness: 1.5,
         color: rgb(0, 0.2, 0.4),
       });
@@ -109,7 +187,7 @@ export const generateMarkSchedulePDF = async ({
       const titleText = 'MARK SCHEDULE';
       page.drawText(titleText, {
         x: centerText(titleText, 18),
-        y: headerY - 60,
+        y: headerY - 20,
         size: 18,
         font: helveticaBold,
         color: rgb(0, 0, 0),
@@ -123,11 +201,12 @@ export const generateMarkSchedulePDF = async ({
         font: helveticaFont,
         color: rgb(0.5, 0.5, 0.5),
       });
+
+      return headerY - 40; // Return the new Y position after header
     };
 
-    // Add header to first page
-    addHeader(currentPage, 1);
-    yPosition = pageHeight - margin - 85; // Adjust starting position after header
+    // Add header to first page and get starting Y position
+    yPosition = await addHeader(currentPage, 1);
 
     // Create info box
     const infoBoxY = yPosition;
@@ -281,7 +360,7 @@ export const generateMarkSchedulePDF = async ({
       return { grade: '9', color: rgb(1, 0.2, 0.2) };
     };
 
-    // FIXED: Create saved marks map for current exam type
+    // Create saved marks map for current exam type
     const savedMarksMap = new Map();
     if (allExamData && !isNotConducted) {
       const currentExamData = allExamData[examType] || [];
@@ -306,8 +385,7 @@ export const generateMarkSchedulePDF = async ({
       // Check if we need a new page
       if (yPosition < margin + 60) {
         currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-        addHeader(currentPage, pdfDoc.getPageCount());
-        yPosition = pageHeight - margin - 40;
+        yPosition = await addHeader(currentPage, pdfDoc.getPageCount());
         
         // Redraw headers on new page
         currentPage.drawRectangle({
@@ -342,7 +420,7 @@ export const generateMarkSchedulePDF = async ({
         });
       }
 
-      // FIXED: Get marks - prioritize current input, fall back to saved marks
+      // Get marks - prioritize current input, fall back to saved marks
       let marksValue = student.marks || '';
       let isFromSaved = false;
       
@@ -406,7 +484,7 @@ export const generateMarkSchedulePDF = async ({
         font: helveticaFont,
       });
 
-      // IMPROVED: Marks display with better handling of different states
+      // Marks display with better handling of different states
       if (isNotConducted) {
         // Entire test not conducted
         currentPage.drawText('N/A', {
@@ -568,7 +646,7 @@ export const generateMarkSchedulePDF = async ({
       });
     }
 
-    // FIXED: Term summary page with proper data mapping
+    // Term summary page with proper data mapping
     if (allExamData && (allExamData.week4?.length || allExamData.week8?.length || allExamData.endOfTerm?.length) && !isNotConducted) {
       console.log('📊 Adding term summary page with all exam data:', {
         week4Count: allExamData.week4?.length,
@@ -577,9 +655,9 @@ export const generateMarkSchedulePDF = async ({
       });
       
       const summaryPage = pdfDoc.addPage([pageWidth, pageHeight]);
-      addHeader(summaryPage, pdfDoc.getPageCount());
+      const summaryYStart = await addHeader(summaryPage, pdfDoc.getPageCount());
       
-      let summaryY = pageHeight - margin - 40;
+      let summaryY = summaryYStart;
 
       // Title for term summary
       const termTitle = 'TERM PERFORMANCE SUMMARY';
@@ -626,7 +704,7 @@ export const generateMarkSchedulePDF = async ({
 
       summaryY -= 18;
 
-      // FIXED: Create comprehensive maps of marks by student
+      // Create comprehensive maps of marks by student
       const week4Map = new Map();
       allExamData.week4?.forEach(item => {
         if (item.studentId) week4Map.set(item.studentId, item.marks);
@@ -661,7 +739,7 @@ export const generateMarkSchedulePDF = async ({
           break;
         }
 
-        // FIXED: Try to find marks by various identifiers
+        // Try to find marks by various identifiers
         const week4Mark = week4Map.get(student.studentId);
         const week8Mark = week8Map.get(student.studentId);
         const eotMark = eotMap.get(student.studentId);

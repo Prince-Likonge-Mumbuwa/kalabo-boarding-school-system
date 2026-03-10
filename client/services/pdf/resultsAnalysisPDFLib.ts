@@ -1,10 +1,10 @@
 // @/services/pdf/resultsAnalysisPDFLib.ts
-// UPDATED WITH CORRECT QUALITY/QUANTITY/FAIL CALCULATIONS
+// UPDATED WITH CENTERED LOGO AND HEADER
 // Quality: Grades 1-2 only (Distinction)
 // Quantity: Grades 3-7 (Merit through Satisfactory)
 // Fail: Grades 8-9 (Satisfactory Low and Unsatisfactory)
 
-import { PDFDocument, rgb, StandardFonts, PageSizes } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, PageSizes, PDFImage } from 'pdf-lib';
 
 interface SubjectMetrics {
   registered: number;
@@ -36,6 +36,7 @@ interface TeacherResultsData {
   boys: SubjectMetrics;
   girls: SubjectMetrics;
   generatedDate: string;
+  examConfigSummary?: string;
 }
 
 // For admin view (multiple subjects)
@@ -47,9 +48,43 @@ interface AdminResultsData {
   year: number;
   subjects: SubjectData[];
   generatedDate: string;
+  examConfigSummary?: string;
 }
 
 export type ResultsAnalysisData = TeacherResultsData | AdminResultsData;
+
+/**
+ * Helper function to embed school logo
+ */
+const embedSchoolLogo = async (pdfDoc: PDFDocument): Promise<PDFImage | null> => {
+  try {
+    // Try to load logo from public/images/school-logo.png
+    const logoUrl = '/images/school-logo.png';
+    const response = await fetch(logoUrl);
+    
+    if (!response.ok) {
+      console.warn('Logo image not found at /images/school-logo.png');
+      return null;
+    }
+    
+    const logoImageBytes = await response.arrayBuffer();
+    
+    // Try to embed as PNG first, then as JPG
+    try {
+      return await pdfDoc.embedPng(logoImageBytes);
+    } catch {
+      try {
+        return await pdfDoc.embedJpg(logoImageBytes);
+      } catch {
+        console.warn('Logo image format not supported. Please use PNG or JPG.');
+        return null;
+      }
+    }
+  } catch (error) {
+    console.warn('Could not load logo image:', error);
+    return null;
+  }
+};
 
 export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Promise<Uint8Array> {
   // Create PDF document with A4 landscape
@@ -57,6 +92,9 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
   const pageSize = PageSizes.A4;
   const width = pageSize[0];
   const height = pageSize[1];
+  
+  // Embed logo
+  const logoImage = await embedSchoolLogo(pdfDoc);
   
   let page = pdfDoc.addPage(pageSize);
 
@@ -113,39 +151,80 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
 
   let y = height - margin;
 
-  // Helper function to draw header section
-  const drawHeader = (page: any, yPos: number, isContinued: boolean = false): number => {
+  // Helper function to calculate centered X position
+  const centerText = (text: string, fontSize: number) => {
+    const textWidth = boldFont.widthOfTextAtSize(text, fontSize);
+    return (width - textWidth) / 2;
+  };
+
+  // Helper function to draw header section with centered logo
+  const drawHeader = async (page: any, yPos: number, isContinued: boolean = false): Promise<number> => {
     let currentY = yPos;
 
-    // Ministry of Education
-    const ministryText = 'MINISTRY OF EDUCATION';
-    const ministryWidth = boldFont.widthOfTextAtSize(ministryText, 16);
-    page.drawText(ministryText, {
-      x: (width - ministryWidth) / 2,
-      y: currentY,
-      size: 16,
-      font: boldFont,
-      color: darkGray,
-    });
-    currentY -= 25;
+    if (logoImage) {
+      // Scale logo appropriately
+      const logoDims = logoImage.scale(0.12);
+      const logoX = (width - logoDims.width) / 2;
+      
+      // Draw logo centered at top
+      page.drawImage(logoImage, {
+        x: logoX,
+        y: currentY - logoDims.height,
+        width: logoDims.width,
+        height: logoDims.height,
+      });
+      
+      currentY -= logoDims.height + 15;
+      
+      // School Name
+      const schoolText = data.schoolName;
+      page.drawText(schoolText, {
+        x: centerText(schoolText, 16),
+        y: currentY,
+        size: 16,
+        font: boldFont,
+        color: darkGray,
+      });
+      currentY -= 20;
+      
+      // Ministry of Education
+      const ministryText = 'MINISTRY OF EDUCATION';
+      page.drawText(ministryText, {
+        x: centerText(ministryText, 14),
+        y: currentY,
+        size: 14,
+        font: boldFont,
+        color: gray,
+      });
+      currentY -= 25;
+    } else {
+      // Fallback without logo
+      const ministryText = 'MINISTRY OF EDUCATION';
+      page.drawText(ministryText, {
+        x: centerText(ministryText, 16),
+        y: currentY,
+        size: 16,
+        font: boldFont,
+        color: darkGray,
+      });
+      currentY -= 25;
 
-    // School Name
-    const schoolText = data.schoolName;
-    const schoolWidth = boldFont.widthOfTextAtSize(schoolText, 14);
-    page.drawText(schoolText, {
-      x: (width - schoolWidth) / 2,
-      y: currentY,
-      size: 14,
-      font: boldFont,
-      color: darkGray,
-    });
-    currentY -= 20;
+      // School Name
+      const schoolText = data.schoolName;
+      page.drawText(schoolText, {
+        x: centerText(schoolText, 14),
+        y: currentY,
+        size: 14,
+        font: boldFont,
+        color: darkGray,
+      });
+      currentY -= 20;
+    }
 
     // Address
     const addressText = data.address;
-    const addressWidth = font.widthOfTextAtSize(addressText, 12);
     page.drawText(addressText, {
-      x: (width - addressWidth) / 2,
+      x: centerText(addressText, 12),
       y: currentY,
       size: 12,
       font,
@@ -159,9 +238,8 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
                     ? `${data.className} - ${data.subject} Results Analysis`
                     : `${data.className} Results Analysis`);
     
-    const titleWidth = boldFont.widthOfTextAtSize(title, 14);
     page.drawText(title, {
-      x: (width - titleWidth) / 2,
+      x: centerText(title, 14),
       y: currentY,
       size: 14,
       font: boldFont,
@@ -171,20 +249,32 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
 
     // Term and Year
     const termText = `${data.term} ${data.year}`;
-    const termWidth = font.widthOfTextAtSize(termText, 12);
     page.drawText(termText, {
-      x: (width - termWidth) / 2,
+      x: centerText(termText, 12),
       y: currentY,
       size: 12,
       font,
       color: gray,
     });
     
-    return currentY - 30;
+    // Exam config summary if available
+    if (data.examConfigSummary) {
+      currentY -= 20;
+      page.drawText(data.examConfigSummary, {
+        x: centerText(data.examConfigSummary, 10),
+        y: currentY,
+        size: 10,
+        font,
+        color: rgb(0.3, 0.3, 0.8),
+      });
+      currentY -= 5;
+    }
+    
+    return currentY - 25;
   };
 
   // Draw initial header
-  y = drawHeader(page, y, false);
+  y = await drawHeader(page, y, false);
 
   // Helper function to draw table headers
   const drawTableHeaders = (page: any, startX: number, startY: number): number => {
@@ -356,13 +446,13 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
   };
 
   // Helper function to draw a complete subject table
-  const drawSubjectTable = (
+  const drawSubjectTable = async (
     page: any,
     startY: number,
     boysMetrics: SubjectMetrics,
     girlsMetrics: SubjectMetrics,
     subjectName?: string
-  ): number => {
+  ): Promise<number> => {
     let currentY = startY;
     const startX = margin;
 
@@ -406,7 +496,7 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
   // Draw tables based on data type
   if ('subject' in data) {
     // Teacher view - single table
-    y = drawSubjectTable(page, y, data.boys, data.girls);
+    y = await drawSubjectTable(page, y, data.boys, data.girls);
   } else {
     // Admin view - multiple tables (one per subject)
     for (let i = 0; i < data.subjects.length; i++) {
@@ -416,10 +506,10 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
       if (y < 250) {
         page = pdfDoc.addPage(pageSize);
         y = height - margin;
-        y = drawHeader(page, y, true);
+        y = await drawHeader(page, y, true);
       }
 
-      y = drawSubjectTable(page, y, subject.boys, subject.girls, subject.name);
+      y = await drawSubjectTable(page, y, subject.boys, subject.girls, subject.name);
       
       // Add spacing between subjects except for the last one
       if (i < data.subjects.length - 1) {
@@ -432,7 +522,7 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
   if (y < 150) {
     page = pdfDoc.addPage(pageSize);
     y = height - margin;
-    y = drawHeader(page, y, true);
+    y = await drawHeader(page, y, true);
   }
 
   y -= 20;

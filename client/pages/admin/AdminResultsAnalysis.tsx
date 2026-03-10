@@ -1,4 +1,4 @@
-// @/pages/admin/AdminResultsAnalysis.tsx - UPDATED WITH EXAM CONFIGURATION SUPPORT
+// @/pages/admin/AdminResultsAnalysis.tsx - UPDATED WITH LOGO SUPPORT
 // Quality: Grades 1-2 only (Distinction)
 // Quantity: Grades 3-7 (Merit through Satisfactory)
 // Fail: Grades 8-9 (Satisfactory Low and Unsatisfactory)
@@ -128,7 +128,7 @@ interface AdminResultsData {
   year: number;
   subjects: SubjectData[];
   generatedDate: string;
-  examConfigSummary?: string; // NEW: Show which exams were included
+  examConfigSummary?: string; // Show which exams were included
 }
 
 // ==================== NOTIFICATION COMPONENT ====================
@@ -987,7 +987,7 @@ export default function AdminResultsAnalysis() {
     }).sort((a, b) => a.failRate - b.failRate);
   }, [studentSubjectAverages, results, learners, configuredExamTypes]);
 
-  // ==================== UPDATED PDF DOWNLOAD FUNCTION ====================
+  // ==================== UPDATED PDF DOWNLOAD FUNCTION WITH LOGO ====================
   const handleDownloadPDF = async () => {
     try {
       if (studentSubjectAverages.size === 0 || configuredExamTypes.length === 0) {
@@ -1108,7 +1108,7 @@ export default function AdminResultsAnalysis() {
         examConfigSummary: `Based on: ${examConfigSummary}`
       };
 
-      // Generate PDF
+      // Generate PDF - The PDF generator will automatically handle the logo
       const { generateResultsAnalysisPDF } = await import('@/services/pdf/resultsAnalysisPDFLib');
       const pdfBytes = await generateResultsAnalysisPDF(pdfData);
 

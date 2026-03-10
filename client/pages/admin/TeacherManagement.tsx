@@ -1,4 +1,4 @@
-// @/pages/admin/TeacherManagement.tsx
+// @/pages/admin/TeacherManagement.tsx - CLEANED UP VERSION (DEBUG REMOVED)
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
@@ -41,12 +41,11 @@ import {
   ChevronRight,
   Calendar,
   Hash,
-  CreditCard,
-  Eye
+  CreditCard
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useQueryClient } from '@tanstack/react-query';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { generateTeacherListPDF } from '@/services/pdf/teacherListPDF';
 
 // Teacher status type
 type TeacherStatus = 'active' | 'inactive' | 'transferred' | 'on_leave';
@@ -55,7 +54,7 @@ type TeacherStatus = 'active' | 'inactive' | 'transferred' | 'on_leave';
 type AssignmentFilter = 'all' | 'assigned' | 'unassigned' | 'form-teachers';
 
 // Modal types
-type ModalType = 'assignment' | 'edit' | 'delete' | 'transfer' | 'subject-remove' | 'success' | 'error' | 'confirm' | 'teachers-preview' | 'debug' | null;
+type ModalType = 'assignment' | 'edit' | 'delete' | 'transfer' | 'subject-remove' | 'success' | 'error' | 'confirm' | 'teachers-preview' | null;
 
 // Toast notification type
 interface Toast {
@@ -106,25 +105,6 @@ interface Learner {
   [key: string]: any;
 }
 
-// Helper function to split long text into lines
-const splitTextToLines = (text: string, maxCharsPerLine: number): string[] => {
-  const words = text.split(' ');
-  const lines: string[] = [];
-  let currentLine = '';
-  
-  words.forEach(word => {
-    if ((currentLine + ' ' + word).length <= maxCharsPerLine) {
-      currentLine = currentLine ? currentLine + ' ' + word : word;
-    } else {
-      if (currentLine) lines.push(currentLine);
-      currentLine = word;
-    }
-  });
-  
-  if (currentLine) lines.push(currentLine);
-  return lines;
-};
-
 // Get status badge configuration
 const getStatusConfig = (status: string) => {
   switch(status) {
@@ -139,321 +119,6 @@ const getStatusConfig = (status: string) => {
     default:
       return { bg: 'bg-green-100', text: 'text-green-800', icon: CheckCircle, label: 'Active' };
   }
-};
-
-// ==================== TEACHER PDF GENERATION FUNCTION ====================
-const generateTeachersPDF = async (teachers: Teacher[], classes: any[], teacherAssignments: Record<string, any[]>, filterInfo?: string) => {
-  // Create a new PDF document
-  const pdfDoc = await PDFDocument.create();
-  
-  // Add a page
-  let page = pdfDoc.addPage([612, 792]); // Letter size
-  const { width, height } = page.getSize();
-  
-  // Embed fonts
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  
-  // Title
-  const title = 'Teachers Master List';
-  const titleSize = 20;
-  const titleWidth = boldFont.widthOfTextAtSize(title, titleSize);
-  page.drawText(title, {
-    x: (width - titleWidth) / 2,
-    y: height - 40,
-    size: titleSize,
-    font: boldFont,
-    color: rgb(0, 0.2, 0.6),
-  });
-  
-  // School info
-  page.drawText('KalaboBoarding-SRS', {
-    x: 50,
-    y: height - 65,
-    size: 11,
-    font,
-    color: rgb(0.4, 0.4, 0.4),
-  });
-  
-  // Filter info (if any)
-  if (filterInfo) {
-    page.drawText(`Filter: ${filterInfo}`, {
-      x: 50,
-      y: height - 80,
-      size: 10,
-      font,
-      color: rgb(0.4, 0.4, 0.4),
-    });
-  }
-  
-  // Date
-  const date = new Date().toLocaleDateString('en-ZM', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-  page.drawText(`Generated on: ${date}`, {
-    x: 50,
-    y: height - 95,
-    size: 9,
-    font,
-    color: rgb(0.4, 0.4, 0.4),
-  });
-  
-  // Total count
-  page.drawText(`Total Teachers: ${teachers.length}`, {
-    x: 50,
-    y: height - 115,
-    size: 12,
-    font: boldFont,
-    color: rgb(0, 0, 0.6),
-  });
-  
-  let yPosition = height - 145;
-  let teacherIndex = 0;
-  
-  // Loop through each teacher
-  for (const teacher of teachers) {
-    teacherIndex++;
-    
-    // Check if we need a new page
-    if (yPosition < 180) {
-      page = pdfDoc.addPage([612, 792]);
-      yPosition = height - 50;
-    }
-    
-    // Teacher header with background
-    page.drawRectangle({
-      x: 40,
-      y: yPosition - 5,
-      width: width - 80,
-      height: 30,
-      color: rgb(0.95, 0.97, 1),
-    });
-    
-    // Teacher name and ID
-    page.drawText(`${teacherIndex}. ${teacher.name}`, {
-      x: 50,
-      y: yPosition + 5,
-      size: 14,
-      font: boldFont,
-      color: rgb(0, 0.2, 0.5),
-    });
-    
-    // Teacher status
-    const status = teacher.status || 'active';
-    const statusText = status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' ');
-    page.drawText(`Status: ${statusText}`, {
-      x: 400,
-      y: yPosition + 5,
-      size: 11,
-      font: boldFont,
-      color: status === 'active' ? rgb(0, 0.6, 0) : rgb(0.6, 0.3, 0),
-    });
-    
-    yPosition -= 30;
-    
-    // Teacher details in columns
-    const details = [
-      { label: 'Email:', value: teacher.email || 'N/A' },
-      { label: 'Phone:', value: teacher.phone || 'N/A' },
-      { label: 'Department:', value: teacher.department || 'N/A' },
-      { label: 'NRC:', value: teacher.nrc || 'N/A' },
-      { label: 'TS Number:', value: teacher.tsNumber || 'N/A' },
-      { label: 'Employee #:', value: teacher.employeeNumber || 'N/A' },
-      { label: 'Date of Birth:', value: teacher.dateOfBirth ? new Date(teacher.dateOfBirth).toLocaleDateString() : 'N/A' },
-      { label: 'First Appointment:', value: teacher.dateOfFirstAppointment ? new Date(teacher.dateOfFirstAppointment).toLocaleDateString() : 'N/A' },
-      { label: 'Current Appointment:', value: teacher.dateOfCurrentAppointment ? new Date(teacher.dateOfCurrentAppointment).toLocaleDateString() : 'N/A' },
-    ];
-    
-    // Draw details in two columns
-    const col1X = 50;
-    const col2X = 320;
-    let detailY = yPosition - 5;
-    
-    details.forEach((detail, idx) => {
-      const x = idx < 5 ? col1X : col2X;
-      const adjustedIdx = idx < 5 ? idx : idx - 5;
-      const y = detailY - (adjustedIdx * 18);
-      
-      page.drawText(detail.label, {
-        x,
-        y,
-        size: 9,
-        font: boldFont,
-        color: rgb(0.3, 0.3, 0.3),
-      });
-      
-      page.drawText(detail.value, {
-        x: x + 70,
-        y,
-        size: 9,
-        font,
-        color: rgb(0, 0, 0),
-      });
-    });
-    
-    yPosition -= 100;
-    
-    // Subjects taught (from signup)
-    if (teacher.subjects && teacher.subjects.length > 0) {
-      page.drawText('Subjects Qualified to Teach:', {
-        x: 50,
-        y: yPosition,
-        size: 10,
-        font: boldFont,
-        color: rgb(0, 0.3, 0.6),
-      });
-      yPosition -= 18;
-      
-      const subjectsText = teacher.subjects.join(' • ');
-      const lines = splitTextToLines(subjectsText, 80);
-      
-      lines.forEach(line => {
-        page.drawText(`• ${line}`, {
-          x: 60,
-          y: yPosition,
-          size: 9,
-          font,
-          color: rgb(0.2, 0.4, 0.6),
-        });
-        yPosition -= 15;
-      });
-      
-      yPosition -= 5;
-    } else {
-      yPosition -= 20;
-    }
-    
-    // Current Assignments
-    const teacherAssignmentData = teacherAssignments[teacher.id] || [];
-    
-    if (teacherAssignmentData.length > 0) {
-      // Section header
-      page.drawRectangle({
-        x: 40,
-        y: yPosition - 5,
-        width: width - 80,
-        height: 25,
-        color: rgb(0.9, 0.95, 1),
-      });
-      
-      page.drawText('CURRENT CLASS ASSIGNMENTS', {
-        x: 50,
-        y: yPosition + 5,
-        size: 11,
-        font: boldFont,
-        color: rgb(0, 0.4, 0.7),
-      });
-      
-      yPosition -= 25;
-      
-      // Group assignments by class
-      const classMap = new Map();
-      teacherAssignmentData.forEach((assignment: any) => {
-        if (!classMap.has(assignment.classId)) {
-          const className = classes.find(c => c.id === assignment.classId)?.name || 'Unknown Class';
-          classMap.set(assignment.classId, {
-            className,
-            subjects: [],
-            isFormTeacher: false
-          });
-        }
-        const classData = classMap.get(assignment.classId);
-        if (assignment.subject && assignment.subject !== 'Form Teacher') {
-          classData.subjects.push(assignment.subject);
-        }
-        if (assignment.isFormTeacher) {
-          classData.isFormTeacher = true;
-        }
-      });
-      
-      // Display assignments
-      for (const [classId, classData] of classMap) {
-        // Check page space
-        if (yPosition < 80) {
-          page = pdfDoc.addPage([612, 792]);
-          yPosition = height - 50;
-        }
-        
-        // Class name with form teacher indicator
-        const className = `${classData.className} ${classData.isFormTeacher ? '★ FORM TEACHER' : ''}`;
-        page.drawText(className, {
-          x: 60,
-          y: yPosition,
-          size: 10,
-          font: classData.isFormTeacher ? boldFont : font,
-          color: classData.isFormTeacher ? rgb(0.6, 0.2, 0.8) : rgb(0, 0, 0.3),
-        });
-        yPosition -= 18;
-        
-        // Subjects for this class
-        if (classData.subjects.length > 0) {
-          const subjectsLine = classData.subjects.join(' • ');
-          const lines = splitTextToLines(subjectsLine, 70);
-          
-          lines.forEach(line => {
-            page.drawText(`  ▸ ${line}`, {
-              x: 70,
-              y: yPosition,
-              size: 9,
-              font,
-              color: rgb(0.3, 0.3, 0.3),
-            });
-            yPosition -= 16;
-          });
-        } else if (classData.isFormTeacher) {
-          page.drawText('  (Form Teacher only - no subjects)', {
-            x: 70,
-            y: yPosition,
-            size: 9,
-            font,
-            color: rgb(0.5, 0.5, 0.5),
-          });
-          yPosition -= 16;
-        }
-        
-        yPosition -= 5;
-      }
-      
-      yPosition -= 10;
-    } else {
-      page.drawText('No current class assignments', {
-        x: 60,
-        y: yPosition,
-        size: 10,
-        font,
-        color: rgb(0.5, 0.5, 0.5),
-      });
-      yPosition -= 25;
-    }
-    
-    // Add separator line between teachers
-    yPosition -= 15;
-    page.drawLine({
-      start: { x: 50, y: yPosition },
-      end: { x: width - 50, y: yPosition },
-      thickness: 1,
-      color: rgb(0.8, 0.8, 0.8),
-    });
-    yPosition -= 25;
-  }
-  
-  // Footer
-  page.drawText(`This document contains ${teachers.length} teacher(s) and is officially generated by KalaboBoarding-SRS.`, {
-    x: 50,
-    y: 30,
-    size: 8,
-    font,
-    color: rgb(0.6, 0.6, 0.6),
-  });
-  
-  // Serialize the PDF to bytes
-  const pdfBytes = await pdfDoc.save();
-  
-  return pdfBytes;
 };
 
 // ==================== TEACHERS PREVIEW MODAL ====================
@@ -696,29 +361,6 @@ const TeachersPreviewModal = ({
   );
 };
 
-// ==================== DEBUG COMPONENT ====================
-const TeacherAssignmentDebug = ({ teacherId, teacherName }: { teacherId: string; teacherName: string }) => {
-  const { assignments, isLoading } = useTeacherAssignments(teacherId);
-  
-  return (
-    <div className="border-t border-gray-700 py-2">
-      <p className="font-bold text-blue-400">{teacherName}</p>
-      <p className="text-gray-400 text-xs mt-1">
-        Assignments: {isLoading ? 'Loading...' : assignments.length}
-        {assignments.length > 0 && (
-          <span className="block mt-1">
-            {assignments.map(a => (
-              <span key={a.id} className="inline-block bg-blue-900 text-blue-200 px-2 py-0.5 rounded mr-1 mb-1 text-xs">
-                {a.className}: {a.subject}
-              </span>
-            ))}
-          </span>
-        )}
-      </p>
-    </div>
-  );
-};
-
 // ==================== ENHANCED TEACHER CARD COMPONENT ====================
 const TeacherCard = ({ 
   teacher, 
@@ -747,7 +389,7 @@ const TeacherCard = ({
   onTransfer: (classId: string, className: string) => void;
   onViewLearners: (classId?: string) => void;
 }) => {
-  // FIXED: Using updated hook that queries correct collection
+  // Using updated hook that queries correct collection
   const { 
     assignments = [], 
     isLoading: isLoadingAssignments,
@@ -764,11 +406,6 @@ const TeacherCard = ({
   const assignmentsByClass = useMemo(() => {
     return getClassesWithSubjects();
   }, [assignments, getClassesWithSubjects]);
-
-  // Debug effect
-  useEffect(() => {
-    console.log(`👤 Teacher ${teacher.name} (${teacher.id}) has ${assignments.length} assignments`);
-  }, [teacher, assignments]);
 
   // Find class name by ID
   const getClassName = (classId: string): string => {
@@ -1258,7 +895,6 @@ export default function TeacherManagement() {
   const [statusFilter, setStatusFilter] = useState<TeacherStatus | 'all'>('all');
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all');
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [showDebug, setShowDebug] = useState(false);
   
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [modalData, setModalData] = useState<any>(null);
@@ -1454,12 +1090,13 @@ export default function TeacherManagement() {
 
   const handleDownloadTeachersPDF = async () => {
     try {
-      const pdfBytes = await generateTeachersPDF(
-        previewTeachers, 
-        classes, 
-        previewAssignments, 
-        previewFilterInfo
-      );
+      const pdfBytes = await generateTeacherListPDF({
+        teachers: previewTeachers,
+        classes,
+        teacherAssignments: previewAssignments,
+        filterInfo: previewFilterInfo,
+        schoolName: 'KALABO BOARDING SECONDARY SCHOOL'
+      });
       
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
@@ -1777,7 +1414,6 @@ export default function TeacherManagement() {
         duration: 5000
       });
       
-      // FIXED: Use correct query keys for invalidation
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
       
@@ -1811,7 +1447,6 @@ export default function TeacherManagement() {
         duration: 4000
       });
       
-      // FIXED: Use correct query keys for invalidation
       queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
       
       setActiveModal(null);
@@ -1846,7 +1481,6 @@ export default function TeacherManagement() {
         duration: 4000
       });
       
-      // FIXED: Use correct query keys for invalidation
       queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       
@@ -1881,7 +1515,6 @@ export default function TeacherManagement() {
         duration: 4000
       });
       
-      // FIXED: Use correct query keys for invalidation
       queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
       queryClient.invalidateQueries({ queryKey: ['teachers'] });
       
@@ -1928,7 +1561,6 @@ export default function TeacherManagement() {
         duration: 5000
       });
       
-      // FIXED: Use correct query keys for invalidation
       queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
       
       setActiveModal(null);
@@ -2197,45 +1829,10 @@ export default function TeacherManagement() {
                     )}
                     {!isMobile && 'Assign to Class'}
                   </button>
-
-                  {/* Debug Toggle Button */}
-                  {process.env.NODE_ENV === 'development' && (
-                    <button
-                      onClick={() => setShowDebug(!showDebug)}
-                      className={`
-                        inline-flex items-center justify-center
-                        bg-gray-600 text-white rounded-xl hover:bg-gray-700
-                        font-medium transition-all active:scale-[0.98]
-                        focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2
-                        ${isMobile ? 'p-2.5' : 'px-4 py-2.5 gap-2'}
-                      `}
-                    >
-                      <Eye size={isMobile ? 18 : 20} />
-                      {!isMobile && 'Debug'}
-                    </button>
-                  )}
                 </div>
               )}
             </div>
           </div>
-
-          {/* Debug Panel */}
-          {showDebug && (
-            <div className="mb-6 bg-gray-900 text-white p-4 rounded-xl overflow-auto text-xs">
-              <h3 className="font-bold mb-2 flex items-center gap-2">
-                <Eye size={14} />
-                🔍 Debug: Teacher Assignments
-              </h3>
-              <p>Total teachers: {teachers?.length || 0}</p>
-              <p>Filtered teachers: {filteredTeachers.length}</p>
-              <p>Classes available: {classes?.length || 0}</p>
-              <div className="mt-3 max-h-60 overflow-y-auto">
-                {filteredTeachers.slice(0, 5).map(t => (
-                  <TeacherAssignmentDebug key={t.id} teacherId={t.id} teacherName={t.name} />
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* ===== STATS CARDS ===== */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-4 mb-6">

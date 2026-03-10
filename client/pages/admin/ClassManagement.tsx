@@ -1,4 +1,4 @@
-// @/pages/admin/ClassManagement.tsx
+// @/pages/admin/ClassManagement.tsx - Updated PDF generation with logo
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
@@ -747,7 +747,7 @@ export default function ClassManagement() {
     setShowEditLearnerModal(true);
   };
 
-  // Handle PDF download
+  // Handle PDF download - UPDATED with school logo
   const handleDownloadPDF = async (format: 'simple' | 'detailed' | 'summary', includeStats: boolean) => {
     if (!selectedClass) return;
     
@@ -755,13 +755,14 @@ export default function ClassManagement() {
       // Dynamic import of PDF generation
       const { generateClassListPDF } = await import('@/utils/pdfGenerator');
       
+      // The PDF generator will automatically use the logo from public/images/school-logo.png
       await generateClassListPDF({
         classId: selectedClass.id,
         className: selectedClass.name,
         learners: classLearners,
         format,
         includeStats,
-        schoolName: 'Kalabo Boarding Secondary School',
+        schoolName: 'KALABO BOARDING SECONDARY SCHOOL', // Updated to uppercase to match other PDFs
         academicYear: selectedClass.year.toString()
       });
       

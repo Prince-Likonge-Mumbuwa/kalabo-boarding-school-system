@@ -1,4 +1,4 @@
-// @/pages/admin/ReportCards.tsx - FIXED VERSION WITH WORKING PDF AND CONFIRMATION MODAL
+// @/pages/admin/ReportCards.tsx - UPDATED WITH MULTI-PAGE PDF SUPPORT
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -389,7 +389,6 @@ const ReportModal = ({
     try {
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
       const pdfBytes = await generateReportCardPDF(report);
-      // FIXED: Properly convert Uint8Array for Blob
       const blob = new Blob([pdfBytes.buffer], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -1213,7 +1212,7 @@ export default function ReportCards() {
     }
   }, [refetch]);
 
-  // ==================== DOWNLOAD ALL REPORT CARDS ====================
+  // ==================== DOWNLOAD ALL REPORT CARDS (MULTI-PAGE PDF) ====================
   const handleDownloadAllReportCards = useCallback(async () => {
     if (!selectedClass || students.length === 0) {
       alert('No students to generate reports for');
@@ -1248,71 +1247,66 @@ export default function ReportCards() {
       // Import the PDF generator
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
 
-      // Download each PDF sequentially with a slight delay
-      for (let i = 0; i < result.reportCards.length; i++) {
-        const report = result.reportCards[i];
-        
-        if (i % 5 === 0) {
-          console.log(`Downloading report ${i + 1} of ${result.reportCards.length}`);
-        }
+      // Convert all reports to the local format
+      const reportsToGenerate = result.reportCards.map(report => {
+        const localReport: ReportCardData = {
+          id: report.id,
+          studentId: report.studentId,
+          studentName: report.studentName,
+          className: report.className,
+          classId: report.classId,
+          form: report.form,
+          grade: report.overallGrade,
+          position: report.position,
+          gender: report.gender || 'Not specified',
+          totalMarks: report.totalMarks,
+          percentage: report.percentage,
+          status: report.status,
+          improvement: report.improvement,
+          subjects: report.subjects.map(s => ({
+            subjectId: s.subjectId,
+            subjectName: s.subjectName,
+            week4: s.week4,
+            week8: s.week8,
+            endOfTerm: s.endOfTerm,
+            grade: s.grade,
+            gradeDescription: s.gradeDescription || getGradeDescription(s.grade)
+          })),
+          attendance: report.attendance,
+          teachersComment: report.teachersComment,
+          parentsEmail: report.parentsEmail,
+          parentsPhone: report.parentsPhone,
+          generatedDate: report.generatedDate,
+          term: report.term,
+          year: report.year,
+          isComplete: report.isComplete,
+          completionPercentage: report.completionPercentage,
+          examConfigSummary: configuredExamTypes.length > 0 
+            ? `Based on: ${configuredExamTypes.map(getExamDisplayName).join(' + ')}`
+            : undefined
+        };
+        return localReport;
+      });
 
-        try {
-          const localReport: ReportCardData = {
-            id: report.id,
-            studentId: report.studentId,
-            studentName: report.studentName,
-            className: report.className,
-            classId: report.classId,
-            form: report.form,
-            grade: report.overallGrade,
-            position: report.position,
-            gender: report.gender || 'Not specified',
-            totalMarks: report.totalMarks,
-            percentage: report.percentage,
-            status: report.status,
-            improvement: report.improvement,
-            subjects: report.subjects.map(s => ({
-              subjectId: s.subjectId,
-              subjectName: s.subjectName,
-              week4: s.week4,
-              week8: s.week8,
-              endOfTerm: s.endOfTerm,
-              grade: s.grade,
-              gradeDescription: s.gradeDescription || getGradeDescription(s.grade)
-            })),
-            attendance: report.attendance,
-            teachersComment: report.teachersComment,
-            parentsEmail: report.parentsEmail,
-            parentsPhone: report.parentsPhone,
-            generatedDate: report.generatedDate,
-            term: report.term,
-            year: report.year,
-            isComplete: report.isComplete,
-            completionPercentage: report.completionPercentage,
-            examConfigSummary: configuredExamTypes.length > 0 
-              ? `Based on: ${configuredExamTypes.map(getExamDisplayName).join(' + ')}`
-              : undefined
-          };
+      // Generate a single PDF with multiple pages
+      const pdfBytes = await generateReportCardPDF(reportsToGenerate);
+      
+      // Create filename
+      const className = reportsToGenerate[0]?.className.replace(/\s+/g, '_') || 'class';
+      const fileName = `report-cards-${className}-${selectedTerm.replace(/\s+/g, '_')}-${selectedYear}.pdf`;
+      
+      // Download the multi-page PDF
+      const blob = new Blob([pdfBytes.buffer], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
 
-          const pdfBytes = await generateReportCardPDF(localReport);
-          // FIXED: Properly convert Uint8Array for Blob
-          const blob = new Blob([pdfBytes.buffer], { type: 'application/pdf' });
-          const url = window.URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `${report.studentName.replace(/\s+/g, '_')}_${report.studentId}_${report.term}_${report.year}.pdf`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(url);
-          
-          await new Promise(resolve => setTimeout(resolve, 500));
-        } catch (error) {
-          console.error(`Failed to download PDF for ${report.studentName}:`, error);
-        }
-      }
-
-      alert(`Successfully downloaded ${result.reportCards.length} report cards`);
+      alert(`Successfully generated PDF with ${reportsToGenerate.length} report cards`);
 
     } catch (error) {
       console.error('Failed to download all report cards:', error);
@@ -1395,7 +1389,6 @@ export default function ReportCards() {
       // Generate the PDF
       const pdfBytes = await generateClassResultsMatrixPDF(matrixData);
       
-      // FIXED: Properly convert Uint8Array for Blob
       const blob = new Blob([pdfBytes.buffer], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -1525,13 +1518,13 @@ export default function ReportCards() {
             </div>
             
             <div className="flex items-center gap-2">
-              {/* Download All Report Cards Button */}
+              {/* Download All Report Cards Button - Now generates single multi-page PDF */}
               {selectedClass && students.length > 0 && configuredExamTypes.length > 0 && (
                 <button
                   onClick={handleDownloadAllReportCards}
                   disabled={isDownloadingAll}
                   className="flex items-center gap-1 sm:gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 text-xs sm:text-sm"
-                  title="Download all report cards"
+                  title="Download all report cards as a single PDF"
                 >
                   {isDownloadingAll ? (
                     <Loader2 size={16} className="animate-spin" />
@@ -1539,7 +1532,7 @@ export default function ReportCards() {
                     <Download size={16} />
                   )}
                   <span className="hidden sm:inline">
-                    {isDownloadingAll ? 'Downloading...' : 'All Reports'}
+                    {isDownloadingAll ? 'Generating...' : 'All Reports'}
                   </span>
                 </button>
               )}

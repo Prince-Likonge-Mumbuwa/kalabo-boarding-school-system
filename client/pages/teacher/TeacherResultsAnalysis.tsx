@@ -1,9 +1,9 @@
-// @/pages/teacher/TeacherResultsAnalysis.tsx - FIXED VERSION
+// @/pages/teacher/TeacherResultsAnalysis.tsx - COMPLETE FIXED VERSION WITH LOGO SUPPORT
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
-import { useResults } from '@/hooks/useResults'; // Changed from useStudentProgress
+import { useResults } from '@/hooks/useResults';
 import { useExamConfig } from '@/hooks/useExamConfig';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -478,7 +478,7 @@ export default function TeacherResultsAnalysis() {
     return getConfiguredExamTypes(currentExamConfig);
   }, [currentExamConfig]);
 
-  // Get ALL results for the selected term/year - FIXED: Using useResults to get raw data
+  // Get ALL results for the selected term/year
   const { 
     results: allResults, 
     isLoading: resultsLoading,
@@ -811,8 +811,6 @@ export default function TeacherResultsAnalysis() {
         else if (grade >= 8) failCount++;
       });
       
-      // For average, we need percentages, not grades
-      // This is simplified - in production you'd need to map grades back to percentages
       totalStudentsWithData += student.grades.length;
     });
 
@@ -820,19 +818,6 @@ export default function TeacherResultsAnalysis() {
     const qualityRate = totalAssessments > 0 ? Math.round((qualityCount / totalAssessments) * 100) : 0;
     const quantityRate = totalAssessments > 0 ? Math.round((quantityCount / totalAssessments) * 100) : 0;
     const failRate = totalAssessments > 0 ? Math.round((failCount / totalAssessments) * 100) : 0;
-
-    // Build subject performance
-    const subjectMap = new Map<string, {
-      subjectName: string;
-      teacherName: string;
-      percentages: number[];
-      grades: number[];
-      boysGrades: number[];
-      girlsGrades: number[];
-    }>();
-
-    // This would need the original results to get percentages
-    // For now, we'll use the grade distribution we already have
 
     return {
       classId: selectedClass !== 'all' ? selectedClass : 'all',
@@ -843,14 +828,14 @@ export default function TeacherResultsAnalysis() {
       qualityRate,
       quantityRate,
       failRate,
-      subjects: [], // Would need more data to populate
+      subjects: [],
       gradeDistribution,
       boysCount,
       girlsCount
     };
   }, [studentSubjectAverages, configuredExamTypes, selectedClass, classOptions, teacherMetrics, gradeDistribution]);
 
-  // ==================== PDF DOWNLOAD ====================
+  // ==================== PDF DOWNLOAD WITH LOGO SUPPORT ====================
   
   const handleDownloadPDF = async () => {
     if (studentSubjectAverages.size === 0 || !configuredExamTypes.length) {
@@ -895,6 +880,7 @@ export default function TeacherResultsAnalysis() {
         quantity: grades.filter(g => g >= 3 && g <= 7).length
       });
 
+      // Prepare PDF data - The PDF generator will automatically add the logo from /public/images/school-logo.png
       const pdfData = {
         schoolName: 'KALABO BOARDING SECONDARY SCHOOL',
         address: 'P.O BOX 930096',
@@ -916,6 +902,7 @@ export default function TeacherResultsAnalysis() {
         examConfigSummary: `Based on: ${examConfigSummary}`
       };
 
+      // Generate PDF - The logo will be automatically embedded
       const pdfBytes = await generateResultsAnalysisPDF(pdfData);
 
       const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });

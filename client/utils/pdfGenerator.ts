@@ -1,5 +1,5 @@
 // @/utils/pdfGenerator.ts
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, PDFImage } from 'pdf-lib';
 import { Learner } from '@/types/school';
 
 interface PDFGenerationOptions {
@@ -8,9 +8,42 @@ interface PDFGenerationOptions {
   learners: Learner[];
   format: 'simple' | 'detailed' | 'summary';
   includeStats: boolean;
-  schoolName?: string; // Made optional with default
+  schoolName?: string;
   academicYear: string;
 }
+
+/**
+ * Helper function to embed school logo
+ */
+const embedSchoolLogo = async (pdfDoc: PDFDocument): Promise<PDFImage | null> => {
+  try {
+    // Try to load logo from public/images/school-logo.png
+    const logoUrl = '/images/school-logo.png';
+    const response = await fetch(logoUrl);
+    
+    if (!response.ok) {
+      console.warn('Logo image not found at /images/school-logo.png');
+      return null;
+    }
+    
+    const logoImageBytes = await response.arrayBuffer();
+    
+    // Try to embed as PNG first, then as JPG
+    try {
+      return await pdfDoc.embedPng(logoImageBytes);
+    } catch {
+      try {
+        return await pdfDoc.embedJpg(logoImageBytes);
+      } catch {
+        console.warn('Logo image format not supported. Please use PNG or JPG.');
+        return null;
+      }
+    }
+  } catch (error) {
+    console.warn('Could not load logo image:', error);
+    return null;
+  }
+};
 
 /**
  * Generate a PDF class list with learner information
@@ -21,7 +54,7 @@ export const generateClassListPDF = async ({
   learners,
   format,
   includeStats,
-  schoolName = 'KALABO BOARDING SECONDARY SCHOOL', // Default school name
+  schoolName = 'KALABO BOARDING SECONDARY SCHOOL',
   academicYear
 }: PDFGenerationOptions): Promise<void> => {
   try {
@@ -31,6 +64,9 @@ export const generateClassListPDF = async ({
     // Embed fonts
     const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    
+    // Embed logo
+    const logoImage = await embedSchoolLogo(pdfDoc);
     
     // Add a page
     let page = pdfDoc.addPage([595.28, 841.89]); // A4 size
@@ -46,62 +82,197 @@ export const generateClassListPDF = async ({
         page = pdfDoc.addPage([595.28, 841.89]);
         yPosition = height - 50;
         
-        // Add header to new page
-        page.drawText(`${schoolName} - ${className} (Continued)`, {
-          x: margin,
-          y: yPosition,
-          size: 12,
-          font: helveticaBold,
-          color: rgb(0, 0, 0.5),
-        });
-        yPosition -= lineHeight * 2;
+        // Add centered header to new page with logo
+        if (logoImage) {
+          const logoDims = logoImage.scale(0.12);
+          const logoX = (width - logoDims.width) / 2;
+          
+          // Draw logo centered
+          page.drawImage(logoImage, {
+            x: logoX,
+            y: yPosition - logoDims.height,
+            width: logoDims.width,
+            height: logoDims.height,
+          });
+          
+          // Ministry of Education text
+          const ministryText = 'MINISTRY OF EDUCATION';
+          const ministryWidth = helveticaBold.widthOfTextAtSize(ministryText, 14);
+          page.drawText(ministryText, {
+            x: (width - ministryWidth) / 2,
+            y: yPosition - logoDims.height - 25,
+            size: 14,
+            font: helveticaBold,
+            color: rgb(0, 0, 0.4),
+          });
+          
+          // School name
+          const schoolNameWidth = helveticaBold.widthOfTextAtSize(schoolName, 16);
+          page.drawText(schoolName, {
+            x: (width - schoolNameWidth) / 2,
+            y: yPosition - logoDims.height - 45,
+            size: 16,
+            font: helveticaBold,
+            color: rgb(0, 0.2, 0.6),
+          });
+          
+          // Class name
+          const classNameText = `${className} - Class List (Continued)`;
+          const classNameWidth = helveticaBold.widthOfTextAtSize(classNameText, 12);
+          page.drawText(classNameText, {
+            x: (width - classNameWidth) / 2,
+            y: yPosition - logoDims.height - 70,
+            size: 12,
+            font: helveticaBold,
+            color: rgb(0, 0, 0.5),
+          });
+          
+          yPosition -= logoDims.height + 90;
+        } else {
+          // Fallback without logo
+          const ministryText = 'MINISTRY OF EDUCATION';
+          const ministryWidth = helveticaBold.widthOfTextAtSize(ministryText, 14);
+          page.drawText(ministryText, {
+            x: (width - ministryWidth) / 2,
+            y: yPosition,
+            size: 14,
+            font: helveticaBold,
+            color: rgb(0, 0, 0.4),
+          });
+          yPosition -= 25;
+          
+          const schoolNameWidth = helveticaBold.widthOfTextAtSize(schoolName, 16);
+          page.drawText(schoolName, {
+            x: (width - schoolNameWidth) / 2,
+            y: yPosition,
+            size: 16,
+            font: helveticaBold,
+            color: rgb(0, 0.2, 0.6),
+          });
+          yPosition -= 25;
+          
+          const classNameText = `${className} - Class List (Continued)`;
+          const classNameWidth = helveticaBold.widthOfTextAtSize(classNameText, 12);
+          page.drawText(classNameText, {
+            x: (width - classNameWidth) / 2,
+            y: yPosition,
+            size: 12,
+            font: helveticaBold,
+            color: rgb(0, 0, 0.5),
+          });
+          yPosition -= 30;
+        }
       }
     };
 
-    // ===== HEADER =====
-    // School name
-    page.drawText(schoolName, {
-      x: margin,
-      y: yPosition,
-      size: 24,
-      font: helveticaBold,
-      color: rgb(0, 0.2, 0.6),
-    });
-    yPosition -= lineHeight * 1.5;
+    // ===== CENTERED HEADER WITH LOGO =====
+    if (logoImage) {
+      // Scale logo appropriately
+      const logoDims = logoImage.scale(0.15);
+      const logoX = (width - logoDims.width) / 2;
+      
+      // Draw logo centered at top
+      page.drawImage(logoImage, {
+        x: logoX,
+        y: yPosition - logoDims.height,
+        width: logoDims.width,
+        height: logoDims.height,
+      });
+      
+      yPosition -= logoDims.height + 15;
+      
+      // Ministry of Education text
+      const ministryText = 'MINISTRY OF EDUCATION';
+      const ministryWidth = helveticaBold.widthOfTextAtSize(ministryText, 14);
+      page.drawText(ministryText, {
+        x: (width - ministryWidth) / 2,
+        y: yPosition,
+        size: 14,
+        font: helveticaBold,
+        color: rgb(0, 0, 0.4),
+      });
+      yPosition -= 25;
+      
+      // School name
+      const schoolNameWidth = helveticaBold.widthOfTextAtSize(schoolName, 18);
+      page.drawText(schoolName, {
+        x: (width - schoolNameWidth) / 2,
+        y: yPosition,
+        size: 18,
+        font: helveticaBold,
+        color: rgb(0, 0.2, 0.6),
+      });
+      yPosition -= 30;
+      
+      // Document title
+      const titleText = `${className} - Class List`;
+      const titleWidth = helveticaBold.widthOfTextAtSize(titleText, 16);
+      page.drawText(titleText, {
+        x: (width - titleWidth) / 2,
+        y: yPosition,
+        size: 16,
+        font: helveticaBold,
+        color: rgb(0, 0, 0),
+      });
+      yPosition -= 25;
+      
+    } else {
+      // Fallback: Centered text without logo
+      const ministryText = 'MINISTRY OF EDUCATION';
+      const ministryWidth = helveticaBold.widthOfTextAtSize(ministryText, 14);
+      page.drawText(ministryText, {
+        x: (width - ministryWidth) / 2,
+        y: yPosition,
+        size: 14,
+        font: helveticaBold,
+        color: rgb(0, 0, 0.4),
+      });
+      yPosition -= 25;
+      
+      const schoolNameWidth = helveticaBold.widthOfTextAtSize(schoolName, 18);
+      page.drawText(schoolName, {
+        x: (width - schoolNameWidth) / 2,
+        y: yPosition,
+        size: 18,
+        font: helveticaBold,
+        color: rgb(0, 0.2, 0.6),
+      });
+      yPosition -= 30;
+      
+      const titleText = `${className} - Class List`;
+      const titleWidth = helveticaBold.widthOfTextAtSize(titleText, 16);
+      page.drawText(titleText, {
+        x: (width - titleWidth) / 2,
+        y: yPosition,
+        size: 16,
+        font: helveticaBold,
+        color: rgb(0, 0, 0),
+      });
+      yPosition -= 25;
+    }
 
-    // Document title
-    page.drawText(`${className} - Class List`, {
-      x: margin,
-      y: yPosition,
-      size: 18,
-      font: helveticaBold,
-      color: rgb(0, 0, 0),
-    });
-    yPosition -= lineHeight;
-
-    // Academic year
+    // Academic year and generation date (left aligned for practical purposes)
     page.drawText(`Academic Year: ${academicYear}`, {
       x: margin,
       y: yPosition,
-      size: 12,
+      size: 11,
       font: helveticaFont,
       color: rgb(0.3, 0.3, 0.3),
     });
-    yPosition -= lineHeight;
 
-    // Generation date
     const generationDate = new Date().toLocaleDateString('en-ZM', {
       year: 'numeric',
       month: 'long',
       day: 'numeric'
     });
-    page.drawText(`Generated on: ${generationDate}`, {
-      x: margin,
+    page.drawText(`Generated: ${generationDate}`, {
+      x: width - margin - 150,
       y: yPosition,
-      size: 10,
+      size: 11,
       font: helveticaFont,
-      color: rgb(0.5, 0.5, 0.5),
+      color: rgb(0.3, 0.3, 0.3),
     });
+    
     yPosition -= lineHeight * 2;
 
     // ===== STATISTICS SECTION (if requested) =====
@@ -363,10 +534,10 @@ export const generateClassListPDF = async ({
       });
     }
 
-    // Save the PDF - KEEPING ORIGINAL WORKING VERSION
+    // Save the PDF
     const pdfBytes = await pdfDoc.save();
     
-    // Create download link - KEEPING ORIGINAL WORKING VERSION
+    // Create download link
     const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -389,12 +560,15 @@ export const generateClassListPDF = async ({
 export const generateLearnerReportPDF = async (
   learner: Learner,
   className: string,
-  schoolName: string = 'KALABO BOARDING SECONDARY SCHOOL' // Default school name
+  schoolName: string = 'KALABO BOARDING SECONDARY SCHOOL'
 ): Promise<void> => {
   try {
     const pdfDoc = await PDFDocument.create();
     const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    
+    // Embed logo
+    const logoImage = await embedSchoolLogo(pdfDoc);
     
     const page = pdfDoc.addPage([595.28, 841.89]);
     const { width, height } = page.getSize();
@@ -403,45 +577,112 @@ export const generateLearnerReportPDF = async (
     const margin = 50;
     const lineHeight = 20;
 
-    // Header
-    page.drawText(schoolName, {
-      x: margin,
-      y: yPosition,
-      size: 24,
-      font: helveticaBold,
-      color: rgb(0, 0.2, 0.6),
-    });
-    yPosition -= lineHeight * 2;
+    // ===== CENTERED HEADER WITH LOGO =====
+    if (logoImage) {
+      // Scale logo appropriately
+      const logoDims = logoImage.scale(0.15);
+      const logoX = (width - logoDims.width) / 2;
+      
+      // Draw logo centered at top
+      page.drawImage(logoImage, {
+        x: logoX,
+        y: yPosition - logoDims.height,
+        width: logoDims.width,
+        height: logoDims.height,
+      });
+      
+      yPosition -= logoDims.height + 15;
+      
+      // Ministry of Education text
+      const ministryText = 'MINISTRY OF EDUCATION';
+      const ministryWidth = helveticaBold.widthOfTextAtSize(ministryText, 14);
+      page.drawText(ministryText, {
+        x: (width - ministryWidth) / 2,
+        y: yPosition,
+        size: 14,
+        font: helveticaBold,
+        color: rgb(0, 0, 0.4),
+      });
+      yPosition -= 25;
+      
+      // School name
+      const schoolNameWidth = helveticaBold.widthOfTextAtSize(schoolName, 18);
+      page.drawText(schoolName, {
+        x: (width - schoolNameWidth) / 2,
+        y: yPosition,
+        size: 18,
+        font: helveticaBold,
+        color: rgb(0, 0.2, 0.6),
+      });
+      yPosition -= 30;
+      
+      // Document title
+      const fullName = learner.fullName || learner.name || 'N/A';
+      const titleText = `${fullName} - Learner Report`;
+      const titleWidth = helveticaBold.widthOfTextAtSize(titleText, 16);
+      page.drawText(titleText, {
+        x: (width - titleWidth) / 2,
+        y: yPosition,
+        size: 16,
+        font: helveticaBold,
+        color: rgb(0, 0, 0),
+      });
+      yPosition -= 30;
+      
+    } else {
+      // Fallback: Centered text without logo
+      const ministryText = 'MINISTRY OF EDUCATION';
+      const ministryWidth = helveticaBold.widthOfTextAtSize(ministryText, 14);
+      page.drawText(ministryText, {
+        x: (width - ministryWidth) / 2,
+        y: yPosition,
+        size: 14,
+        font: helveticaBold,
+        color: rgb(0, 0, 0.4),
+      });
+      yPosition -= 25;
+      
+      const schoolNameWidth = helveticaBold.widthOfTextAtSize(schoolName, 18);
+      page.drawText(schoolName, {
+        x: (width - schoolNameWidth) / 2,
+        y: yPosition,
+        size: 18,
+        font: helveticaBold,
+        color: rgb(0, 0.2, 0.6),
+      });
+      yPosition -= 30;
+      
+      const fullName = learner.fullName || learner.name || 'N/A';
+      const titleText = `${fullName} - Learner Report`;
+      const titleWidth = helveticaBold.widthOfTextAtSize(titleText, 16);
+      page.drawText(titleText, {
+        x: (width - titleWidth) / 2,
+        y: yPosition,
+        size: 16,
+        font: helveticaBold,
+        color: rgb(0, 0, 0),
+      });
+      yPosition -= 30;
+    }
 
-    // Learner name and ID
-    const fullName = learner.fullName || learner.name || 'N/A';
-    page.drawText(fullName, {
-      x: margin,
-      y: yPosition,
-      size: 20,
-      font: helveticaBold,
-      color: rgb(0, 0, 0),
-    });
-    yPosition -= lineHeight;
-
+    // Student ID and Class (left aligned for practical purposes)
     page.drawText(`Student ID: ${learner.studentId || 'N/A'}`, {
-      x: margin,
-      y: yPosition,
-      size: 14,
-      font: helveticaFont,
-      color: rgb(0.3, 0.3, 0.3),
-    });
-    yPosition -= lineHeight * 2;
-
-    // Class information
-    page.drawText(`Class: ${className}`, {
       x: margin,
       y: yPosition,
       size: 12,
       font: helveticaFont,
-      color: rgb(0, 0, 0),
+      color: rgb(0.3, 0.3, 0.3),
     });
-    yPosition -= lineHeight;
+
+    page.drawText(`Class: ${className}`, {
+      x: width - margin - 100,
+      y: yPosition,
+      size: 12,
+      font: helveticaFont,
+      color: rgb(0.3, 0.3, 0.3),
+    });
+    
+    yPosition -= lineHeight * 2;
 
     // Personal Information
     page.drawText('PERSONAL INFORMATION', {
@@ -599,7 +840,7 @@ export const generateLearnerReportPDF = async (
       }
     }
 
-    // Footer
+    // Footer with generation date
     page.drawText(`Generated on: ${new Date().toLocaleDateString()}`, {
       x: margin,
       y: 50,
@@ -608,13 +849,16 @@ export const generateLearnerReportPDF = async (
       color: rgb(0.5, 0.5, 0.5),
     });
 
-    // Save PDF - KEEPING ORIGINAL WORKING VERSION
+    // Save PDF
     const pdfBytes = await pdfDoc.save();
     const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
+    
+    const fullName = learner.fullName || learner.name || 'N/A';
     link.download = `${fullName.replace(/\s+/g, '_')}_Report_${new Date().toISOString().split('T')[0]}.pdf`;
+    
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
