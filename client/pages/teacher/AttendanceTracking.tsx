@@ -5,19 +5,24 @@ import { useTeacherClasses } from '@/hooks/useTeacherClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useAuth } from '@/hooks/useAuth';
-import { attendanceService, AttendanceRecord } from '@/services/attendanceService';
+import { useAttendanceAnalytics } from '@/hooks/useAttendanceAnalytics';
+import { attendanceService, AttendanceRecord, PeriodicAttendanceRecord } from '@/services/attendanceService';
+import { CompactStats } from '@/components/attendance/CompactStats';
+import { PeriodicOverview } from '@/components/attendance/PeriodicOverview';
+import { RiskAnalyticsTab } from '@/components/attendance/RiskAnalyticsTab';
+import { exportAttendanceRecords, exportLateArrivals, exportSubjectTruancy } from '@/utils/exportUtils';
 import { Timestamp } from 'firebase/firestore';
 import { 
   Filter, RefreshCw, Check, X, Clock, 
   AlertCircle, MessageSquare, ChevronDown, 
-  ChevronLeft, ChevronRight, Search, 
-  Users, Calendar, Save, Loader2,
-  UserCheck, UserX, Users as UsersIcon,
-  Sun, BookOpen, GraduationCap, Menu
+  Search, Users, Save, Loader2,
+  UserCheck, UserX, Sun, BookOpen, GraduationCap,
+  Download, BarChart3, TrendingUp, Calendar
 } from 'lucide-react';
 
 type AttendanceStatus = 'present' | 'absent' | 'late' | 'excused';
 type AttendanceMode = 'daily' | 'periodic';
+type TabType = 'mark' | 'analytics' | 'overview';
 
 interface StudentWithAttendance {
   id: string;
@@ -68,47 +73,65 @@ const ModeToggle = ({
   </div>
 );
 
-// ==================== IMPROVED STATS CARD ====================
-const StatCard = ({ label, value, icon, color }: { label: string; value: number; icon: React.ReactNode; color: string }) => {
-  const colors = {
-    green: 'bg-green-50 text-green-700 border-green-200',
-    red: 'bg-red-50 text-red-700 border-red-200',
-    blue: 'bg-blue-50 text-blue-700 border-blue-200',
-    yellow: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-    purple: 'bg-purple-50 text-purple-700 border-purple-200',
-  };
-
-  return (
-    <div className={`rounded-lg sm:rounded-xl border p-2 sm:p-3 lg:p-4 ${colors[color as keyof typeof colors] || colors.blue}`}>
-      <div className="flex flex-col gap-1 sm:gap-2">
-        {/* Label and Icon Row - Always visible */}
-        <div className="flex items-center justify-between">
-          <p className="text-xs sm:text-sm font-medium opacity-80 truncate pr-2">{label}</p>
-          <div className="p-1 sm:p-1.5 bg-white/50 rounded-lg flex-shrink-0">
-            {icon}
-          </div>
-        </div>
+// ==================== TAB NAVIGATION ====================
+const TabNavigation = ({ 
+  activeTab, 
+  onChange, 
+  isFormTeacher 
+}: { 
+  activeTab: TabType; 
+  onChange: (tab: TabType) => void;
+  isFormTeacher: boolean;
+}) => (
+  <div className="flex items-center gap-1 border-b border-gray-200 mb-4">
+    <button
+      onClick={() => onChange('mark')}
+      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+        activeTab === 'mark'
+          ? 'border-blue-600 text-blue-600'
+          : 'border-transparent text-gray-500 hover:text-gray-700'
+      }`}
+    >
+      Mark Attendance
+    </button>
+    
+    {isFormTeacher && (
+      <>
+        <button
+          onClick={() => onChange('overview')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1 ${
+            activeTab === 'overview'
+              ? 'border-purple-600 text-purple-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Calendar size={16} />
+          Periodic Overview
+        </button>
         
-        {/* Value - Always visible with larger text */}
-        <p className="text-lg sm:text-xl lg:text-2xl xl:text-3xl font-bold truncate">
-          {value}
-        </p>
-        
-        {/* Small hint for very small screens */}
-        <p className="text-[8px] sm:text-[10px] text-gray-500 opacity-70 truncate hidden xs:block">
-          {value} {label.toLowerCase()}
-        </p>
-      </div>
-    </div>
-  );
-};
+        <button
+          onClick={() => onChange('analytics')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1 ${
+            activeTab === 'analytics'
+              ? 'border-orange-600 text-orange-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <BarChart3 size={16} />
+          Analytics & Risk
+        </button>
+      </>
+    )}
+  </div>
+);
 
 // ==================== MAIN COMPONENT ====================
 export default function AttendanceTracking() {
   const { user } = useAuth();
   
-  // Mode state
+  // Mode and tab state
   const [mode, setMode] = useState<AttendanceMode>('periodic');
+  const [activeTab, setActiveTab] = useState<TabType>('mark');
   
   // Basic states
   const [selectedClass, setSelectedClass] = useState('');
@@ -123,6 +146,13 @@ export default function AttendanceTracking() {
   // Periodic attendance specific
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedPeriod, setSelectedPeriod] = useState('1');
+  
+  // Full periodic data for overview
+  const [fullPeriodicData, setFullPeriodicData] = useState<{
+    byPeriod: Record<number,PeriodicAttendanceRecord[]>;
+    bySubject: Record<string, PeriodicAttendanceRecord[]>;
+    teachers: Set<string>;
+  } | null>(null);
   
   // Excuse modal
   const [excuseModal, setExcuseModal] = useState<{
@@ -139,7 +169,7 @@ export default function AttendanceTracking() {
     refetch: refetchClasses
   } = useTeacherClasses();
 
-  // Get teacher's assignments for subjects - FIXED: Using updated hook with correct collection
+  // Get teacher's assignments for subjects
   const { 
     assignments = [], 
     isLoading: loadingAssignments 
@@ -180,6 +210,9 @@ export default function AttendanceTracking() {
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [loadingAttendance, setLoadingAttendance] = useState(false);
 
+  // Analytics
+  const analytics = useAttendanceAnalytics(attendanceRecords);
+
   // Set default class when classes load
   useEffect(() => {
     if (availableClasses.length > 0 && !selectedClass) {
@@ -210,11 +243,31 @@ export default function AttendanceTracking() {
     }
   }, [selectedClass, selectedDate, selectedSubject, selectedPeriod]);
 
+  // Load full periodic data for form teacher
+  useEffect(() => {
+    if (mode === 'periodic' && isFormTeacher && selectedClass && selectedDate) {
+      loadFullPeriodicData();
+    }
+  }, [selectedClass, selectedDate, mode, isFormTeacher]);
+
   const loadAttendance = async () => {
     setLoadingAttendance(true);
     try {
-      // For periodic attendance, we might want to filter by subject/period
-      const records = await attendanceService.getByClassAndDate(selectedClass, selectedDate);
+      let records: AttendanceRecord[];
+      
+      if (mode === 'periodic' && selectedSubject) {
+        // Get periodic attendance for specific subject
+        records = await attendanceService.getPeriodicAttendance(
+          selectedClass, 
+          selectedDate,
+          selectedSubject,
+          parseInt(selectedPeriod)
+        );
+      } else {
+        // Get all attendance for the class/date
+        records = await attendanceService.getByClassAndDate(selectedClass, selectedDate);
+      }
+      
       setAttendanceRecords(records);
       setLocalAttendance(new Map());
       setLocalExcuseReasons(new Map());
@@ -222,6 +275,18 @@ export default function AttendanceTracking() {
       console.error('Error loading attendance:', error);
     } finally {
       setLoadingAttendance(false);
+    }
+  };
+
+  const loadFullPeriodicData = async () => {
+    try {
+      const data = await attendanceService.getFullDailyPeriodicAttendance(
+        selectedClass,
+        selectedDate
+      );
+      setFullPeriodicData(data);
+    } catch (error) {
+      console.error('Error loading full periodic data:', error);
     }
   };
 
@@ -254,9 +319,8 @@ export default function AttendanceTracking() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [studentsWithAttendance, searchTerm, statusFilter]);
 
-  // Calculate stats - FIXED: Show numbers for all students, not just filtered
+  // Calculate stats
   const stats = useMemo(() => {
-    // Use all students with attendance, not just filtered
     const allStudents = studentsWithAttendance;
     const total = allStudents.length;
     const present = allStudents.filter(s => s.attendance?.status === 'present').length;
@@ -332,22 +396,45 @@ export default function AttendanceTracking() {
       const classObj = classes.find(c => c.id === selectedClass);
       const students = learners.filter(l => localAttendance.has(l.id));
       
-      await attendanceService.bulkMarkAttendance({
-        records: students.map(s => ({
-          studentId: s.id,
-          studentName: s.name,
-          studentGender: s.gender,
-          status: localAttendance.get(s.id)!,
-          excuseReason: localExcuseReasons.get(s.id),
-        })),
-        classId: selectedClass,
-        className: classObj?.name || '',
-        date: selectedDate,
-        markedBy: user?.uid || 'unknown',
-        markedByName: user?.fullName || 'Teacher',
-      });
+      if (mode === 'daily') {
+        await attendanceService.bulkMarkDailyAttendance({
+          records: students.map(s => ({
+            studentId: s.id,
+            studentName: s.name,
+            studentGender: s.gender,
+            status: localAttendance.get(s.id)!,
+            excuseReason: localExcuseReasons.get(s.id),
+          })),
+          classId: selectedClass,
+          className: classObj?.name || '',
+          date: selectedDate,
+          markedBy: user?.uid || 'unknown',
+          markedByName: user?.fullName || 'Teacher',
+        });
+      } else {
+        await attendanceService.bulkMarkPeriodicAttendance({
+          records: students.map(s => ({
+            studentId: s.id,
+            studentName: s.name,
+            studentGender: s.gender,
+            status: localAttendance.get(s.id)!,
+            excuseReason: localExcuseReasons.get(s.id),
+          })),
+          classId: selectedClass,
+          className: classObj?.name || '',
+          subject: selectedSubject,
+          period: parseInt(selectedPeriod),
+          date: selectedDate,
+          markedBy: user?.uid || 'unknown',
+          markedByName: user?.fullName || 'Teacher',
+        });
+      }
 
       await loadAttendance();
+      if (mode === 'periodic' && isFormTeacher) {
+        await loadFullPeriodicData();
+      }
+      
       setSubmitSuccess(true);
       setTimeout(() => setSubmitSuccess(false), 2000);
     } catch (error) {
@@ -357,17 +444,21 @@ export default function AttendanceTracking() {
     }
   };
 
-  const isLoading = loadingClasses || loadingLearners || loadingAttendance || loadingAssignments;
-
-  // Debug effect to verify assignments
-  useEffect(() => {
-    if (user?.uid) {
-      console.log('👤 Teacher UID:', user.uid);
-      console.log('📚 Teacher assignments:', assignments);
-      console.log('🏫 Available classes:', availableClasses);
-      console.log('📖 Available subjects:', availableSubjects);
+  // Export handlers
+  const handleExport = () => {
+    if (activeTab === 'mark') {
+      exportAttendanceRecords(attendanceRecords, `attendance_${selectedClass}_${selectedDate}`);
+    } else if (activeTab === 'analytics') {
+      if (analytics.lateArrivals.length > 0) {
+        exportLateArrivals(analytics.lateArrivals, `late_arrivals_${selectedClass}`);
+      }
+      if (analytics.subjectTruancy.length > 0) {
+        exportSubjectTruancy(analytics.subjectTruancy, `subject_truancy_${selectedClass}`);
+      }
     }
-  }, [user, assignments, availableClasses, availableSubjects]);
+  };
+
+  const isLoading = loadingClasses || loadingLearners || loadingAttendance || loadingAssignments;
 
   // Error state
   if (classesError) {
@@ -422,335 +513,385 @@ export default function AttendanceTracking() {
                 </p>
               )}
             </div>
-            <ModeToggle mode={mode} onChange={setMode} isFormTeacher={isFormTeacher} />
-          </div>
-
-          {/* Filters - Mobile Toggle */}
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <button
-              onClick={() => setShowMobileFilters(!showMobileFilters)}
-              className="w-full flex items-center justify-between p-3 sm:hidden"
-            >
-              <div className="flex items-center gap-2">
-                <Filter size={16} className="text-gray-400" />
-                <span className="text-sm font-medium text-gray-700">Filters</span>
-              </div>
-              <ChevronDown size={16} className={`transition-transform ${showMobileFilters ? 'rotate-180' : ''}`} />
-            </button>
-
-            <div className={`p-3 sm:p-4 ${showMobileFilters ? 'block' : 'hidden sm:block'}`}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
-                {/* Class Select */}
-                <select
-                  value={selectedClass}
-                  onChange={e => setSelectedClass(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
-                  disabled={loadingClasses || availableClasses.length === 0}
-                >
-                  <option value="">Select Class</option>
-                  {availableClasses.map(cls => (
-                    <option key={cls.id} value={cls.id}>
-                      {cls.name} ({cls.students} students)
-                      {mode === 'daily' && cls.formTeacherId === user?.uid && ' (Form)'}
-                    </option>
-                  ))}
-                </select>
-
-                {/* Date Picker */}
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={e => setSelectedDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
-                />
-
-                {/* Mode-specific filters */}
-                {mode === 'periodic' ? (
-                  <>
-                    <select
-                      value={selectedSubject}
-                      onChange={e => setSelectedSubject(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
-                      disabled={availableSubjects.length === 0}
-                    >
-                      <option value="">Select Subject</option>
-                      {availableSubjects.map(subject => (
-                        <option key={subject} value={subject}>{subject}</option>
-                      ))}
-                    </select>
-                    
-                    <select
-                      value={selectedPeriod}
-                      onChange={e => setSelectedPeriod(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
-                    >
-                      <option value="1">Period 1</option>
-                      <option value="2">Period 2</option>
-                      <option value="3">Period 3</option>
-                      <option value="4">Period 4</option>
-                      <option value="5">Period 5</option>
-                    </select>
-                  </>
-                ) : (
-                  <>
-                    <select
-                      value={statusFilter}
-                      onChange={e => setStatusFilter(e.target.value as any)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
-                    >
-                      <option value="all">All Status</option>
-                      <option value="present">Present</option>
-                      <option value="absent">Absent</option>
-                      <option value="late">Late</option>
-                      <option value="excused">Excused</option>
-                    </select>
-
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
-                      <input
-                        type="text"
-                        placeholder="Search students..."
-                        value={searchTerm}
-                        onChange={e => setSearchTerm(e.target.value)}
-                        className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Mode Description */}
-              <div className="mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-gray-100">
-                <p className="text-[10px] sm:text-xs text-gray-500">
-                  {mode === 'daily' 
-                    ? '📋 Daily roll call - mark all students present/absent/late for the day'
-                    : `📚 Periodic attendance - mark attendance for ${selectedSubject || 'selected subject'} during period ${selectedPeriod}`}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* IMPROVED Stats Cards - Numbers always visible */}
-          <div className="grid grid-cols-2 xs:grid-cols-4 gap-2 sm:gap-3 lg:gap-4">
-            <StatCard label="Present" value={stats.presentCount} icon={<UserCheck size={14} className="sm:w-4 sm:h-4" />} color="green" />
-            <StatCard label="Absent" value={stats.absent} icon={<UserX size={14} className="sm:w-4 sm:h-4" />} color="red" />
-            <StatCard label="Late" value={stats.late} icon={<Clock size={14} className="sm:w-4 sm:h-4" />} color="yellow" />
-            <StatCard label="Excused" value={stats.excused} icon={<AlertCircle size={14} className="sm:w-4 sm:h-4" />} color="purple" />
-          </div>
-
-          {/* Total Students Bar */}
-          <div className="flex items-center justify-between px-2 sm:px-3 py-1.5 sm:py-2 bg-blue-50 rounded-lg border border-blue-100">
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <Users size={12} className="sm:w-4 sm:h-4 text-blue-600" />
-              <span className="text-xs sm:text-sm text-blue-700 font-medium">Total Students</span>
-            </div>
-            <span className="text-sm sm:text-base lg:text-lg font-bold text-blue-800">{stats.total}</span>
-          </div>
-
-          {/* Action Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {stats.unsavedChanges > 0 && (
-                <span className="text-xs sm:text-sm text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg whitespace-nowrap flex items-center gap-1">
-                  <Clock size={12} />
-                  {stats.unsavedChanges} unsaved
-                </span>
-              )}
-              {submitSuccess && (
-                <span className="text-xs sm:text-sm text-green-600 bg-green-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg flex items-center gap-1 whitespace-nowrap">
-                  <Check size={12} /> Saved
-                </span>
-              )}
-            </div>
-            
-            <div className="flex gap-2">
-              <button
-                onClick={loadAttendance}
-                disabled={isLoading}
-                className="p-2 sm:p-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 flex-shrink-0"
-                title="Refresh"
-              >
-                <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
-              </button>
+            <div className="flex items-center gap-2">
+              <ModeToggle mode={mode} onChange={setMode} isFormTeacher={isFormTeacher} />
               
+              {/* Export Button */}
               <button
-                onClick={handleSave}
-                disabled={isSubmitting || localAttendance.size === 0}
-                className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm whitespace-nowrap"
+                onClick={handleExport}
+                disabled={attendanceRecords.length === 0}
+                className="p-2 sm:p-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                title="Export to CSV"
               >
-                {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                <span>Save Changes</span>
+                <Download size={16} />
               </button>
             </div>
           </div>
 
-          {/* Student List */}
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12 bg-white rounded-xl border border-gray-200">
-              <Loader2 size={24} className="animate-spin text-blue-600" />
-              <span className="ml-2 text-sm text-gray-600">Loading students...</span>
-            </div>
-          ) : (
+          {/* Tab Navigation */}
+          <TabNavigation 
+            activeTab={activeTab} 
+            onChange={setActiveTab} 
+            isFormTeacher={isFormTeacher} 
+          />
+
+          {/* Filters - Mobile Toggle (only show on mark tab) */}
+          {activeTab === 'mark' && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              {/* Header */}
-              <div className="px-3 sm:px-4 py-2 sm:py-3 bg-gray-50 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 sm:gap-4">
-                    <button
-                      onClick={() => {
-                        if (selectedStudents.size === filteredStudents.length) {
-                          setSelectedStudents(new Set());
-                        } else {
-                          setSelectedStudents(new Set(filteredStudents.map(s => s.id)));
-                        }
-                      }}
-                      className={`w-4 h-4 sm:w-5 sm:h-5 border-2 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
-                        selectedStudents.size === filteredStudents.length && filteredStudents.length > 0
-                          ? 'border-blue-600 bg-blue-600'
-                          : 'border-gray-300 hover:border-gray-400'
-                      }`}
-                    >
-                      {selectedStudents.size === filteredStudents.length && filteredStudents.length > 0 && 
-                        <Check size={10} className="sm:w-3 sm:h-3 text-white" />
-                      }
-                    </button>
-                    <span className="text-xs sm:text-sm font-medium">
-                      {selectedStudents.size > 0 ? `${selectedStudents.size} selected` : 'Select all'}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs sm:text-sm text-gray-500">
-                      {filteredStudents.length} of {studentsWithAttendance.length} students
-                    </span>
-                    {filteredStudents.length < studentsWithAttendance.length && (
-                      <button
-                        onClick={() => setStatusFilter('all')}
-                        className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-                      >
-                        Show all
-                      </button>
-                    )}
-                  </div>
+              <button
+                onClick={() => setShowMobileFilters(!showMobileFilters)}
+                className="w-full flex items-center justify-between p-3 sm:hidden"
+              >
+                <div className="flex items-center gap-2">
+                  <Filter size={16} className="text-gray-400" />
+                  <span className="text-sm font-medium text-gray-700">Filters</span>
                 </div>
-              </div>
+                <ChevronDown size={16} className={`transition-transform ${showMobileFilters ? 'rotate-180' : ''}`} />
+              </button>
 
-              {/* Student Rows - Improved layout */}
-              <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
-                {filteredStudents.length > 0 ? (
-                  filteredStudents.map(student => (
-                    <div key={student.id} className={`p-3 sm:p-4 hover:bg-gray-50/50 transition-colors ${
-                      selectedStudents.has(student.id) ? 'bg-blue-50/30' : ''
-                    }`}>
-                      <div className="flex items-start gap-2 sm:gap-3">
-                        {/* Checkbox */}
-                        <button
-                          onClick={() => {
-                            setSelectedStudents(prev => {
-                              const newSet = new Set(prev);
-                              if (newSet.has(student.id)) newSet.delete(student.id);
-                              else newSet.add(student.id);
-                              return newSet;
-                            });
-                          }}
-                          className={`mt-1 w-4 h-4 sm:w-5 sm:h-5 border-2 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
-                            selectedStudents.has(student.id) 
-                              ? 'border-blue-600 bg-blue-600' 
-                              : 'border-gray-300 hover:border-gray-400'
-                          }`}
-                        >
-                          {selectedStudents.has(student.id) && <Check size={10} className="sm:w-3 sm:h-3 text-white" />}
-                        </button>
+              <div className={`p-3 sm:p-4 ${showMobileFilters ? 'block' : 'hidden sm:block'}`}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+                  {/* Class Select */}
+                  <select
+                    value={selectedClass}
+                    onChange={e => setSelectedClass(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
+                    disabled={loadingClasses || availableClasses.length === 0}
+                  >
+                    <option value="">Select Class</option>
+                    {availableClasses.map(cls => (
+                      <option key={cls.id} value={cls.id}>
+                        {cls.name} ({cls.students} students)
+                        {mode === 'daily' && cls.formTeacherId === user?.uid && ' (Form)'}
+                      </option>
+                    ))}
+                  </select>
 
-                        {/* Student Info */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex flex-col xs:flex-row xs:items-center gap-1 xs:gap-2 flex-wrap">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm sm:text-base font-medium truncate max-w-[120px] xs:max-w-[150px] sm:max-w-[200px]">
-                                {student.name}
-                              </span>
-                              <span className={`text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${
-                                student.gender === 'male' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'
-                              }`}>
-                                {student.gender === 'male' ? 'B' : 'G'}
-                              </span>
-                            </div>
-                            <span className="text-[10px] sm:text-xs text-gray-500 font-mono truncate">
-                              {student.studentId}
-                            </span>
-                            {localAttendance.has(student.id) && (
-                              <span className="text-[8px] sm:text-xs px-1.5 sm:px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full whitespace-nowrap inline-flex items-center gap-0.5">
-                                <Clock size={8} />
-                                Unsaved
-                              </span>
-                            )}
-                          </div>
-                          
-                          {/* Status Buttons - Compact and responsive */}
-                          <div className="grid grid-cols-4 gap-1 mt-2 sm:mt-3">
-                            {(['present', 'absent', 'late', 'excused'] as AttendanceStatus[]).map(status => {
-                              const isActive = student.attendance?.status === status;
-                              const colors = {
-                                present: isActive 
-                                  ? 'bg-green-600 text-white border-green-600' 
-                                  : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100',
-                                absent: isActive 
-                                  ? 'bg-red-600 text-white border-red-600' 
-                                  : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100',
-                                late: isActive 
-                                  ? 'bg-yellow-600 text-white border-yellow-600' 
-                                  : 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100',
-                                excused: isActive 
-                                  ? 'bg-purple-600 text-white border-purple-600' 
-                                  : 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
-                              };
-                              
-                              return (
-                                <button
-                                  key={status}
-                                  onClick={() => {
-                                    if (status === 'excused') {
-                                      setExcuseModal({ isOpen: true, studentId: student.id, studentName: student.name });
-                                    } else {
-                                      handleStatusChange(student.id, status);
-                                    }
-                                  }}
-                                  className={`px-1 sm:px-2 py-1.5 sm:py-2 rounded-lg text-[10px] sm:text-xs font-medium border transition-all flex items-center justify-center gap-0.5 sm:gap-1 ${colors[status]}`}
-                                >
-                                  <span className="hidden xs:inline">{status.charAt(0).toUpperCase() + status.slice(1)}</span>
-                                  <span className="xs:hidden">
-                                    {status === 'present' && 'P'}
-                                    {status === 'absent' && 'A'}
-                                    {status === 'late' && 'L'}
-                                    {status === 'excused' && 'E'}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
+                  {/* Date Picker */}
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={e => setSelectedDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
+                  />
 
-                          {/* Excuse Reason */}
-                          {student.attendance?.status === 'excused' && student.attendance.excuseReason && (
-                            <div className="mt-2 text-[10px] sm:text-xs text-purple-600 bg-purple-50 p-2 rounded-lg flex items-start gap-1">
-                              <MessageSquare size={10} className="flex-shrink-0 mt-0.5" />
-                              <span className="break-words">{student.attendance.excuseReason}</span>
-                            </div>
-                          )}
-                        </div>
+                  {/* Mode-specific filters */}
+                  {mode === 'periodic' ? (
+                    <>
+                      <select
+                        value={selectedSubject}
+                        onChange={e => setSelectedSubject(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
+                        disabled={availableSubjects.length === 0}
+                      >
+                        <option value="">Select Subject</option>
+                        {availableSubjects.map(subject => (
+                          <option key={subject} value={subject}>{subject}</option>
+                        ))}
+                      </select>
+                      
+                      <select
+                        value={selectedPeriod}
+                        onChange={e => setSelectedPeriod(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
+                      >
+                        {[1,2,3,4,5,6,7,8].map(p => (
+                          <option key={p} value={p}>Period {p}</option>
+                        ))}
+                      </select>
+                    </>
+                  ) : (
+                    <>
+                      <select
+                        value={statusFilter}
+                        onChange={e => setStatusFilter(e.target.value as any)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
+                      >
+                        <option value="all">All Status</option>
+                        <option value="present">Present</option>
+                        <option value="absent">Absent</option>
+                        <option value="late">Late</option>
+                        <option value="excused">Excused</option>
+                      </select>
+
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                        <input
+                          type="text"
+                          placeholder="Search students..."
+                          value={searchTerm}
+                          onChange={e => setSearchTerm(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
+                        />
                       </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8 text-sm text-gray-500">
-                    No students match your filters
-                  </div>
-                )}
+                    </>
+                  )}
+                </div>
+
+                {/* Mode Description */}
+                <div className="mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-gray-100">
+                  <p className="text-[10px] sm:text-xs text-gray-500">
+                    {mode === 'daily' 
+                      ? '📋 Daily roll call - mark all students present/absent/late for the day'
+                      : `📚 Periodic attendance - marking ${selectedSubject || 'subject'} during period ${selectedPeriod}`}
+                  </p>
+                </div>
               </div>
             </div>
           )}
+
+          {/* Compact Stats - Always visible */}
+          <CompactStats
+            present={stats.present}
+            absent={stats.absent}
+            late={stats.late}
+            excused={stats.excused}
+            total={stats.total}
+          />
+
+          {/* Total Students Bar (hidden on mobile since CompactStats already shows it) */}
+          <div className="hidden sm:flex items-center justify-between px-3 py-2 bg-blue-50 rounded-lg border border-blue-100">
+            <div className="flex items-center gap-2">
+              <Users size={14} className="text-blue-600" />
+              <span className="text-sm text-blue-700 font-medium">Total Students</span>
+            </div>
+            <span className="text-base font-bold text-blue-800">{stats.total}</span>
+          </div>
+
+          {/* Action Bar (only for mark tab) */}
+          {activeTab === 'mark' && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {stats.unsavedChanges > 0 && (
+                  <span className="text-xs sm:text-sm text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg whitespace-nowrap flex items-center gap-1">
+                    <Clock size={12} />
+                    {stats.unsavedChanges} unsaved
+                  </span>
+                )}
+                {submitSuccess && (
+                  <span className="text-xs sm:text-sm text-green-600 bg-green-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg flex items-center gap-1 whitespace-nowrap">
+                    <Check size={12} /> Saved
+                  </span>
+                )}
+              </div>
+              
+              <div className="flex gap-2">
+                <button
+                  onClick={loadAttendance}
+                  disabled={isLoading}
+                  className="p-2 sm:p-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 flex-shrink-0"
+                  title="Refresh"
+                >
+                  <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
+                </button>
+                
+                <button
+                  onClick={handleSave}
+                  disabled={isSubmitting || localAttendance.size === 0}
+                  className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm whitespace-nowrap"
+                >
+                  {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  <span>Save Changes</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Content based on active tab */}
+          {activeTab === 'mark' && (
+            /* Student List */
+            isLoading ? (
+              <div className="flex items-center justify-center py-12 bg-white rounded-xl border border-gray-200">
+                <Loader2 size={24} className="animate-spin text-blue-600" />
+                <span className="ml-2 text-sm text-gray-600">Loading students...</span>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                {/* Header */}
+                <div className="px-3 sm:px-4 py-2 sm:py-3 bg-gray-50 border-b border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 sm:gap-4">
+                      <button
+                        onClick={() => {
+                          if (selectedStudents.size === filteredStudents.length) {
+                            setSelectedStudents(new Set());
+                          } else {
+                            setSelectedStudents(new Set(filteredStudents.map(s => s.id)));
+                          }
+                        }}
+                        className={`w-4 h-4 sm:w-5 sm:h-5 border-2 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                          selectedStudents.size === filteredStudents.length && filteredStudents.length > 0
+                            ? 'border-blue-600 bg-blue-600'
+                            : 'border-gray-300 hover:border-gray-400'
+                        }`}
+                      >
+                        {selectedStudents.size === filteredStudents.length && filteredStudents.length > 0 && 
+                          <Check size={10} className="sm:w-3 sm:h-3 text-white" />
+                        }
+                      </button>
+                      <span className="text-xs sm:text-sm font-medium">
+                        {selectedStudents.size > 0 ? `${selectedStudents.size} selected` : 'Select all'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs sm:text-sm text-gray-500">
+                        {filteredStudents.length} of {studentsWithAttendance.length} students
+                      </span>
+                      {filteredStudents.length < studentsWithAttendance.length && (
+                        <button
+                          onClick={() => setStatusFilter('all')}
+                          className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                        >
+                          Show all
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Student Rows */}
+                <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
+                  {filteredStudents.length > 0 ? (
+                    filteredStudents.map(student => (
+                      <div key={student.id} className={`p-3 sm:p-4 hover:bg-gray-50/50 transition-colors ${
+                        selectedStudents.has(student.id) ? 'bg-blue-50/30' : ''
+                      }`}>
+                        <div className="flex items-start gap-2 sm:gap-3">
+                          {/* Checkbox */}
+                          <button
+                            onClick={() => {
+                              setSelectedStudents(prev => {
+                                const newSet = new Set(prev);
+                                if (newSet.has(student.id)) newSet.delete(student.id);
+                                else newSet.add(student.id);
+                                return newSet;
+                              });
+                            }}
+                            className={`mt-1 w-4 h-4 sm:w-5 sm:h-5 border-2 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                              selectedStudents.has(student.id) 
+                                ? 'border-blue-600 bg-blue-600' 
+                                : 'border-gray-300 hover:border-gray-400'
+                            }`}
+                          >
+                            {selectedStudents.has(student.id) && <Check size={10} className="sm:w-3 sm:h-3 text-white" />}
+                          </button>
+
+                          {/* Student Info */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex flex-col xs:flex-row xs:items-center gap-1 xs:gap-2 flex-wrap">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm sm:text-base font-medium truncate max-w-[120px] xs:max-w-[150px] sm:max-w-[200px]">
+                                  {student.name}
+                                </span>
+                                <span className={`text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${
+                                  student.gender === 'male' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'
+                                }`}>
+                                  {student.gender === 'male' ? 'B' : 'G'}
+                                </span>
+                              </div>
+                              <span className="text-[10px] sm:text-xs text-gray-500 font-mono truncate">
+                                {student.studentId}
+                              </span>
+                              {localAttendance.has(student.id) && (
+                                <span className="text-[8px] sm:text-xs px-1.5 sm:px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full whitespace-nowrap inline-flex items-center gap-0.5">
+                                  <Clock size={8} />
+                                  Unsaved
+                                </span>
+                              )}
+                            </div>
+                            
+                            {/* Status Buttons */}
+                            <div className="grid grid-cols-4 gap-1 mt-2 sm:mt-3">
+                              {(['present', 'absent', 'late', 'excused'] as AttendanceStatus[]).map(status => {
+                                const isActive = student.attendance?.status === status;
+                                const colors = {
+                                  present: isActive 
+                                    ? 'bg-green-600 text-white border-green-600' 
+                                    : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100',
+                                  absent: isActive 
+                                    ? 'bg-red-600 text-white border-red-600' 
+                                    : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100',
+                                  late: isActive 
+                                    ? 'bg-yellow-600 text-white border-yellow-600' 
+                                    : 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100',
+                                  excused: isActive 
+                                    ? 'bg-purple-600 text-white border-purple-600' 
+                                    : 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
+                                };
+                                
+                                return (
+                                  <button
+                                    key={status}
+                                    onClick={() => {
+                                      if (status === 'excused') {
+                                        setExcuseModal({ isOpen: true, studentId: student.id, studentName: student.name });
+                                      } else {
+                                        handleStatusChange(student.id, status);
+                                      }
+                                    }}
+                                    className={`px-1 sm:px-2 py-1.5 sm:py-2 rounded-lg text-[10px] sm:text-xs font-medium border transition-all flex items-center justify-center gap-0.5 sm:gap-1 ${colors[status]}`}
+                                  >
+                                    <span className="hidden xs:inline">{status.charAt(0).toUpperCase() + status.slice(1)}</span>
+                                    <span className="xs:hidden">
+                                      {status === 'present' && 'P'}
+                                      {status === 'absent' && 'A'}
+                                      {status === 'late' && 'L'}
+                                      {status === 'excused' && 'E'}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {/* Excuse Reason */}
+                            {student.attendance?.status === 'excused' && student.attendance.excuseReason && (
+                              <div className="mt-2 text-[10px] sm:text-xs text-purple-600 bg-purple-50 p-2 rounded-lg flex items-start gap-1">
+                                <MessageSquare size={10} className="flex-shrink-0 mt-0.5" />
+                                <span className="break-words">{student.attendance.excuseReason}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 text-sm text-gray-500">
+                      No students match your filters
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          )}
+
+          {/* Periodic Overview Tab */}
+          {activeTab === 'overview' && isFormTeacher && fullPeriodicData && (
+            <PeriodicOverview
+              byPeriod={fullPeriodicData.byPeriod}
+              bySubject={fullPeriodicData.bySubject}
+              teachers={fullPeriodicData.teachers}
+              date={selectedDate}
+              onViewSubjectDetails={(subject, period) => {
+                setSelectedSubject(subject);
+                setSelectedPeriod(period.toString());
+                setActiveTab('mark');
+              }}
+            />
+          )}
+
+          {/* Analytics Tab */}
+          {activeTab === 'analytics' && isFormTeacher && (
+            <RiskAnalyticsTab
+              classId={selectedClass}
+              className={classes.find(c => c.id === selectedClass)?.name || ''}
+              isFormTeacher={isFormTeacher}
+              teacherName={user?.fullName}
+            />
+          )}
         </div>
 
-        {/* Bulk Action Bar - Mobile Optimized */}
-        {selectedStudents.size > 0 && (
+        {/* Bulk Action Bar */}
+        {selectedStudents.size > 0 && activeTab === 'mark' && (
           <div className="fixed bottom-3 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-2xl border border-gray-200 p-2 w-[calc(100%-24px)] sm:w-auto z-50">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs sm:text-sm font-medium text-gray-700 px-2">
@@ -790,7 +931,7 @@ export default function AttendanceTracking() {
           </div>
         )}
 
-        {/* Excuse Modal - Mobile Optimized */}
+        {/* Excuse Modal */}
         {excuseModal.isOpen && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3">
             <div className="bg-white rounded-xl max-w-md w-full p-4 sm:p-6 animate-in fade-in zoom-in duration-200">

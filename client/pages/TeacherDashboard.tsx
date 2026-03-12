@@ -4,26 +4,63 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useResultsAnalytics } from '@/hooks/useResults';
-import { attendanceService } from '@/services/attendanceService';
+import { attendanceService, AttendanceRecord } from '@/services/attendanceService';
+import { useAttendanceAnalytics } from '@/hooks/useAttendanceAnalytics';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { 
   BookOpen, Users, TrendingUp, AlertCircle, Loader2, 
   Calendar, ChevronRight, FileText, ClipboardCheck, 
-  BarChart3, GraduationCap, UserCheck, UserX, Clock
+  BarChart3, GraduationCap, UserCheck, UserX, Clock,
+  TrendingDown, Minus, AlertTriangle
 } from 'lucide-react';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+
+// ==================== TYPES ====================
+// Use the type that comes from useSchoolClasses
+interface ClassFromHook {
+  id: string;
+  name: string;
+  year: number;
+  level: number;
+  section: string;
+  type?: string;
+  students?: number;
+  formTeacherId?: string;
+  teachers?: string[];
+  [key: string]: any;
+}
+
+interface AttendanceStats {
+  todayRate: number;
+  weeklyRate: number;
+  monthlyRate: number;
+  totalPresent: number;
+  totalStudents: number;
+  lateToday: number;
+  absentToday: number;
+  excusedToday: number;
+  ditchingToday: number;
+  byClass: Array<{ 
+    className: string; 
+    rate: number; 
+    present: number; 
+    total: number;
+    late: number;
+    absent: number;
+  }>;
+  trend: 'up' | 'down' | 'stable';
+  trendValue: string;
+}
 
 // ==================== SKELETON LOADER ====================
 const DashboardSkeleton = () => (
   <div className="space-y-8 animate-pulse">
-    {/* Header Skeleton */}
     <div>
       <div className="h-8 sm:h-9 lg:h-10 bg-gray-200 rounded w-64 mb-2"></div>
       <div className="h-4 sm:h-5 bg-gray-100 rounded w-72"></div>
     </div>
     
-    {/* Metrics Skeleton - 4 cards (2x2) */}
     <div>
       <div className="h-6 bg-gray-200 rounded w-40 mb-4"></div>
       <div className="grid grid-cols-2 gap-4">
@@ -44,7 +81,6 @@ const DashboardSkeleton = () => (
       </div>
     </div>
     
-    {/* Quick Actions Skeleton - 3 buttons */}
     <div>
       <div className="h-6 bg-gray-200 rounded w-32 mb-4"></div>
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
@@ -94,13 +130,14 @@ interface MetricCardProps {
   value: string | number;
   icon: React.ElementType;
   description: string;
-  color: 'blue' | 'purple' | 'green' | 'orange' | 'red' | 'indigo';
+  color: 'blue' | 'purple' | 'green' | 'orange' | 'red' | 'indigo' | 'yellow';
   trend?: string;
   isLoading?: boolean;
   subtext?: string;
+  onClick?: () => void;
 }
 
-const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoading, subtext }: MetricCardProps) => {
+const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoading, subtext, onClick }: MetricCardProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
   
   const colorStyles = {
@@ -151,17 +188,28 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
       value: 'text-indigo-600',
       border: 'border-indigo-200',
       hover: 'hover:border-indigo-300'
+    },
+    yellow: {
+      bg: 'bg-gradient-to-br from-yellow-50 to-amber-50',
+      iconBg: 'bg-yellow-100',
+      iconColor: 'text-yellow-600',
+      value: 'text-yellow-600',
+      border: 'border-yellow-200',
+      hover: 'hover:border-yellow-300'
     }
   };
 
   const style = colorStyles[color];
 
   return (
-    <div className={`
-      bg-white rounded-xl border border-gray-200 p-5
-      hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5
-      ${style.hover}
-    `}>
+    <div 
+      className={`
+        bg-white rounded-xl border border-gray-200 p-5
+        hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5
+        ${style.hover} ${onClick ? 'cursor-pointer' : ''}
+      `}
+      onClick={onClick}
+    >
       <div className="flex items-start justify-between">
         <div className="flex-1 min-w-0">
           <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">
@@ -195,6 +243,122 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
       <p className="text-xs text-gray-500 mt-3 truncate">
         {description}
       </p>
+    </div>
+  );
+};
+
+// ==================== ATTENDANCE DETAIL CARD ====================
+interface AttendanceDetailCardProps {
+  stats: AttendanceStats;
+  lateArrivals: any[];
+  subjectTruancy: any[];
+  onViewAll: () => void;
+}
+
+const AttendanceDetailCard = ({ stats, lateArrivals, subjectTruancy, onViewAll }: AttendanceDetailCardProps) => {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="p-5 border-b border-gray-200">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-gray-900">Today's Attendance Details</h3>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+          >
+            {expanded ? 'Show less' : 'Show more'}
+          </button>
+        </div>
+
+        {/* Quick Stats */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="bg-green-50 rounded-lg p-3">
+            <p className="text-xs text-green-600">Present</p>
+            <p className="text-xl font-bold text-green-700">{stats.totalPresent}</p>
+            <p className="text-xs text-green-500">{stats.todayRate}% of class</p>
+          </div>
+          <div className="bg-red-50 rounded-lg p-3">
+            <p className="text-xs text-red-600">Absent</p>
+            <p className="text-xl font-bold text-red-700">{stats.absentToday}</p>
+          </div>
+          <div className="bg-yellow-50 rounded-lg p-3">
+            <p className="text-xs text-yellow-600">Late</p>
+            <p className="text-xl font-bold text-yellow-700">{stats.lateToday}</p>
+          </div>
+          <div className="bg-purple-50 rounded-lg p-3">
+            <p className="text-xs text-purple-600">Excused</p>
+            <p className="text-xl font-bold text-purple-700">{stats.excusedToday}</p>
+          </div>
+        </div>
+
+        {/* Trend Indicator */}
+        <div className="mt-3 flex items-center gap-2">
+          <span className="text-xs text-gray-500">Weekly trend:</span>
+          {stats.trend === 'up' && <TrendingUp size={14} className="text-green-600" />}
+          {stats.trend === 'down' && <TrendingDown size={14} className="text-red-600" />}
+          {stats.trend === 'stable' && <Minus size={14} className="text-gray-600" />}
+          <span className="text-xs font-medium">{stats.trendValue}</span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="p-5 space-y-4">
+          {/* Class Breakdown */}
+          {stats.byClass.length > 0 && (
+            <div>
+              <h4 className="text-sm font-medium text-gray-700 mb-2">By Class</h4>
+              <div className="space-y-2">
+                {stats.byClass.map(cls => (
+                  <div key={cls.className} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">{cls.className}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-gray-500">{cls.present}/{cls.total}</span>
+                      <span className={`w-16 text-right font-medium ${
+                        cls.rate >= 90 ? 'text-green-600' :
+                        cls.rate >= 75 ? 'text-yellow-600' : 'text-red-600'
+                      }`}>
+                        {cls.rate}%
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Alerts */}
+          {(lateArrivals.length > 0 || subjectTruancy.length > 0) && (
+            <div>
+              <h4 className="text-sm font-medium text-gray-700 mb-2">Alerts</h4>
+              <div className="space-y-2">
+                {lateArrivals.slice(0, 3).map((late, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm p-2 bg-yellow-50 rounded">
+                    <Clock size={14} className="text-yellow-600" />
+                    <span className="text-gray-700">{late.studentName} - Late arrival</span>
+                  </div>
+                ))}
+                {subjectTruancy.filter((t: any) => t.attendanceRate < 75).slice(0, 3).map((truancy: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2 text-sm p-2 bg-orange-50 rounded">
+                    <AlertTriangle size={14} className="text-orange-600" />
+                    <span className="text-gray-700">
+                      {truancy.studentName} - {truancy.attendanceRate.toFixed(0)}% in {truancy.subject}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* View All Button */}
+          <button
+            onClick={onViewAll}
+            className="w-full mt-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm font-medium text-gray-700 transition-colors"
+          >
+            View Full Attendance Report
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -263,12 +427,13 @@ const QuickAction = ({ to, icon: Icon, title, description, disabled }: QuickActi
 
 // ==================== CLASS CARD ====================
 interface ClassCardProps {
-  classItem: any;
+  classItem: ClassFromHook;
   isFormTeacher: boolean;
   userId?: string;
+  attendanceRate?: number;
 }
 
-const ClassCard = ({ classItem, isFormTeacher, userId }: ClassCardProps) => {
+const ClassCard = ({ classItem, isFormTeacher, userId, attendanceRate }: ClassCardProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
   
   return (
@@ -289,6 +454,15 @@ const ClassCard = ({ classItem, isFormTeacher, userId }: ClassCardProps) => {
             )}
           </div>
         </div>
+        {attendanceRate !== undefined && (
+          <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+            attendanceRate >= 90 ? 'bg-green-100 text-green-700' :
+            attendanceRate >= 75 ? 'bg-yellow-100 text-yellow-700' :
+            'bg-red-100 text-red-700'
+          }`}>
+            {attendanceRate}%
+          </div>
+        )}
       </div>
       
       <div className="space-y-2 mb-3">
@@ -323,12 +497,28 @@ export default function TeacherDashboard() {
   const isMobile = useMediaQuery('(max-width: 640px)');
   const [selectedTerm] = useState<string>('Term 1');
   const [selectedYear] = useState<number>(new Date().getFullYear());
-  const [attendanceRate, setAttendanceRate] = useState<number>(0);
-  const [loadingAttendance, setLoadingAttendance] = useState(false);
   
-  // Fetch all active classes
+  // Attendance state
+  const [attendanceStats, setAttendanceStats] = useState<AttendanceStats>({
+    todayRate: 0,
+    weeklyRate: 0,
+    monthlyRate: 0,
+    totalPresent: 0,
+    totalStudents: 0,
+    lateToday: 0,
+    absentToday: 0,
+    excusedToday: 0,
+    ditchingToday: 0,
+    byClass: [],
+    trend: 'stable',
+    trendValue: '0% vs last week'
+  });
+  const [loadingAttendance, setLoadingAttendance] = useState(false);
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  
+  // Fetch all active classes - FIXED: useSchoolClasses returns { classes, isLoading, etc }
   const { 
-    classes, 
+    classes = [], 
     isLoading: classesLoading 
   } = useSchoolClasses({ isActive: true });
 
@@ -343,11 +533,14 @@ export default function TeacherDashboard() {
     year: selectedYear,
   });
 
-  // Find classes assigned to this teacher
+  // Initialize analytics for attendance records
+  const analyticsAttendance = useAttendanceAnalytics(attendanceRecords);
+
+  // Find classes assigned to this teacher - Now classes is already an array
   const assignedClasses = useMemo(() => {
     if (!user?.uid || !classes.length) return [];
     
-    return classes.filter(cls => 
+    return classes.filter((cls: ClassFromHook) => 
       cls.teachers?.includes(user.uid) || 
       cls.formTeacherId === user.uid
     );
@@ -355,56 +548,165 @@ export default function TeacherDashboard() {
 
   // Get form teacher class (if any)
   const formTeacherClass = useMemo(() => {
-    return assignedClasses.find(cls => cls.formTeacherId === user?.uid);
-  }, [assignedClasses, user?.uid]);
+    return classes.find((cls: ClassFromHook) => cls.formTeacherId === user?.uid);
+  }, [classes, user?.uid]);
 
-  // Fetch attendance data for all assigned classes
-  useEffect(() => {
-    const fetchAttendanceData = async () => {
-      if (assignedClasses.length === 0) return;
+  // Fetch comprehensive attendance data
+  const fetchAttendanceData = useCallback(async () => {
+    if (assignedClasses.length === 0) return;
+    
+    setLoadingAttendance(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      const weekAgoStr = weekAgo.toISOString().split('T')[0];
       
-      setLoadingAttendance(true);
-      try {
-        const today = new Date().toISOString().split('T')[0];
-        let totalPresent = 0;
-        let totalStudents = 0;
+      const monthAgo = new Date();
+      monthAgo.setDate(monthAgo.getDate() - 30);
+      const monthAgoStr = monthAgo.toISOString().split('T')[0];
+      
+      let totalTodayPresent = 0;
+      let totalTodayStudents = 0;
+      let totalLateToday = 0;
+      let totalAbsentToday = 0;
+      let totalExcusedToday = 0;
+      let totalDitchingToday = 0;
+      
+      const classStats = [];
+      let allTodayRecords: AttendanceRecord[] = [];
+      let allWeekRecords: AttendanceRecord[] = [];
+      
+      // For each class, fetch attendance data
+      for (const cls of assignedClasses) {
+        // Get today's attendance
+        const todayRecords = await attendanceService.getByClassAndDate(cls.id, today);
+        allTodayRecords = [...allTodayRecords, ...todayRecords];
         
-        // For each class, get today's attendance
-        for (const cls of assignedClasses) {
-          const records = await attendanceService.getByClassAndDate(cls.id, today);
-          const studentsInClass = cls.students || 0;
+        // Get weekly records for trend
+        const weekRecords = await attendanceService.getByDateRange(weekAgoStr, today);
+        allWeekRecords = [...allWeekRecords, ...weekRecords];
+        
+        const studentsInClass = cls.students || 0;
+        
+        if (studentsInClass > 0) {
+          const present = todayRecords.filter(r => 
+            r.status === 'present' || r.status === 'late'
+          ).length;
           
-          if (studentsInClass > 0) {
-            const present = records.filter(r => 
-              r.status === 'present' || r.status === 'late'
-            ).length;
-            
-            totalPresent += present;
-            totalStudents += studentsInClass;
-          }
+          const late = todayRecords.filter(r => r.status === 'late').length;
+          const absent = todayRecords.filter(r => r.status === 'absent').length;
+          const excused = todayRecords.filter(r => r.status === 'excused').length;
+          
+          // Detect ditching (present in daily, absent in periodic)
+          const dailyRecords = todayRecords.filter(r => r.attendanceType === 'daily');
+          const periodicRecords = todayRecords.filter(r => r.attendanceType === 'periodic');
+          
+          const ditching = dailyRecords.filter(daily => {
+            if (daily.status === 'present' || daily.status === 'late') {
+              const studentPeriodic = periodicRecords.filter(p => p.studentId === daily.studentId);
+              return studentPeriodic.some(p => p.status === 'absent' && !p.excuseReason);
+            }
+            return false;
+          }).length;
+          
+          totalTodayPresent += present;
+          totalTodayStudents += studentsInClass;
+          totalLateToday += late;
+          totalAbsentToday += absent;
+          totalExcusedToday += excused;
+          totalDitchingToday += ditching;
+          
+          classStats.push({
+            className: cls.name,
+            rate: studentsInClass > 0 ? Math.round((present / studentsInClass) * 100) : 0,
+            present,
+            total: studentsInClass,
+            late,
+            absent
+          });
         }
-        
-        const rate = totalStudents > 0 ? Math.round((totalPresent / totalStudents) * 100) : 0;
-        setAttendanceRate(rate);
-      } catch (error) {
-        console.error('Error fetching attendance:', error);
-        setAttendanceRate(0);
-      } finally {
-        setLoadingAttendance(false);
       }
-    };
-
-    fetchAttendanceData();
+      
+      setAttendanceRecords(allTodayRecords);
+      
+      // Calculate today's rate
+      const todayRate = totalTodayStudents > 0 
+        ? Math.round((totalTodayPresent / totalTodayStudents) * 100) 
+        : 0;
+      
+      // Calculate weekly average
+      const dailyGroups: Record<string, AttendanceRecord[]> = {};
+      allWeekRecords.forEach(record => {
+        if (!dailyGroups[record.date]) {
+          dailyGroups[record.date] = [];
+        }
+        dailyGroups[record.date].push(record);
+      });
+      
+      let weeklyTotal = 0;
+      let weeklyDays = 0;
+      
+      Object.entries(dailyGroups).forEach(([date, records]) => {
+        const dayStudents = new Set(records.map(r => r.studentId)).size;
+        const dayPresent = records.filter(r => r.status === 'present' || r.status === 'late').length;
+        if (dayStudents > 0) {
+          weeklyTotal += (dayPresent / dayStudents) * 100;
+          weeklyDays++;
+        }
+      });
+      
+      const weeklyRate = weeklyDays > 0 ? Math.round(weeklyTotal / weeklyDays) : 0;
+      
+      // Calculate trend
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().split('T')[0];
+      
+      const yesterdayGroups = allWeekRecords.filter(r => r.date === yesterdayStr);
+      const yesterdayStudents = new Set(yesterdayGroups.map(r => r.studentId)).size;
+      const yesterdayPresent = yesterdayGroups.filter(r => r.status === 'present' || r.status === 'late').length;
+      const yesterdayRate = yesterdayStudents > 0 ? (yesterdayPresent / yesterdayStudents) * 100 : 0;
+      
+      const trendDiff = todayRate - yesterdayRate;
+      const trend = trendDiff > 2 ? 'up' : trendDiff < -2 ? 'down' : 'stable';
+      const trendValue = `${trendDiff > 0 ? '+' : ''}${trendDiff.toFixed(1)}% vs yesterday`;
+      
+      setAttendanceStats({
+        todayRate,
+        weeklyRate,
+        monthlyRate: weeklyRate, // Simplified for now
+        totalPresent: totalTodayPresent,
+        totalStudents: totalTodayStudents,
+        lateToday: totalLateToday,
+        absentToday: totalAbsentToday,
+        excusedToday: totalExcusedToday,
+        ditchingToday: totalDitchingToday,
+        byClass: classStats,
+        trend,
+        trendValue
+      });
+    } catch (error) {
+      console.error('Error fetching attendance:', error);
+    } finally {
+      setLoadingAttendance(false);
+    }
   }, [assignedClasses]);
 
-  // Calculate stats - FIXED: Removed references to qualityRate and failRate
+  // Fetch attendance data on mount and when assignedClasses changes
+  useEffect(() => {
+    fetchAttendanceData();
+    
+    // Set up periodic refresh every 5 minutes
+    const interval = setInterval(fetchAttendanceData, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [fetchAttendanceData]);
+
+  // Calculate stats
   const stats = useMemo(() => {
     const totalStudents = assignedClasses.reduce((sum, cls) => sum + (cls.students || 0), 0);
     
-    // Get pass rate from analytics
     const passRate = analytics?.passRate || 0;
-    
-    // Calculate average percentage from grade distribution if available
     const averagePercentage = analytics?.averagePercentage || 0;
     
     return {
@@ -413,11 +715,10 @@ export default function TeacherDashboard() {
       subjects: user?.subjects || [],
       passRate,
       averagePercentage,
-      attendanceRate,
       isFormTeacher: !!formTeacherClass,
       formClassName: formTeacherClass?.name,
     };
-  }, [assignedClasses, user?.subjects, formTeacherClass, analytics, attendanceRate]);
+  }, [assignedClasses, user?.subjects, formTeacherClass, analytics]);
 
   // Loading state
   if (classesLoading) {
@@ -524,21 +825,31 @@ export default function TeacherDashboard() {
                 subtext={stats.averagePercentage > 0 ? `${stats.averagePercentage}% avg` : undefined}
               />
               
-              {/* Card 4: Attendance Rate */}
+              {/* Card 4: Today's Attendance */}
               <MetricCard
-                label="Attendance"
-                value={stats.attendanceRate > 0 ? `${stats.attendanceRate}%` : '—'}
+                label="Today's Attendance"
+                value={attendanceStats.todayRate > 0 ? `${attendanceStats.todayRate}%` : '—'}
                 icon={UserCheck}
-                description="Average daily attendance"
-                color="orange"
+                description={`${attendanceStats.totalPresent}/${attendanceStats.totalStudents} students`}
+                color={attendanceStats.todayRate >= 90 ? 'green' : attendanceStats.todayRate >= 75 ? 'yellow' : 'orange'}
                 isLoading={loadingAttendance}
-                subtext="today's average"
+                subtext={`${attendanceStats.lateToday} late, ${attendanceStats.ditchingToday} ditching`}
               />
             </div>
           </div>
         )}
 
-        {/* ===== QUICK ACTIONS - 1×3 MATRIX ===== */}
+        {/* ===== ATTENDANCE DETAIL CARD ===== */}
+        {assignedClasses.length > 0 && !loadingAttendance && attendanceStats.totalStudents > 0 && (
+          <AttendanceDetailCard
+            stats={attendanceStats}
+            lateArrivals={analyticsAttendance.lateArrivals}
+            subjectTruancy={analyticsAttendance.subjectTruancy}
+            onViewAll={() => window.location.href = '/dashboard/teacher/attendance'}
+          />
+        )}
+
+        {/* ===== QUICK ACTIONS ===== */}
         {assignedClasses.length > 0 && (
           <div>
             <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">
@@ -579,14 +890,18 @@ export default function TeacherDashboard() {
               </span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {assignedClasses.map((classItem) => (
-                <ClassCard
-                  key={classItem.id}
-                  classItem={classItem}
-                  isFormTeacher={classItem.formTeacherId === user?.uid}
-                  userId={user?.uid}
-                />
-              ))}
+              {assignedClasses.map((classItem: ClassFromHook) => {
+                const classAttendance = attendanceStats.byClass.find(c => c.className === classItem.name);
+                return (
+                  <ClassCard
+                    key={classItem.id}
+                    classItem={classItem}
+                    isFormTeacher={classItem.formTeacherId === user?.uid}
+                    userId={user?.uid}
+                    attendanceRate={classAttendance?.rate}
+                  />
+                );
+              })}
             </div>
           </div>
         )}

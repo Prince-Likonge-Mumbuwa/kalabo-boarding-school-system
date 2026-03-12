@@ -1,4 +1,3 @@
-// @/services/attendanceService.ts
 import { 
   collection, 
   doc, 
@@ -19,19 +18,39 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { 
-  AttendanceRecord, 
+  AttendanceRecord,
+  DailyAttendanceRecord,
+  PeriodicAttendanceRecord,
   DailyAttendance, 
   AttendanceStatus,
-  StudentAttendanceSummary 
+  AttendanceType,
+  StudentAttendanceSummary,
+  LateArrival,
+  SubjectTruancy,
+  TeacherActivity,
+  RiskAnalysis,
+  TeacherPeriodicSummary,
+  FullPeriodicData,
+  AttendanceFilters
 } from '@/types/attendance';
 import { Learner, Class } from '@/types/school';
+import { learnerService } from './schoolService';
 
-// EXPORT ALL TYPES so they can be imported from this service
+// EXPORT ALL TYPES
 export type { 
-  AttendanceRecord, 
+  AttendanceRecord,
+  DailyAttendanceRecord,
+  PeriodicAttendanceRecord,
   DailyAttendance, 
   AttendanceStatus,
-  StudentAttendanceSummary 
+  AttendanceType,
+  StudentAttendanceSummary,
+  LateArrival,
+  SubjectTruancy,
+  TeacherActivity,
+  RiskAnalysis,
+  TeacherPeriodicSummary,
+  FullPeriodicData
 };
 
 const ATTENDANCE_COLLECTION = 'attendance';
@@ -40,9 +59,9 @@ const DAILY_ATTENDANCE_COLLECTION = 'dailyAttendance';
 class AttendanceService {
   
   /**
-   * Mark attendance for a single student
+   * Mark daily attendance for a single student
    */
-  async markAttendance(data: {
+  async markDailyAttendance(data: {
     studentId: string;
     studentName: string;
     classId: string;
@@ -53,12 +72,12 @@ class AttendanceService {
     markedBy: string;
     markedByName: string;
     studentGender?: 'male' | 'female';
-  }): Promise<AttendanceRecord> {
+    rollCallTime?: string;
+  }): Promise<DailyAttendanceRecord> {
     try {
-      const recordId = `${data.classId}_${data.studentId}_${data.date}`;
+      const recordId = `${data.classId}_${data.studentId}_${data.date}_daily`;
       const recordRef = doc(db, ATTENDANCE_COLLECTION, recordId);
       
-      // Create base record without optional fields
       const record: any = {
         id: recordId,
         studentId: data.studentId,
@@ -70,34 +89,92 @@ class AttendanceService {
         markedBy: data.markedBy,
         markedByName: data.markedByName,
         timestamp: Timestamp.now(),
+        attendanceType: 'daily',
+        rollCallTime: data.rollCallTime || new Date().toLocaleTimeString(),
       };
 
-      // Only add excuseReason if it exists and is not empty
-      if (data.excuseReason && data.excuseReason.trim() !== '') {
+      if (data.excuseReason?.trim()) {
         record.excuseReason = data.excuseReason.trim();
       }
       
-      // Only add studentGender if it exists
       if (data.studentGender) {
         record.studentGender = data.studentGender;
       }
 
       await setDoc(recordRef, record, { merge: true });
-      
-      // Also update daily summary
       await this.updateDailySummary(data.classId, data.className, data.date);
       
-      return record as AttendanceRecord;
+      return record as DailyAttendanceRecord;
     } catch (error) {
-      console.error('Error marking attendance:', error);
+      console.error('Error marking daily attendance:', error);
       throw error;
     }
   }
 
   /**
-   * Bulk mark attendance for multiple students
+   * Mark periodic attendance for a single student
    */
-  async bulkMarkAttendance(data: {
+  async markPeriodicAttendance(data: {
+    studentId: string;
+    studentName: string;
+    classId: string;
+    className: string;
+    date: string;
+    status: AttendanceStatus;
+    subject: string;
+    period: number;
+    excuseReason?: string;
+    markedBy: string;
+    markedByName: string;
+    studentGender?: 'male' | 'female';
+    lessonStartTime?: string;
+    lessonEndTime?: string;
+  }): Promise<PeriodicAttendanceRecord> {
+    try {
+      const recordId = `${data.classId}_${data.studentId}_${data.date}_${data.subject}_p${data.period}`;
+      const recordRef = doc(db, ATTENDANCE_COLLECTION, recordId);
+      
+      const record: any = {
+        id: recordId,
+        studentId: data.studentId,
+        studentName: data.studentName,
+        classId: data.classId,
+        className: data.className,
+        date: data.date,
+        status: data.status,
+        markedBy: data.markedBy,
+        markedByName: data.markedByName,
+        timestamp: Timestamp.now(),
+        attendanceType: 'periodic',
+        subject: data.subject,
+        period: data.period,
+        lessonStartTime: data.lessonStartTime || new Date().toLocaleTimeString(),
+      };
+
+      if (data.lessonEndTime) {
+        record.lessonEndTime = data.lessonEndTime;
+      }
+
+      if (data.excuseReason?.trim()) {
+        record.excuseReason = data.excuseReason.trim();
+      }
+      
+      if (data.studentGender) {
+        record.studentGender = data.studentGender;
+      }
+
+      await setDoc(recordRef, record, { merge: true });
+      return record as PeriodicAttendanceRecord;
+    } catch (error) {
+      console.error('Error marking periodic attendance:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk mark daily attendance
+   */
+  async bulkMarkDailyAttendance(data: {
     records: Array<{
       studentId: string;
       studentName: string;
@@ -110,16 +187,16 @@ class AttendanceService {
     date: string;
     markedBy: string;
     markedByName: string;
-  }): Promise<AttendanceRecord[]> {
+    rollCallTime?: string;
+  }): Promise<DailyAttendanceRecord[]> {
     const batch = writeBatch(db);
-    const records: AttendanceRecord[] = [];
+    const records: DailyAttendanceRecord[] = [];
 
     try {
       for (const item of data.records) {
-        const recordId = `${data.classId}_${item.studentId}_${data.date}`;
+        const recordId = `${data.classId}_${item.studentId}_${data.date}_daily`;
         const recordRef = doc(db, ATTENDANCE_COLLECTION, recordId);
         
-        // Create base record without optional fields
         const record: any = {
           id: recordId,
           studentId: item.studentId,
@@ -131,132 +208,719 @@ class AttendanceService {
           markedBy: data.markedBy,
           markedByName: data.markedByName,
           timestamp: Timestamp.now(),
+          attendanceType: 'daily',
+          rollCallTime: data.rollCallTime || new Date().toLocaleTimeString(),
         };
 
-        // Only add studentGender if it exists
         if (item.studentGender) {
           record.studentGender = item.studentGender;
         }
         
-        // Only add excuseReason if it exists and is not empty
-        if (item.excuseReason && item.excuseReason.trim() !== '') {
+        if (item.excuseReason?.trim()) {
           record.excuseReason = item.excuseReason.trim();
         }
 
         batch.set(recordRef, record, { merge: true });
-        records.push(record as AttendanceRecord);
+        records.push(record as DailyAttendanceRecord);
       }
 
       await batch.commit();
-      
-      // Update daily summary
       await this.updateDailySummary(data.classId, data.className, data.date);
       
       return records;
     } catch (error) {
-      console.error('Error bulk marking attendance:', error);
+      console.error('Error bulk marking daily attendance:', error);
       throw error;
     }
   }
 
   /**
-   * Get attendance for a specific class and date
+   * Bulk mark periodic attendance
    */
+  async bulkMarkPeriodicAttendance(data: {
+    records: Array<{
+      studentId: string;
+      studentName: string;
+      studentGender?: 'male' | 'female';
+      status: AttendanceStatus;
+      excuseReason?: string;
+    }>;
+    classId: string;
+    className: string;
+    subject: string;
+    period: number;
+    date: string;
+    markedBy: string;
+    markedByName: string;
+    lessonStartTime?: string;
+  }): Promise<PeriodicAttendanceRecord[]> {
+    const batch = writeBatch(db);
+    const records: PeriodicAttendanceRecord[] = [];
+
+    try {
+      for (const item of data.records) {
+        const recordId = `${data.classId}_${item.studentId}_${data.date}_${data.subject}_p${data.period}`;
+        const recordRef = doc(db, ATTENDANCE_COLLECTION, recordId);
+        
+        const record: any = {
+          id: recordId,
+          studentId: item.studentId,
+          studentName: item.studentName,
+          classId: data.classId,
+          className: data.className,
+          date: data.date,
+          status: item.status,
+          markedBy: data.markedBy,
+          markedByName: data.markedByName,
+          timestamp: Timestamp.now(),
+          attendanceType: 'periodic',
+          subject: data.subject,
+          period: data.period,
+          lessonStartTime: data.lessonStartTime || new Date().toLocaleTimeString(),
+        };
+
+        if (item.studentGender) {
+          record.studentGender = item.studentGender;
+        }
+        
+        if (item.excuseReason?.trim()) {
+          record.excuseReason = item.excuseReason.trim();
+        }
+
+        batch.set(recordRef, record, { merge: true });
+        records.push(record as PeriodicAttendanceRecord);
+      }
+
+      await batch.commit();
+      return records;
+    } catch (error) {
+      console.error('Error bulk marking periodic attendance:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get attendance with advanced filters
+   */
+  async getAttendanceWithFilters(filters: AttendanceFilters): Promise<AttendanceRecord[]> {
+    try {
+      let q = query(collection(db, ATTENDANCE_COLLECTION));
+      const constraints = [];
+      
+      if (filters.startDate) {
+        constraints.push(where('date', '>=', filters.startDate));
+      }
+      
+      if (filters.endDate) {
+        constraints.push(where('date', '<=', filters.endDate));
+      }
+      
+      if (filters.classId) {
+        constraints.push(where('classId', '==', filters.classId));
+      }
+      
+      if (filters.teacherId) {
+        constraints.push(where('markedBy', '==', filters.teacherId));
+      }
+      
+      if (filters.attendanceType) {
+        constraints.push(where('attendanceType', '==', filters.attendanceType));
+      }
+      
+      if (filters.subject) {
+        constraints.push(where('subject', '==', filters.subject));
+      }
+      
+      if (filters.period !== undefined) {
+        constraints.push(where('period', '==', filters.period));
+      }
+      
+      if (filters.status) {
+        constraints.push(where('status', '==', filters.status));
+      }
+      
+      if (filters.studentId) {
+        constraints.push(where('studentId', '==', filters.studentId));
+      }
+      
+      q = query(q, ...constraints, orderBy('date', 'desc'), orderBy('timestamp', 'desc'));
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          timestamp: data.timestamp?.toDate(),
+          updatedAt: data.updatedAt?.toDate(),
+        } as AttendanceRecord;
+      });
+    } catch (error) {
+      console.error('Error fetching filtered attendance:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get periodic attendance for a class with subject/period filtering
+   */
+  async getPeriodicAttendance(
+    classId: string, 
+    date: string,
+    subject?: string,
+    period?: number
+  ): Promise<PeriodicAttendanceRecord[]> {
+    try {
+      const filters: AttendanceFilters = {
+        classId,
+        startDate: date,  // FIXED: Use startDate instead of date
+        endDate: date,     // FIXED: Use endDate instead of date
+        attendanceType: 'periodic'
+      };
+      
+      if (subject) filters.subject = subject;
+      if (period) filters.period = period;
+      
+      const records = await this.getAttendanceWithFilters(filters);
+      return records as PeriodicAttendanceRecord[];
+    } catch (error) {
+      console.error('Error fetching periodic attendance:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get daily attendance for a class
+   */
+  async getDailyAttendance(classId: string, date: string): Promise<DailyAttendanceRecord[]> {
+    try {
+      const filters: AttendanceFilters = {
+        classId,
+        startDate: date,  // FIXED: Use startDate instead of date
+        endDate: date,     // FIXED: Use endDate instead of date
+        attendanceType: 'daily'
+      };
+      
+      const records = await this.getAttendanceWithFilters(filters);
+      return records as DailyAttendanceRecord[];
+    } catch (error) {
+      console.error('Error fetching daily attendance:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get full periodic data for a class (all periods/subjects)
+   */
+  async getFullDailyPeriodicAttendance(
+    classId: string,
+    date: string
+  ): Promise<FullPeriodicData> {
+    try {
+      const records = await this.getPeriodicAttendance(classId, date);
+      
+      const byPeriod: Record<number, PeriodicAttendanceRecord[]> = {};
+      const bySubject: Record<string, PeriodicAttendanceRecord[]> = {};
+      const teachers = new Set<string>();
+      
+      // Initialize all periods 1-8
+      for (let i = 1; i <= 8; i++) {
+        byPeriod[i] = [];
+      }
+      
+      records.forEach(record => {
+        // Group by period
+        if (!byPeriod[record.period]) {
+          byPeriod[record.period] = [];
+        }
+        byPeriod[record.period].push(record);
+        
+        // Group by subject
+        if (!bySubject[record.subject]) {
+          bySubject[record.subject] = [];
+        }
+        bySubject[record.subject].push(record);
+        
+        // Track teachers
+        teachers.add(record.markedByName);
+      });
+      
+      return { byPeriod, bySubject, teachers };
+    } catch (error) {
+      console.error('Error fetching full periodic attendance:', error);
+      
+      // Initialize empty periods
+      const byPeriod: Record<number, PeriodicAttendanceRecord[]> = {};
+      for (let i = 1; i <= 8; i++) {
+        byPeriod[i] = [];
+      }
+      
+      return { byPeriod, bySubject: {}, teachers: new Set() };
+    }
+  }
+
+  /**
+   * Get student risk analysis
+   */
+  async getStudentRiskAnalysis(
+    studentId: string,
+    studentName: string,
+    className: string,
+    days: number = 30
+  ): Promise<RiskAnalysis> {
+    try {
+      const endDate = new Date().toISOString().split('T')[0];
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      const startDateStr = startDate.toISOString().split('T')[0];
+      
+      const filters: AttendanceFilters = {
+        studentId,
+        startDate: startDateStr,
+        endDate
+      };
+      
+      const records = await this.getAttendanceWithFilters(filters);
+      
+      // Separate daily and periodic
+      const dailyRecords = records.filter(r => r.attendanceType === 'daily') as DailyAttendanceRecord[];
+      const periodicRecords = records.filter(r => r.attendanceType === 'periodic') as PeriodicAttendanceRecord[];
+      
+      // Daily stats
+      const dailyStats = {
+        total: dailyRecords.length,
+        present: dailyRecords.filter(r => r.status === 'present').length,
+        absent: dailyRecords.filter(r => r.status === 'absent').length,
+        late: dailyRecords.filter(r => r.status === 'late').length,
+        excused: dailyRecords.filter(r => r.status === 'excused').length,
+        rate: 0
+      };
+      dailyStats.rate = dailyStats.total > 0 
+        ? ((dailyStats.present + dailyStats.late) / dailyStats.total) * 100 
+        : 0;
+      
+      // Subject stats
+      const subjectMap = new Map<string, {
+        subject: string;
+        teacherName: string;
+        total: number;
+        present: number;
+        records: PeriodicAttendanceRecord[];
+      }>();
+      
+      periodicRecords.forEach(record => {
+        if (!subjectMap.has(record.subject)) {
+          subjectMap.set(record.subject, {
+            subject: record.subject,
+            teacherName: record.markedByName,
+            total: 0,
+            present: 0,
+            records: []
+          });
+        }
+        const subjectData = subjectMap.get(record.subject)!;
+        subjectData.total++;
+        subjectData.records.push(record);
+        if (record.status === 'present' || record.status === 'late') {
+          subjectData.present++;
+        }
+      });
+      
+      const subjectStats = Array.from(subjectMap.values()).map(data => {
+        const rate = data.total > 0 ? (data.present / data.total) * 100 : 0;
+        
+        // Calculate trend
+        const midPoint = Math.floor(data.records.length / 2);
+        const firstHalf = data.records.slice(0, midPoint);
+        const secondHalf = data.records.slice(midPoint);
+        
+        const firstHalfRate = firstHalf.length > 0
+          ? (firstHalf.filter(r => r.status === 'present' || r.status === 'late').length / firstHalf.length) * 100
+          : 0;
+        const secondHalfRate = secondHalf.length > 0
+          ? (secondHalf.filter(r => r.status === 'present' || r.status === 'late').length / secondHalf.length) * 100
+          : 0;
+        
+        let trend: 'improving' | 'declining' | 'stable' = 'stable';
+        if (secondHalfRate - firstHalfRate > 5) trend = 'improving';
+        else if (firstHalfRate - secondHalfRate > 5) trend = 'declining';
+        
+        return {
+          subject: data.subject,
+          teacherName: data.teacherName,
+          totalSessions: data.total,
+          present: data.present,
+          absent: data.total - data.present,
+          rate,
+          trend
+        };
+      });
+      
+      // Detect ditching (present in daily, absent in subjects)
+      const ditchingIncidents: RiskAnalysis['ditchingIncidents'] = [];
+      const dailyByDate = new Map(dailyRecords.map(r => [r.date, r]));
+      
+      const periodicByDate = new Map<string, PeriodicAttendanceRecord[]>();
+      periodicRecords.forEach(record => {
+        if (!periodicByDate.has(record.date)) {
+          periodicByDate.set(record.date, []);
+        }
+        periodicByDate.get(record.date)!.push(record);
+      });
+      
+      periodicByDate.forEach((records, date) => {
+        const daily = dailyByDate.get(date);
+        if (daily && (daily.status === 'present' || daily.status === 'late')) {
+          records.forEach(record => {
+            if (record.status === 'absent' && !record.excuseReason) {
+              ditchingIncidents.push({
+                date,
+                subject: record.subject,
+                teacher: record.markedByName,
+                period: record.period
+              });
+            }
+          });
+        }
+      });
+      
+      // Detect late arrivals
+      const lateArrivals: RiskAnalysis['lateArrivals'] = [];
+      periodicByDate.forEach((records, date) => {
+        const daily = dailyByDate.get(date);
+        if (daily?.status === 'absent') {
+          const firstPeriod = records.find(r => r.period === 1);
+          if (firstPeriod && (firstPeriod.status === 'present' || firstPeriod.status === 'late')) {
+            lateArrivals.push({
+              date,
+              firstPeriodSubject: firstPeriod.subject,
+              firstPeriodTeacher: firstPeriod.markedByName,
+              arrivalTime: firstPeriod.timestamp instanceof Date 
+                ? firstPeriod.timestamp.toLocaleTimeString() 
+                : undefined
+            });
+          }
+        }
+      });
+      
+      // Calculate risk level
+      const riskFactors: string[] = [];
+      let riskLevel: 'high' | 'medium' | 'low' = 'low';
+      
+      if (dailyStats.rate < 75) {
+        riskFactors.push(`Overall attendance below 75% (${dailyStats.rate.toFixed(1)}%)`);
+      }
+      
+      let consecutiveAbsences = 0;
+      let maxStreak = 0;
+      dailyRecords.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      dailyRecords.forEach(record => {
+        if (record.status === 'absent') {
+          consecutiveAbsences++;
+          maxStreak = Math.max(maxStreak, consecutiveAbsences);
+        } else {
+          consecutiveAbsences = 0;
+        }
+      });
+      
+      if (maxStreak >= 3) {
+        riskFactors.push(`${maxStreak} consecutive days absent`);
+      }
+      
+      if (ditchingIncidents.length > 3) {
+        riskFactors.push(`${ditchingIncidents.length} ditching incidents`);
+      }
+      
+      const criticalSubjects = subjectStats.filter(s => s.rate < 60);
+      if (criticalSubjects.length > 0) {
+        const worstSubjects = criticalSubjects.map(s => s.subject).join(', ');
+        riskFactors.push(`Critical absence in: ${worstSubjects}`);
+      }
+      
+      if (riskFactors.length >= 3) riskLevel = 'high';
+      else if (riskFactors.length >= 1) riskLevel = 'medium';
+      
+      return {
+        studentId,
+        studentName,
+        className,
+        gender: records[0]?.studentGender,
+        dailyStats,
+        subjectStats,
+        ditchingIncidents,
+        lateArrivals,
+        riskLevel,
+        riskFactors,
+        consecutiveAbsences: maxStreak
+      };
+    } catch (error) {
+      console.error('Error analyzing student risk:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get class risk analysis (for form teacher)
+   */
+  async getClassRiskAnalysis(
+    classId: string,
+    className: string,
+    days: number = 30
+  ): Promise<RiskAnalysis[]> {
+    try {
+      const learners = await learnerService.getLearnersByClass(classId);
+      
+      const riskAnalyses = await Promise.all(
+        learners.map(learner => 
+          this.getStudentRiskAnalysis(learner.id, learner.name, className, days)
+        )
+      );
+      
+      return riskAnalyses.sort((a, b) => {
+        if (a.riskLevel === 'high' && b.riskLevel !== 'high') return -1;
+        if (a.riskLevel !== 'high' && b.riskLevel === 'high') return 1;
+        if (a.riskLevel === 'medium' && b.riskLevel === 'low') return -1;
+        if (a.riskLevel === 'low' && b.riskLevel === 'medium') return 1;
+        return a.dailyStats.rate - b.dailyStats.rate;
+      });
+    } catch (error) {
+      console.error('Error getting class risk analysis:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get teacher activity summary
+   */
+  async getTeacherActivity(
+    teacherId?: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<TeacherActivity[]> {
+    try {
+      const filters: AttendanceFilters = {};
+      if (teacherId) filters.teacherId = teacherId;
+      if (startDate) filters.startDate = startDate;
+      if (endDate) filters.endDate = endDate;
+      
+      const records = await this.getAttendanceWithFilters(filters);
+      
+      // Group by teacher and session
+      const activityMap = new Map<string, TeacherActivity>();
+      
+      records.forEach(record => {
+        const key = `${record.markedBy}_${record.classId}_${record.date}_${record.attendanceType}`;
+        
+        if (!activityMap.has(key)) {
+          activityMap.set(key, {
+            teacherId: record.markedBy,
+            teacherName: record.markedByName,
+            classId: record.classId,
+            className: record.className,
+            subject: record.attendanceType === 'periodic' ? (record as PeriodicAttendanceRecord).subject : undefined,
+            date: record.date,
+            timeRecorded: record.timestamp instanceof Date 
+              ? record.timestamp.toLocaleTimeString() 
+              : new Date().toLocaleTimeString(),
+            attendanceType: record.attendanceType,
+            studentsMarked: 0
+          });
+        }
+        
+        const activity = activityMap.get(key)!;
+        activity.studentsMarked++;
+      });
+      
+      return Array.from(activityMap.values());
+    } catch (error) {
+      console.error('Error getting teacher activity:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get subject truancy analysis
+   */
+  async getSubjectTruancy(
+    classId?: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<SubjectTruancy[]> {
+    try {
+      const filters: AttendanceFilters = {
+        attendanceType: 'periodic'
+      };
+      if (classId) filters.classId = classId;
+      if (startDate) filters.startDate = startDate;
+      if (endDate) filters.endDate = endDate;
+      
+      const records = await this.getAttendanceWithFilters(filters);
+      const periodicRecords = records as PeriodicAttendanceRecord[];
+      
+      // Group by student and subject
+      const studentSubjectMap = new Map<string, Map<string, PeriodicAttendanceRecord[]>>();
+      
+      periodicRecords.forEach(record => {
+        const studentKey = record.studentId;
+        const subjectKey = record.subject;
+        
+        if (!studentSubjectMap.has(studentKey)) {
+          studentSubjectMap.set(studentKey, new Map());
+        }
+        const subjectMap = studentSubjectMap.get(studentKey)!;
+        
+        if (!subjectMap.has(subjectKey)) {
+          subjectMap.set(subjectKey, []);
+        }
+        subjectMap.get(subjectKey)!.push(record);
+      });
+
+      const truancy: SubjectTruancy[] = [];
+
+      studentSubjectMap.forEach((subjectMap, studentId) => {
+        subjectMap.forEach((records, subject) => {
+          const total = records.length;
+          const attended = records.filter(
+            r => r.status === 'present' || r.status === 'late'
+          ).length;
+          const attendanceRate = total > 0 ? (attended / total) * 100 : 0;
+
+          const midPoint = Math.floor(total / 2);
+          const firstHalf = records.slice(0, midPoint);
+          const secondHalf = records.slice(midPoint);
+          
+          const firstHalfRate = firstHalf.length > 0
+            ? (firstHalf.filter(r => r.status === 'present' || r.status === 'late').length / firstHalf.length) * 100
+            : 0;
+          const secondHalfRate = secondHalf.length > 0
+            ? (secondHalf.filter(r => r.status === 'present' || r.status === 'late').length / secondHalf.length) * 100
+            : 0;
+
+          let trend: 'improving' | 'declining' | 'stable' = 'stable';
+          if (secondHalfRate - firstHalfRate > 5) trend = 'improving';
+          else if (firstHalfRate - secondHalfRate > 5) trend = 'declining';
+
+          if (records[0]) {
+            truancy.push({
+              studentId: studentId,
+              studentName: records[0].studentName,
+              className: records[0].className,
+              subject,
+              teacherName: records[0].markedByName,
+              totalSessions: total,
+              attended,
+              missed: total - attended,
+              attendanceRate,
+              trend,
+            });
+          }
+        });
+      });
+
+      return truancy.sort((a, b) => a.attendanceRate - b.attendanceRate);
+    } catch (error) {
+      console.error('Error getting subject truancy:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get late arrivals
+   */
+  async getLateArrivals(
+    classId?: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<LateArrival[]> {
+    try {
+      // Get daily records
+      const dailyFilters: AttendanceFilters = {
+        attendanceType: 'daily'
+      };
+      if (classId) dailyFilters.classId = classId;
+      if (startDate) dailyFilters.startDate = startDate;
+      if (endDate) dailyFilters.endDate = endDate;
+      
+      const dailyRecords = await this.getAttendanceWithFilters(dailyFilters);
+      const dailyByStudentDate = new Map<string, DailyAttendanceRecord>();
+      
+      (dailyRecords as DailyAttendanceRecord[]).forEach(record => {
+        const key = `${record.studentId}_${record.date}`;
+        dailyByStudentDate.set(key, record);
+      });
+      
+      // Get first period records
+      const firstPeriodFilters: AttendanceFilters = {
+        attendanceType: 'periodic',
+        period: 1
+      };
+      if (classId) firstPeriodFilters.classId = classId;
+      if (startDate) firstPeriodFilters.startDate = startDate;
+      if (endDate) firstPeriodFilters.endDate = endDate;
+      
+      const firstPeriodRecords = await this.getAttendanceWithFilters(firstPeriodFilters);
+      
+      const lateArrivals: LateArrival[] = [];
+      
+      (firstPeriodRecords as PeriodicAttendanceRecord[]).forEach(record => {
+        const key = `${record.studentId}_${record.date}`;
+        const daily = dailyByStudentDate.get(key);
+        
+        if (daily?.status === 'absent' && 
+            (record.status === 'present' || record.status === 'late')) {
+          lateArrivals.push({
+            studentId: record.studentId,
+            studentName: record.studentName,
+            className: record.className,
+            date: record.date,
+            dailyStatus: daily.status,
+            firstPeriodStatus: record.status,
+            timeDetected: record.timestamp instanceof Date 
+              ? record.timestamp.toLocaleTimeString() 
+              : undefined
+          });
+        }
+      });
+      
+      return lateArrivals;
+    } catch (error) {
+      console.error('Error getting late arrivals:', error);
+      return [];
+    }
+  }
+
+  // Legacy methods for backward compatibility
+  async markAttendance(data: any): Promise<AttendanceRecord> {
+    if (data.attendanceType === 'daily') {
+      return this.markDailyAttendance(data);
+    } else {
+      return this.markPeriodicAttendance(data);
+    }
+  }
+
+  async bulkMarkAttendance(data: any): Promise<AttendanceRecord[]> {
+    if (data.attendanceType === 'daily') {
+      return this.bulkMarkDailyAttendance(data);
+    } else {
+      return this.bulkMarkPeriodicAttendance(data);
+    }
+  }
+
   async getByClassAndDate(classId: string, date: string): Promise<AttendanceRecord[]> {
-    try {
-      const q = query(
-        collection(db, ATTENDANCE_COLLECTION),
-        where('classId', '==', classId),
-        where('date', '==', date)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => {
-        const data = doc.data();
-        // Ensure we return properly typed data
-        return {
-          ...data,
-          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : data.timestamp,
-          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
-        } as AttendanceRecord;
-      });
-    } catch (error) {
-      console.error('Error fetching attendance:', error);
-      return [];
-    }
+    return this.getAttendanceWithFilters({ 
+      classId, 
+      startDate: date,  // FIXED: Use startDate instead of date
+      endDate: date      // FIXED: Use endDate instead of date
+    });
   }
 
-  /**
-   * Get attendance records for a date range
-   */
   async getByDateRange(startDate: string, endDate: string): Promise<AttendanceRecord[]> {
-    try {
-      const q = query(
-        collection(db, ATTENDANCE_COLLECTION),
-        where('date', '>=', startDate),
-        where('date', '<=', endDate),
-        orderBy('date', 'desc'),
-        orderBy('timestamp', 'desc')
-      );
-      
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          ...data,
-          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : data.timestamp,
-          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
-        } as AttendanceRecord;
-      });
-    } catch (error) {
-      console.error('Error fetching attendance by date range:', error);
-      return [];
-    }
+    return this.getAttendanceWithFilters({ startDate, endDate });
   }
 
-  /**
-   * Get today's attendance for a class
-   */
-  async getTodaysAttendance(classId: string): Promise<AttendanceRecord[]> {
-    const today = new Date().toISOString().split('T')[0];
-    return this.getByClassAndDate(classId, today);
+  async getStudentAttendance(studentId: string, startDate: string, endDate: string): Promise<AttendanceRecord[]> {
+    return this.getAttendanceWithFilters({ studentId, startDate, endDate });
   }
 
-  /**
-   * Get attendance for a student over a date range
-   */
-  async getStudentAttendance(
-    studentId: string, 
-    startDate: string, 
-    endDate: string
-  ): Promise<AttendanceRecord[]> {
-    try {
-      const q = query(
-        collection(db, ATTENDANCE_COLLECTION),
-        where('studentId', '==', studentId),
-        where('date', '>=', startDate),
-        where('date', '<=', endDate),
-        orderBy('date', 'desc')
-      );
-      
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          ...data,
-          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : data.timestamp,
-          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
-        } as AttendanceRecord;
-      });
-    } catch (error) {
-      console.error('Error fetching student attendance:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Get attendance summary for a student
-   */
   async getStudentSummary(studentId: string, studentName: string, gender?: 'male' | 'female'): Promise<StudentAttendanceSummary> {
     try {
       const thirtyDaysAgo = new Date();
@@ -288,7 +952,6 @@ class AttendanceService {
         ? ((summary.present + summary.late) / summary.totalDays) * 100 
         : 0;
       
-      // Last 30 days stats (excluding future dates)
       const last30DaysRecords = records.filter(r => r.date <= today);
       summary.last30Days = {
         present: last30DaysRecords.filter(r => r.status === 'present').length,
@@ -315,9 +978,6 @@ class AttendanceService {
     }
   }
 
-  /**
-   * Update or create daily attendance summary
-   */
   async updateDailySummary(classId: string, className: string, date: string): Promise<void> {
     try {
       const records = await this.getByClassAndDate(classId, date);
@@ -330,7 +990,6 @@ class AttendanceService {
       const late = records.filter(r => r.status === 'late').length;
       const excused = records.filter(r => r.status === 'excused').length;
       
-      // Gender-based counts
       const boysPresent = records.filter(r => r.status === 'present' && r.studentGender === 'male').length;
       const girlsPresent = records.filter(r => r.status === 'present' && r.studentGender === 'female').length;
       const boysAbsent = records.filter(r => (r.status === 'absent' || r.status === 'excused') && r.studentGender === 'male').length;
@@ -363,9 +1022,6 @@ class AttendanceService {
     }
   }
 
-  /**
-   * Get daily summary for a class and date
-   */
   async getDailySummary(classId: string, date: string): Promise<DailyAttendance | null> {
     try {
       const summaryId = `${classId}_${date}`;
@@ -387,9 +1043,6 @@ class AttendanceService {
     }
   }
 
-  /**
-   * Get attendance statistics for a class over a period
-   */
   async getClassStats(classId: string, startDate: string, endDate: string): Promise<{
     totalDays: number;
     averageAttendance: number;
@@ -400,24 +1053,12 @@ class AttendanceService {
     dailyStats: Array<{ date: string; rate: number }>;
   }> {
     try {
-      const q = query(
-        collection(db, ATTENDANCE_COLLECTION),
-        where('classId', '==', classId),
-        where('date', '>=', startDate),
-        where('date', '<=', endDate),
-        orderBy('date', 'asc')
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const records = querySnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          ...data,
-          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : data.timestamp,
-        } as AttendanceRecord;
+      const records = await this.getAttendanceWithFilters({
+        classId,
+        startDate,
+        endDate
       });
       
-      // Group by date
       const dailyGroups = records.reduce((acc, record) => {
         if (!acc[record.date]) {
           acc[record.date] = [];
@@ -474,9 +1115,6 @@ class AttendanceService {
     }
   }
 
-  /**
-   * Get students with missing attendance for a date
-   */
   async getMissingAttendance(classId: string, date: string, learners: Learner[]): Promise<Learner[]> {
     try {
       const existingAttendance = await this.getByClassAndDate(classId, date);
@@ -489,16 +1127,23 @@ class AttendanceService {
     }
   }
 
-  /**
-   * Delete an attendance record
-   */
   async deleteAttendance(classId: string, studentId: string, date: string): Promise<void> {
     try {
-      const recordId = `${classId}_${studentId}_${date}`;
-      const recordRef = doc(db, ATTENDANCE_COLLECTION, recordId);
-      await deleteDoc(recordRef);
+      // Find all records for this student on this date
+      const records = await this.getAttendanceWithFilters({
+        classId,
+        studentId,
+        startDate: date,  // FIXED: Use startDate instead of date
+        endDate: date      // FIXED: Use endDate instead of date
+      });
       
-      // Update daily summary
+      const batch = writeBatch(db);
+      records.forEach(record => {
+        const recordRef = doc(db, ATTENDANCE_COLLECTION, record.id);
+        batch.delete(recordRef);
+      });
+      
+      await batch.commit();
       await this.updateDailySummary(classId, '', date);
     } catch (error) {
       console.error('Error deleting attendance:', error);
@@ -506,9 +1151,6 @@ class AttendanceService {
     }
   }
 
-  /**
-   * Get monthly attendance report for a class
-   */
   async getMonthlyReport(classId: string, month: string): Promise<{
     month: string;
     dailyRecords: Array<{
@@ -592,9 +1234,6 @@ class AttendanceService {
     }
   }
 
-  /**
-   * Get attendance summary for all classes on a specific date
-   */
   async getSchoolAttendanceSummary(date: string): Promise<{
     totalStudents: number;
     present: number;
@@ -614,21 +1253,11 @@ class AttendanceService {
     }>;
   }> {
     try {
-      const q = query(
-        collection(db, ATTENDANCE_COLLECTION),
-        where('date', '==', date)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const records = querySnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          ...data,
-          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : data.timestamp,
-        } as AttendanceRecord;
+      const records = await this.getAttendanceWithFilters({ 
+        startDate: date,  // FIXED: Use startDate instead of date
+        endDate: date      // FIXED: Use endDate instead of date
       });
 
-      // Group by class
       const classMap = new Map<string, {
         classId: string;
         className: string;
@@ -691,8 +1320,5 @@ class AttendanceService {
   }
 }
 
-// Export the service instance
 export const attendanceService = new AttendanceService();
-
-// Also export the class itself if needed
 export { AttendanceService };
