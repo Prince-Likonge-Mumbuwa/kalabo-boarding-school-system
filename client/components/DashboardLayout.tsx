@@ -15,6 +15,7 @@ import {
   PenTool,
   CalendarCheck,
   Calendar,
+  GraduationCap,
 } from 'lucide-react';
 
 interface DashboardLayoutProps {
@@ -46,6 +47,7 @@ export function DashboardLayout({ children, activeTab = 'dashboard' }: Dashboard
 
   const teacherMenuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard/teacher' },
+    { id: 'my-class', label: 'My Class', icon: GraduationCap, path: '/dashboard/teacher/my-class' }, // Added My Class
     { id: 'attendance', label: 'Attendance Tracking', icon: Clock, path: '/dashboard/teacher/attendance' },
     { id: 'results', label: 'Results Entry', icon: PenTool, path: '/dashboard/teacher/results-entry' },
     { id: 'analysis', label: 'Results Analysis', icon: BarChart3, path: '/dashboard/teacher/results-analysis' },
