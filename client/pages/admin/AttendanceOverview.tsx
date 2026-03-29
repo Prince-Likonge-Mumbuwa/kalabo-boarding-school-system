@@ -390,17 +390,26 @@ const AttendanceChart = ({ data }: { data: AttendanceSummary[] }) => {
   );
 };
 
-// ==================== CLASS BREAKDOWN TABLE ====================
+// ==================== CLASS BREAKDOWN TABLE (DAILY ONLY) ====================
 const ClassBreakdownTable = ({ data }: { data: AttendanceSummary['classBreakdown'] }) => {
   const classes = Object.values(data);
   
+  if (classes.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+        <p className="text-gray-500">No daily attendance records for the selected period.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="px-4 sm:px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
-        <h3 className="font-semibold text-gray-900">Class-wise Attendance</h3>
-        <p className="text-sm text-gray-500 mt-0.5">Breakdown by class</p>
+        <h3 className="font-semibold text-gray-900">Class-wise Attendance (Daily Roll Call)</h3>
+        <p className="text-sm text-gray-500 mt-0.5">Based on daily attendance records only</p>
       </div>
 
+      {/* Mobile card view */}
       <div className="block sm:hidden divide-y divide-gray-200">
         {classes.map((cls) => (
           <div key={cls.className} className="p-4 hover:bg-gray-50">
@@ -440,6 +449,7 @@ const ClassBreakdownTable = ({ data }: { data: AttendanceSummary['classBreakdown
         ))}
       </div>
 
+      {/* Desktop table view */}
       <div className="hidden sm:block overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
@@ -479,8 +489,10 @@ const ClassBreakdownTable = ({ data }: { data: AttendanceSummary['classBreakdown
   );
 };
 
-// ==================== LATE ARRIVALS VIEW ====================
+// ==================== LATE ARRIVALS VIEW (RESPONSIVE) ====================
 const LateArrivalsView = ({ lateArrivals }: { lateArrivals: any[] }) => {
+  if (lateArrivals.length === 0) return null;
+
   return (
     <div className="bg-white rounded-xl border border-yellow-200 overflow-hidden">
       <div className="px-4 sm:px-6 py-4 bg-yellow-50 border-b border-yellow-200">
@@ -493,7 +505,34 @@ const LateArrivalsView = ({ lateArrivals }: { lateArrivals: any[] }) => {
         </p>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Mobile card view */}
+      <div className="block sm:hidden divide-y divide-gray-200">
+        {lateArrivals.slice(0, 10).map((late, index) => (
+          <div key={index} className="p-4 hover:bg-yellow-50">
+            <div className="flex justify-between items-start mb-2">
+              <div>
+                <p className="font-medium text-gray-900">{late.studentName}</p>
+                <p className="text-sm text-gray-600">{late.className}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-gray-500">{late.date}</p>
+                <p className="text-xs text-gray-400">{late.timeDetected || 'N/A'}</p>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <span className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded-full">
+                Daily: {late.dailyStatus}
+              </span>
+              <span className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded-full">
+                1st Period: {late.firstPeriodStatus}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table view */}
+      <div className="hidden sm:block overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
@@ -531,8 +570,10 @@ const LateArrivalsView = ({ lateArrivals }: { lateArrivals: any[] }) => {
   );
 };
 
-// ==================== SUBJECT TRUANCY VIEW ====================
+// ==================== SUBJECT TRUANCY VIEW (RESPONSIVE) ====================
 const SubjectTruancyView = ({ truancy }: { truancy: any[] }) => {
+  if (truancy.length === 0) return null;
+
   return (
     <div className="bg-white rounded-xl border border-orange-200 overflow-hidden">
       <div className="px-4 sm:px-6 py-4 bg-orange-50 border-b border-orange-200">
@@ -545,7 +586,50 @@ const SubjectTruancyView = ({ truancy }: { truancy: any[] }) => {
         </p>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Mobile card view */}
+      <div className="block sm:hidden divide-y divide-gray-200">
+        {truancy.slice(0, 10).map((item, index) => (
+          <div key={index} className="p-4 hover:bg-orange-50">
+            <div className="flex justify-between items-start mb-2">
+              <div>
+                <p className="font-medium text-gray-900">{item.studentName}</p>
+                <p className="text-sm text-gray-600">{item.className}</p>
+              </div>
+              <span className={`px-2 py-1 text-xs rounded-full ${
+                item.attendanceRate < 60 ? 'bg-red-100 text-red-700' :
+                item.attendanceRate < 75 ? 'bg-yellow-100 text-yellow-700' :
+                'bg-green-100 text-green-700'
+              }`}>
+                {item.attendanceRate.toFixed(1)}%
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
+              <div>
+                <span className="text-gray-500">Subject:</span> {item.subject}
+              </div>
+              <div>
+                <span className="text-gray-500">Missed:</span> <span className="text-red-600 font-medium">{item.missed}</span> / {item.totalSessions}
+              </div>
+              <div className="col-span-2">
+                <span className="text-gray-500">Trend:</span>
+                <span className={`ml-1 flex items-center gap-1 ${
+                  item.trend === 'improving' ? 'text-green-600' :
+                  item.trend === 'declining' ? 'text-red-600' :
+                  'text-gray-600'
+                }`}>
+                  {item.trend === 'improving' && <TrendingUp size={12} />}
+                  {item.trend === 'declining' && <TrendingDown size={12} />}
+                  {item.trend === 'stable' && <Minus size={12} />}
+                  {item.trend}
+                </span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table view */}
+      <div className="hidden sm:block overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
@@ -596,8 +680,10 @@ const SubjectTruancyView = ({ truancy }: { truancy: any[] }) => {
   );
 };
 
-// ==================== TEACHER ACTIVITY VIEW ====================
+// ==================== TEACHER ACTIVITY VIEW (RESPONSIVE) ====================
 const TeacherActivityView = ({ activities }: { activities: any[] }) => {
+  if (activities.length === 0) return null;
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="px-4 sm:px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
@@ -605,7 +691,44 @@ const TeacherActivityView = ({ activities }: { activities: any[] }) => {
         <p className="text-sm text-gray-500 mt-0.5">All attendance marking activities</p>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Mobile card view */}
+      <div className="block sm:hidden divide-y divide-gray-200">
+        {activities.slice(0, 10).map((activity, index) => (
+          <div key={index} className="p-4 hover:bg-gray-50">
+            <div className="flex justify-between items-start mb-2">
+              <div>
+                <p className="font-medium text-gray-900">{activity.teacherName}</p>
+                <p className="text-sm text-gray-600">{activity.className}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-gray-500">{activity.date}</p>
+                <p className="text-xs text-gray-400">{activity.timeRecorded}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
+              <div>
+                <span className="text-gray-500">Subject:</span> {activity.subject || '-'}
+              </div>
+              <div>
+                <span className="text-gray-500">Type:</span>
+                <span className={`ml-1 px-2 py-0.5 text-xs rounded-full ${
+                  activity.attendanceType === 'daily' 
+                    ? 'bg-blue-100 text-blue-700' 
+                    : 'bg-purple-100 text-purple-700'
+                }`}>
+                  {activity.attendanceType}
+                </span>
+              </div>
+              <div className="col-span-2">
+                <span className="text-gray-500">Students marked:</span> {activity.studentsMarked}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table view */}
+      <div className="hidden sm:block overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
@@ -771,7 +894,12 @@ export default function AttendanceOverview() {
     return filtered;
   }, [attendanceRecords, selectedClass, searchTerm, advancedFilters]);
 
-  // Calculate summary
+  // Separate daily records for class breakdown
+  const dailyRecords = useMemo(() => {
+    return filteredRecords.filter(r => r.attendanceType === 'daily');
+  }, [filteredRecords]);
+
+  // Calculate summary (overall stats still use filteredRecords)
   const summary = useMemo((): AttendanceSummary => {
     const total = filteredRecords.length;
     const present = filteredRecords.filter(r => r.status === 'present').length;
@@ -779,9 +907,10 @@ export default function AttendanceOverview() {
     const late = filteredRecords.filter(r => r.status === 'late').length;
     const excused = filteredRecords.filter(r => r.status === 'excused').length;
     
+    // Class breakdown based on daily records only
     const classBreakdown: AttendanceSummary['classBreakdown'] = {};
     
-    filteredRecords.forEach(record => {
+    dailyRecords.forEach(record => {
       if (!classBreakdown[record.classId]) {
         classBreakdown[record.classId] = {
           className: record.className,
@@ -813,7 +942,7 @@ export default function AttendanceOverview() {
       rate: total > 0 ? Math.round(((present + late) / total) * 100) : 0,
       classBreakdown
     };
-  }, [filteredRecords, selectedDate]);
+  }, [filteredRecords, dailyRecords, selectedDate]);
 
   // Generate trend data
   const trendData = useMemo((): AttendanceSummary[] => {
@@ -1120,7 +1249,7 @@ export default function AttendanceOverview() {
               <AttendanceChart data={trendData} />
             )}
 
-            {/* Class Breakdown */}
+            {/* Class Breakdown - Now only shows daily records */}
             {Object.keys(summary.classBreakdown).length > 0 && (
               <ClassBreakdownTable data={summary.classBreakdown} />
             )}

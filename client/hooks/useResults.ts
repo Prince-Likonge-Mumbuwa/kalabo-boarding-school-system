@@ -107,7 +107,11 @@ export const useResults = (options?: {
       examType: options?.examType,
     }),
     enabled: shouldFetchAllResults,
-    staleTime: 2 * 60 * 1000,
+    // staleTime: 0 — results are always fresh from Firestore.
+    // This ensures deletions/saves in ResultsEntry are immediately visible
+    // in the analysis page without needing a manual refresh.
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 
   const results = shouldFetchTeacherResults
@@ -191,6 +195,27 @@ export const useResults = (options?: {
     },
   });
 
+  const deleteResultsMutation = useMutation({
+    mutationFn: (data: {
+      classId: string;
+      subjectId: string;
+      examType: string;
+      term: string;
+      year: number;
+    }) => resultsService.deleteClassResults(data),
+    onSuccess: (data, variables) => {
+      console.log(`🗑️ Deleted ${data.deletedCount} results`);
+      queryClient.invalidateQueries({ queryKey: ['results'] });
+      queryClient.invalidateQueries({ queryKey: ['subjectCompletion'] });
+      queryClient.invalidateQueries({ queryKey: ['reportReadiness'] });
+      queryClient.invalidateQueries({ queryKey: ['reportCards'] });
+      queryClient.invalidateQueries({ queryKey: ['studentProgress'] });
+    },
+    onError: (error) => {
+      console.error('❌ Failed to delete results:', error);
+    },
+  });
+
   const updateResultMutation = useMutation({
     mutationFn: ({ resultId, marks, totalMarks }: {
       resultId: string;
@@ -267,7 +292,10 @@ export const useResults = (options?: {
     
     editResults: editResultsMutation.mutateAsync,
     isEditing: editResultsMutation.isPending,
-    
+
+    deleteResults: deleteResultsMutation.mutateAsync,
+    isDeleting: deleteResultsMutation.isPending,
+
     generateReportCard: generateReportCardMutation.mutateAsync,
     generateClassReportCards: generateClassReportCardsMutation.mutateAsync,
     isGeneratingReport: generateReportCardMutation.isPending || generateClassReportCardsMutation.isPending,

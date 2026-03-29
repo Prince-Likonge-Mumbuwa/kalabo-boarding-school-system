@@ -90,6 +90,20 @@ interface ExamData {
   endOfTerm: ExamDataItem[];
 }
 
+// ==================== MODAL / TOAST STATE ====================
+interface ModalState {
+  type: 'confirmDelete' | 'confirmCancelEdit' | 'confirmClearDraft';
+  title: string;
+  description: string;
+  onConfirm: () => void;
+}
+
+interface ToastState {
+  id: number;
+  type: 'success' | 'error';
+  message: string;
+}
+
 // ==================== AVAILABLE EXAM TYPES BASED ON CONFIG ====================
 const getAvailableExamTypes = (config: any) => {
   if (!config?.examTypes) return [];
@@ -865,6 +879,107 @@ const EmptyState = ({
   return null;
 };
 
+// ==================== CONFIRM MODAL ====================
+interface ConfirmModalProps {
+  modal: ModalState | null;
+  onClose: () => void;
+  isLoading?: boolean;
+}
+
+const ConfirmModal = ({ modal, onClose, isLoading = false }: ConfirmModalProps) => {
+  if (!modal) return null;
+  const isDanger = modal.type === 'confirmDelete';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div
+        className="fixed inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={isLoading ? undefined : onClose}
+      />
+      <div className="relative bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6 flex flex-col gap-4">
+        {/* Icon */}
+        <div className={`inline-flex items-center justify-center w-12 h-12 rounded-full self-start
+          ${isDanger ? 'bg-red-100' : 'bg-amber-100'}`}>
+          {isDanger
+            ? <Trash2 size={22} className="text-red-600" />
+            : <AlertCircle size={22} className="text-amber-600" />}
+        </div>
+
+        {/* Text */}
+        <div>
+          <h3 className="text-base font-semibold text-gray-900 mb-1">{modal.title}</h3>
+          <p className="text-sm text-gray-500 leading-relaxed">{modal.description}</p>
+        </div>
+
+        {/* Buttons */}
+        <div className="flex gap-2.5 pt-1">
+          <button
+            onClick={isLoading ? undefined : onClose}
+            disabled={isLoading}
+            className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={modal.onConfirm}
+            disabled={isLoading}
+            className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white transition-colors
+              flex items-center justify-center gap-2
+              disabled:opacity-50 disabled:cursor-not-allowed
+              ${isDanger ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500' : 'bg-amber-600 hover:bg-amber-700 focus:ring-amber-500'}
+              focus:outline-none focus:ring-2 focus:ring-offset-2`}
+          >
+            {isLoading && <Loader2 size={14} className="animate-spin" />}
+            {isDanger ? 'Delete' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==================== TOAST ====================
+interface ToastProps {
+  toasts: ToastState[];
+  onDismiss: (id: number) => void;
+}
+
+const ToastContainer = ({ toasts, onDismiss }: ToastProps) => {
+  return (
+    <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+      {toasts.map(toast => (
+        <ToastItem key={toast.id} toast={toast} onDismiss={onDismiss} />
+      ))}
+    </div>
+  );
+};
+
+const ToastItem = ({ toast, onDismiss }: { toast: ToastState; onDismiss: (id: number) => void }) => {
+  useEffect(() => {
+    const t = setTimeout(() => onDismiss(toast.id), 3500);
+    return () => clearTimeout(t);
+  }, [toast.id, onDismiss]);
+
+  return (
+    <div
+      className={`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg
+        text-white text-sm font-medium max-w-xs animate-in slide-in-from-bottom-2
+        ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}
+    >
+      {toast.type === 'success'
+        ? <CheckCircle size={16} className="flex-shrink-0" />
+        : <XCircle size={16} className="flex-shrink-0" />}
+      <span className="flex-1">{toast.message}</span>
+      <button
+        onClick={() => onDismiss(toast.id)}
+        className="text-white/70 hover:text-white flex-shrink-0 ml-1"
+      >
+        <XCircle size={14} />
+      </button>
+    </div>
+  );
+};
+
 // ==================== EDIT MODE INDICATOR ====================
 interface EditModeIndicatorProps {
   isEditing: boolean;
@@ -922,6 +1037,18 @@ export default function ResultsEntry() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [originalResults, setOriginalResults] = useState<Map<string, number>>(new Map());
 
+  // Modal and toast state — replaces all alert()/confirm() calls
+  const [modal, setModal] = useState<ModalState | null>(null);
+  const [toasts, setToasts] = useState<ToastState[]>([]);
+
+  const showToast = useCallback((type: 'success' | 'error', message: string) => {
+    setToasts(prev => [...prev, { id: Date.now(), type, message }]);
+  }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
   const { classes, isLoading: loadingClasses } = useSchoolClasses({ isActive: true });
   
   // Get exam configuration for the selected term and year
@@ -945,7 +1072,7 @@ export default function ResultsEntry() {
   
   const { assignments, getSubjectsForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.uid);
   
-  const { saveResults, isSaving, checkExisting, editResults, isEditing } = useResults();
+  const { saveResults, isSaving, checkExisting, isCheckingExisting, editResults, isEditing, deleteResults, isDeleting } = useResults();
   
   const {
     completionStatus,
@@ -1009,6 +1136,14 @@ export default function ResultsEntry() {
     if (!selectedSubject || !completionStatus.length) return null;
     return completionStatus.find((s: any) => s.subjectName === selectedSubject) as ExtendedSubjectCompletion | null;
   }, [selectedSubject, completionStatus]);
+
+  // Derived from completionStatus — no extra Firestore round-trip needed.
+  // True when at least one student result is stored for the current exam type.
+  const hasFirestoreResults = useMemo(() => {
+    if (!currentSubjectCompletion || !examType) return false;
+    const count = currentSubjectCompletion.enteredStudents?.[examType as keyof typeof currentSubjectCompletion.enteredStudents] ?? 0;
+    return count > 0;
+  }, [currentSubjectCompletion, examType]);
 
   const currentDraft = useMemo(() => {
     return drafts.find(d => 
@@ -1238,16 +1373,11 @@ export default function ResultsEntry() {
   }, [isExamTypeEnabled]);
 
   const handleEditResults = async () => {
-    if (!selectedClass || !selectedSubject || !selectedClassData || !user || !currentSubjectCompletion) return;
-
-    const hasExistingResults = currentSubjectCompletion[`${examType}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
-
-    if (!hasExistingResults) {
-      alert('No results to edit for this exam type.');
-      return;
-    }
+    if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
 
     try {
+      // Query Firestore directly — no dependency on completionStatus so this
+      // works for results saved any time in the past, not just the current session.
       const existingResponse = await checkExisting({
         classId: selectedClass,
         subjectId: selectedSubject,
@@ -1256,72 +1386,80 @@ export default function ResultsEntry() {
         year,
       });
 
-      if (existingResponse && existingResponse.results && existingResponse.results.length > 0) {
-        const originalMap = new Map<string, number>();
-        existingResponse.results.forEach((r: any) => {
-          originalMap.set(r.studentId || r.student_id, r.marks);
-        });
-        setOriginalResults(originalMap);
-
-        setStudents(prevStudents => 
-          prevStudents.map(student => {
-            const existing = existingResponse.results.find((r: any) => 
-              (r.studentId === student.studentId || r.student_id === student.studentId)
-            );
-            return {
-              ...student,
-              marks: existing ? (existing.marks === -1 ? 'X' : existing.marks.toString()) : '',
-            };
-          })
-        );
+      if (!existingResponse?.results?.length) {
+        showToast('error', 'No saved results found in Firestore for this exam type.');
+        return;
       }
 
-      await editResults({
-        classId: selectedClass,
-        subjectId: selectedSubject,
-        examType,
-        term,
-        year,
-      });
+      // Build the original marks map so Cancel can restore them
+      const originalMap = new Map<string, number>(
+        existingResponse.results.map((r: any) => [
+          (r.studentId ?? r.student_id) as string,
+          r.marks as number,
+        ])
+      );
+      setOriginalResults(originalMap);
+
+      // Populate each student row from the Firestore results
+      setStudents(prevStudents =>
+        prevStudents.map(student => {
+          const existing = existingResponse.results.find(
+            (r: any) => r.studentId === student.studentId || r.student_id === student.studentId
+          );
+          return {
+            ...student,
+            marks: existing ? (existing.marks === -1 ? 'X' : String(existing.marks)) : '',
+          };
+        })
+      );
 
       setIsEditMode(true);
-      await refetchCompletion();
-      
+      refetchCompletion();
+
     } catch (error: any) {
-      console.error('Error editing results:', error);
-      alert(`Failed to unlock: ${error.message || 'Please try again'}`);
+      console.error('Error loading results for editing:', error);
+      showToast('error', `Failed to load results: ${error.message || 'Please try again'}`);
     }
   };
 
   const handleCancelEdit = useCallback(() => {
-    if (confirm('Cancel editing? Any unsaved changes will be lost.')) {
-      setStudents(prevStudents => 
-        prevStudents.map(student => {
-          const originalMark = originalResults.get(student.studentId);
-          return {
-            ...student,
-            marks: originalMark !== undefined ? (originalMark === -1 ? 'X' : originalMark.toString()) : '',
-          };
-        })
-      );
-      setIsEditMode(false);
-      setOriginalResults(new Map());
-    }
+    setModal({
+      type: 'confirmCancelEdit',
+      title: 'Cancel editing?',
+      description: 'Any unsaved changes will be discarded and marks will revert to what was last saved.',
+      onConfirm: () => {
+        setModal(null);
+        setStudents(prevStudents =>
+          prevStudents.map(student => {
+            const originalMark = originalResults.get(student.studentId);
+            return {
+              ...student,
+              marks: originalMark !== undefined ? (originalMark === -1 ? 'X' : originalMark.toString()) : '',
+            };
+          })
+        );
+        setIsEditMode(false);
+        setOriginalResults(new Map());
+      },
+    });
   }, [originalResults]);
 
   const handleSaveResults = async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
 
-    const results = students
-      .filter(s => s.marks !== '')
-      .map(s => ({
-        studentId: s.studentId,
-        studentName: s.name,
-        marks: s.marks.toLowerCase() === 'x' ? -1 : parseInt(s.marks),
-      }));
+    // Use Promise.all to prepare all student result payloads concurrently.
+    const results = await Promise.all(
+      students
+        .filter(s => s.marks !== '')
+        .map(async (s) => ({
+          studentId: s.studentId,
+          studentName: s.name,
+          marks: s.marks.toLowerCase() === 'x' ? -1 : parseInt(s.marks),
+        }))
+    );
 
     if (results.length === 0) {
-      alert('Please enter marks for at least one student');
+      showToast('error', 'Please enter marks for at least one student.');
       return;
     }
 
@@ -1332,7 +1470,7 @@ export default function ResultsEntry() {
         subjectId: selectedSubject,
         subjectName: selectedSubject,
         teacherId: user.uid,
-        teacherName: user.fullName|| user.email || 'Unknown',
+        teacherName: user.fullName || user.email || 'Unknown',
         examType,
         examName: `${examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'} - ${selectedSubject}`,
         term,
@@ -1343,24 +1481,61 @@ export default function ResultsEntry() {
       });
 
       setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
-      
+
       if (currentDraft) {
         const newDrafts = drafts.filter(d => d.id !== currentDraft.id);
         saveDrafts(newDrafts);
       }
-      
+
       setIsEditMode(false);
       setOriginalResults(new Map());
-      
-      await refetchCompletion();
-      
-      alert('Results saved successfully!');
-      
+
+      // Non-blocking — let it refresh in the background without delaying the UI
+      refetchCompletion();
+
+      showToast('success', `Results ${isEditMode ? 'updated' : 'saved'} successfully.`);
+
     } catch (error: any) {
       console.error('Error saving results:', error);
-      alert(`Failed to save: ${error.message || 'Please try again'}`);
+      showToast('error', `Failed to save: ${error.message || 'Please try again'}`);
     }
   };
+
+  const handleDeleteResults = useCallback(() => {
+    if (!selectedClass || !selectedSubject || !selectedClassData) return;
+    const examLabel = examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term';
+    setModal({
+      type: 'confirmDelete',
+      title: 'Delete results?',
+      description: `This will permanently delete all saved ${examLabel} results for ${selectedSubject} in ${selectedClassData.name}. This cannot be undone.`,
+      onConfirm: async () => {
+        try {
+          await deleteResults({
+            classId: selectedClass,
+            subjectId: selectedSubject,
+            examType,
+            term,
+            year,
+          });
+
+          setModal(null);
+          // Clear the input rows so the form is ready for fresh entry
+          setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
+          setIsEditMode(false);
+          setOriginalResults(new Map());
+
+          // Non-blocking background refresh of completion counts
+          refetchCompletion();
+
+          showToast('success', `${examLabel} results deleted.`);
+        } catch (error: any) {
+          setModal(null);
+          console.error('Error deleting results:', error);
+          showToast('error', `Failed to delete: ${error.message || 'Please try again'}`);
+        }
+      },
+    });
+  }, [selectedClass, selectedSubject, selectedClassData, examType, term, year, deleteResults, refetchCompletion, showToast]);
 
   const handleLoadDraft = useCallback((draft: SavedDraft) => {
     setSelectedClass(draft.classId);
@@ -1374,13 +1549,20 @@ export default function ResultsEntry() {
   }, []);
 
   const handleDeleteDraft = useCallback((draftId: string) => {
-    if (confirm('Delete this draft?')) {
-      const newDrafts = drafts.filter(d => d.id !== draftId);
-      saveDrafts(newDrafts);
-      if (activeDraftId === draftId) {
-        setActiveDraftId(null);
-      }
-    }
+    const draft = drafts.find(d => d.id === draftId);
+    setModal({
+      type: 'confirmClearDraft',
+      title: 'Delete draft?',
+      description: draft
+        ? `Delete the draft for ${draft.subject} (${draft.examType}) in ${draft.className}? This only removes it from local storage — no Firestore data is affected.`
+        : 'Delete this draft?',
+      onConfirm: () => {
+        setModal(null);
+        const newDrafts = drafts.filter(d => d.id !== draftId);
+        saveDrafts(newDrafts);
+        if (activeDraftId === draftId) setActiveDraftId(null);
+      },
+    });
   }, [drafts, activeDraftId, saveDrafts]);
 
   const handleDownloadMarks = useCallback(() => {
@@ -1451,7 +1633,7 @@ export default function ResultsEntry() {
       setShowPDFPreview(false);
     } catch (error) {
       console.error('PDF generation error:', error);
-      alert('Failed to generate PDF. Please check console for details.');
+      showToast('error', 'Failed to generate PDF. Check console for details.');
     }
   };
 
@@ -1460,11 +1642,6 @@ export default function ResultsEntry() {
   const completionPercentage = totalStudents > 0 ? Math.round((filledCount / totalStudents) * 100) : 0;
   
   const isCurrentExamLocked = examType && availableExamTypes.length > 0 ? !isExamTypeEnabled(examType) : false;
-
-  // Check if any results exist for this exam type
-  const hasExistingResults = currentSubjectCompletion
-    ? currentSubjectCompletion[`${examType}Complete` as keyof ExtendedSubjectCompletion] as boolean || false
-    : false;
 
   if (loadingClasses || loadingAssignments || loadingExamConfig) {
     return (
@@ -1523,27 +1700,55 @@ export default function ResultsEntry() {
                 <span className="hidden xs:inline">Download</span>
               </button>
 
-              {/* Edit Button */}
-              {hasExistingResults && !isEditMode && (
+              {/* Edit Button — always visible when not in edit mode.
+                  handleEditResults queries Firestore directly so it works
+                  regardless of completionStatus or how old the saved results are. */}
+              {!isEditMode && (
                 <button
                   onClick={handleEditResults}
-                  disabled={isEditing}
+                  disabled={isCheckingExisting || !hasFirestoreResults}
                   className={`
                     inline-flex items-center justify-center gap-1 sm:gap-2
                     bg-amber-600 text-white rounded-xl hover:bg-amber-700
                     font-medium transition-all active:scale-[0.98]
                     focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2
-                    disabled:opacity-50 disabled:cursor-not-allowed
+                    disabled:opacity-40 disabled:cursor-not-allowed
                     px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
                     ${isSmallMobile ? 'flex-1' : ''}
                   `}
+                  title={!hasFirestoreResults ? 'No saved results to edit for this exam' : 'Edit saved results'}
                 >
-                  {isEditing ? (
+                  {isCheckingExisting ? (
                     <Loader2 size={16} className="animate-spin" />
                   ) : (
                     <Edit3 size={16} />
                   )}
-                  <span className="hidden xs:inline">Edit</span>
+                  <span className="hidden xs:inline">Edit Saved</span>
+                </button>
+              )}
+
+              {/* Delete Button — only active when Firestore results exist for this exam */}
+              {!isEditMode && (
+                <button
+                  onClick={handleDeleteResults}
+                  disabled={isDeleting || !hasFirestoreResults}
+                  className={`
+                    inline-flex items-center justify-center gap-1 sm:gap-2
+                    bg-red-600 text-white rounded-xl hover:bg-red-700
+                    font-medium transition-all active:scale-[0.98]
+                    focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2
+                    disabled:opacity-40 disabled:cursor-not-allowed
+                    px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
+                    ${isSmallMobile ? 'flex-1' : ''}
+                  `}
+                  title={!hasFirestoreResults ? 'No saved results to delete for this exam' : 'Delete saved results'}
+                >
+                  {isDeleting ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Trash2 size={16} />
+                  )}
+                  <span className="hidden xs:inline">Delete</span>
                 </button>
               )}
 
@@ -1769,11 +1974,15 @@ export default function ResultsEntry() {
                     </div>
                     {filledCount > 0 && !isExamCompleted && !isEditMode && (
                       <button
-                        onClick={() => {
-                          if (confirm('Clear all entered marks?')) {
+                        onClick={() => setModal({
+                          type: 'confirmCancelEdit',
+                          title: 'Clear all marks?',
+                          description: 'This will erase all marks you have entered so far. Your local draft will also be cleared. No Firestore data is affected.',
+                          onConfirm: () => {
+                            setModal(null);
                             setStudents(students.map(s => ({ ...s, marks: '' })));
-                          }
-                        }}
+                          },
+                        })}
                         className="text-[10px] sm:text-xs text-gray-500 hover:text-gray-700 hover:underline"
                       >
                         Clear
@@ -1878,10 +2087,10 @@ export default function ResultsEntry() {
                     </div>
                     <button
                       onClick={handleEditResults}
-                      disabled={isEditing}
+                      disabled={isCheckingExisting}
                       className="text-xs bg-green-100 hover:bg-green-200 px-2 sm:px-3 py-1 rounded-full transition-colors flex items-center gap-1"
                     >
-                      <Edit3 size={12} />
+                      {isCheckingExisting ? <Loader2 size={12} className="animate-spin" /> : <Edit3 size={12} />}
                       <span>Edit</span>
                     </button>
                   </div>
@@ -1942,6 +2151,16 @@ export default function ResultsEntry() {
           loadingAllData={loadingAllData}
         />
       )}
+
+      {/* Confirm Modal — replaces all confirm() dialogs */}
+      <ConfirmModal
+        modal={modal}
+        onClose={() => setModal(null)}
+        isLoading={isDeleting}
+      />
+
+      {/* Toast notifications — replaces all alert() calls */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </DashboardLayout>
   );
 }

@@ -718,10 +718,16 @@ class ResultsService {
       const classData = classDoc.data();
       const form = classData?.level?.toString() || '1';
 
-      for (const result of data.results) {
-        // Resolve student IDs
-        const studentDoc = await this.resolveStudentDocument(result.studentId);
-        
+      // Resolve all student documents in parallel instead of one-by-one.
+      // For a class of N students this reduces N sequential round-trips to 1 parallel round.
+      const resolvedStudents = await Promise.all(
+        data.results.map(async (result) => ({
+          result,
+          studentDoc: await this.resolveStudentDocument(result.studentId),
+        }))
+      );
+
+      for (const { result, studentDoc } of resolvedStudents) {
         if (!studentDoc) {
           console.warn(`⚠️ Could not resolve student ID: ${result.studentId}, skipping...`);
           continue;
@@ -796,6 +802,47 @@ class ResultsService {
       };
     } catch (error) {
       console.error('Error saving results:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete all results for a class/subject/examType/term/year combination.
+   * Uses writeBatch for an atomic multi-document delete.
+   */
+  async deleteClassResults(data: {
+    classId: string;
+    subjectId: string;
+    examType: string;
+    term: string;
+    year: number;
+  }): Promise<{ success: boolean; deletedCount: number }> {
+    try {
+      const normalizedSubjectId = normalizeSubjectName(data.subjectId);
+      const existing = await this.checkExistingResults(
+        data.classId,
+        normalizedSubjectId,
+        data.examType,
+        data.term,
+        data.year
+      );
+
+      if (!existing.exists) {
+        console.log('⚠️ No results to delete.');
+        return { success: true, deletedCount: 0 };
+      }
+
+      const batch = writeBatch(db);
+      existing.results.forEach(result => {
+        const docRef = doc(this.resultsCollection, result.id);
+        batch.delete(docRef);
+      });
+
+      await batch.commit();
+      console.log(`🗑️ Deleted ${existing.count} results for ${normalizedSubjectId} ${data.examType}`);
+      return { success: true, deletedCount: existing.count };
+    } catch (error) {
+      console.error('Error deleting results:', error);
       throw error;
     }
   }
@@ -915,11 +962,13 @@ class ResultsService {
 
       // Get teacher assignments for teacher names
       const assignments = await this.getTeacherAssignmentsForClass(classId);
-      
-      // Build progress for each student
-      const studentProgress: StudentProgress[] = [];
-      
-      for (const learner of learners) {
+
+      // Fetch class data once — previously this was called inside every learner iteration
+      const classData = await this.getClassData(classId);
+
+      // Build progress for each student in parallel
+      const studentProgress = await Promise.all(
+        learners.map(async (learner) => {
         const studentResults = resultsByDocumentId.get(learner.documentId) || [];
         
         const subjects: StudentProgress['subjects'] = [];
@@ -1009,10 +1058,7 @@ class ResultsService {
         
         const isComplete = totalSubjectsCompleted === expectedSubjects.length && expectedSubjects.length > 0;
         
-        // Get class data for form/className
-        const classData = await this.getClassData(classId);
-        
-        studentProgress.push({
+        return {
           studentId: learner.id, // CUSTOM ID for display
           studentName: learner.name,
           className: classData?.name || 'Unknown',
@@ -1027,8 +1073,9 @@ class ResultsService {
           missingSubjects: expectedSubjects.length - totalSubjectsCompleted,
           totalSubjects: expectedSubjects.length,
           documentId: learner.documentId
-        });
-      }
+        } as StudentProgress;
+      })
+      );
       
       return studentProgress.sort((a, b) => a.studentName.localeCompare(b.studentName));
     } catch (error) {
@@ -1452,14 +1499,18 @@ class ResultsService {
 
       const learners = await this.getLearnersInClass(classId);
       
-      const studentDetails: ReportReadinessCheck[] = [];
-      
-      for (const learner of learners) {
-        const readiness = await this.validateReportCardReadiness(learner.id, term, year);
-        if (readiness) {
-          studentDetails.push(readiness);
-        }
-      }
+      // Run all per-student readiness checks in parallel.
+      // Each check does several Firestore reads, so sequential execution is very slow
+      // for large classes. Promise.allSettled ensures one failing student doesn't
+      // block the rest.
+      const readinessResults = await Promise.allSettled(
+        learners.map(learner => this.validateReportCardReadiness(learner.id, term, year))
+      );
+
+      const studentDetails: ReportReadinessCheck[] = readinessResults
+        .filter((r): r is PromiseFulfilledResult<ReportReadinessCheck | null> => r.status === 'fulfilled')
+        .map(r => r.value)
+        .filter((r): r is ReportReadinessCheck => r !== null);
 
       const readyStudents = studentDetails.filter(check => check.isReady).length;
       const completionPercentage = studentDetails.length > 0

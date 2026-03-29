@@ -1,3 +1,4 @@
+// @/pages/Landing.tsx
 import { Link } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { BarChart3, Users, FileText, TrendingUp, GraduationCap, Settings } from 'lucide-react';
@@ -131,7 +132,7 @@ export default function Landing() {
       </section>
 
       {/* User Types Section */}
-      <section className="w-full py-16 sm:py-24 px-4 sm:px-6 lg:px-8">
+      <section className="w-full py-16 sm:py-24 px-4 sm:px-6 lg:px-8 bg-gray-50">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12 sm:mb-16">
             <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-gray-900 mb-4">
@@ -250,7 +251,7 @@ export default function Landing() {
 
       {/* Footer */}
       <footer className="w-full py-8 px-4 sm:px-6 lg:px-8 bg-gray-900 text-gray-400 text-center border-t border-gray-800">
-        <p>&copy; 2024 KalaboBoarding-SRS. All rights reserved.</p>
+        <p>&copy; 2026 KalaboBoarding-SRS. All rights reserved.</p>
       </footer>
     </Layout>
   );

@@ -1,4 +1,4 @@
-// @/pages/SignUp.tsx - UPDATED with relaxed validation
+// @/pages/SignUp.tsx - UPDATED: Removed admin sign-up UI, only teacher
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
@@ -126,7 +126,7 @@ const checkPasswordStrength = (password: string): PasswordStrength => {
 };
 
 export default function SignUp() {
-  const [userType, setUserType] = useState<'admin' | 'teacher'>('teacher');
+  // User type is fixed to teacher
   const [formData, setFormData] = useState({
     // Common fields
     email: '',
@@ -198,23 +198,6 @@ export default function SignUp() {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleUserTypeChange = (type: 'admin' | 'teacher') => {
-    setUserType(type);
-    if (type === 'admin') {
-      // Clear teacher-specific fields when switching to admin
-      setFormData(prev => ({
-        ...prev,
-        nrc: '',
-        dateOfBirth: '',
-        tsNumber: '',
-        employeeNumber: '',
-        dateOfFirstAppointment: '',
-        dateOfCurrentAppointment: '',
-        subjects: '',
-      }));
-    }
-  };
-
   const validateTeacherFields = () => {
     const errors: string[] = [];
 
@@ -233,12 +216,12 @@ export default function SignUp() {
       errors.push('Teacher must be at least 18 years old');
     }
 
-    // UPDATED: TS Number validation - any sequence less than 10 characters
+    // TS Number validation - any sequence less than 10 characters
     if (!formData.tsNumber || formData.tsNumber.length >= 10) {
       errors.push('TS Number must be less than 10 characters');
     }
 
-    // UPDATED: Employee number validation - any sequence less than 10 characters
+    // Employee number validation - any sequence less than 10 characters
     if (!formData.employeeNumber || formData.employeeNumber.length >= 10) {
       errors.push('Employee Number must be less than 10 characters');
     }
@@ -301,53 +284,41 @@ export default function SignUp() {
     }
 
     // Teacher-specific validation
-    if (userType === 'teacher') {
-      const teacherErrors = validateTeacherFields();
-      if (teacherErrors.length > 0) {
-        setDialog({
-          isOpen: true,
-          type: 'error',
-          title: 'Invalid Teacher Information',
-          message: teacherErrors.join('\n')
-        });
-        setLoading(false);
-        return;
-      }
+    const teacherErrors = validateTeacherFields();
+    if (teacherErrors.length > 0) {
+      setDialog({
+        isOpen: true,
+        type: 'error',
+        title: 'Invalid Teacher Information',
+        message: teacherErrors.join('\n')
+      });
+      setLoading(false);
+      return;
     }
 
     try {
-      // Prepare data based on user type
-      if (userType === 'teacher') {
-        const subjects = formData.subjects.split(',').map(s => s.trim()).filter(s => s);
-        
-        await signup({
-          email: formData.email,
-          password: formData.password,
-          fullName: formData.fullName,
-          userType: 'teacher',
-          nrc: formData.nrc,
-          dateOfBirth: formData.dateOfBirth,
-          tsNumber: formData.tsNumber,
-          employeeNumber: formData.employeeNumber,
-          dateOfFirstAppointment: formData.dateOfFirstAppointment,
-          dateOfCurrentAppointment: formData.dateOfCurrentAppointment,
-          subjects
-        });
-      } else {
-        await signup({
-          email: formData.email,
-          password: formData.password,
-          fullName: formData.fullName,
-          userType: 'admin'
-        });
-      }
+      const subjects = formData.subjects.split(',').map(s => s.trim()).filter(s => s);
+      
+      await signup({
+        email: formData.email,
+        password: formData.password,
+        fullName: formData.fullName,
+        userType: 'teacher', // Fixed to teacher
+        nrc: formData.nrc,
+        dateOfBirth: formData.dateOfBirth,
+        tsNumber: formData.tsNumber,
+        employeeNumber: formData.employeeNumber,
+        dateOfFirstAppointment: formData.dateOfFirstAppointment,
+        dateOfCurrentAppointment: formData.dateOfCurrentAppointment,
+        subjects
+      });
       
       // Show success dialog
       setDialog({
         isOpen: true,
         type: 'success',
         title: 'Verification Email Sent!',
-        message: `Your ${userType} account has been created. Please check your email (${formData.email}) to verify your account before signing in.`,
+        message: `Your teacher account has been created. Please check your email (${formData.email}) to verify your account before signing in.`,
         redirectTo: '/signin'
       });
       
@@ -367,7 +338,7 @@ export default function SignUp() {
     if (dialog.type === 'success' && dialog.redirectTo) {
       navigate(dialog.redirectTo, { 
         state: { 
-          message: `Your ${userType} account has been created successfully! Please check your email to verify your account before signing in.`,
+          message: `Your teacher account has been created successfully! Please check your email to verify your account before signing in.`,
           email: formData.email
         } 
       });
@@ -435,64 +406,15 @@ export default function SignUp() {
           {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
-              Create Account
+              Create Teacher Account
             </h1>
             <p className="text-gray-600 text-sm sm:text-base">
-              Join KalaboBoarding-SRS
+              Join KalaboBoarding-SRS as a teacher
             </p>
           </div>
 
           {/* Main Form Card */}
           <div className="bg-white rounded-2xl shadow-lg p-6 sm:p-8 border border-gray-100">
-            {/* Role Selection */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-3">
-                Select Your Role *
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleUserTypeChange('admin')}
-                  disabled={loading}
-                  className={`p-4 rounded-xl border-2 transition-all duration-200 text-center font-medium flex flex-col items-center ${
-                    userType === 'admin'
-                      ? 'border-blue-600 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 bg-white text-gray-700 hover:border-blue-300 hover:bg-blue-50'
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${
-                    userType === 'admin' ? 'bg-blue-600' : 'bg-gray-100'
-                  }`}>
-                    <User size={16} className={userType === 'admin' ? 'text-white' : 'text-gray-600'} />
-                  </div>
-                  <span className="text-sm">Administrator</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleUserTypeChange('teacher')}
-                  disabled={loading}
-                  className={`p-4 rounded-xl border-2 transition-all duration-200 text-center font-medium flex flex-col items-center ${
-                    userType === 'teacher'
-                      ? 'border-blue-600 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 bg-white text-gray-700 hover:border-blue-300 hover:bg-blue-50'
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${
-                    userType === 'teacher' ? 'bg-blue-600' : 'bg-gray-100'
-                  }`}>
-                    <BookOpen size={16} className={userType === 'teacher' ? 'text-white' : 'text-gray-600'} />
-                  </div>
-                  <span className="text-sm">Teacher</span>
-                </button>
-              </div>
-              <div className="mt-3 p-3 bg-blue-50 rounded-lg">
-                <p className="text-xs text-blue-700">
-                  <span className="font-medium">Creating:</span> {userType} account
-                  {userType === 'admin' && ' (Maximum 5 administrators per school)'}
-                </p>
-              </div>
-            </div>
-
             {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Full Name */}
@@ -538,160 +460,156 @@ export default function SignUp() {
               </div>
 
               {/* Teacher-specific fields */}
-              {userType === 'teacher' && (
-                <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* NRC */}
-                    <div className="space-y-2">
-                      <label className="block text-sm font-medium text-gray-700">
-                        NRC Number *
-                      </label>
-                      <div className="relative">
-                        <CreditCard className="absolute left-3 top-3.5 text-gray-400" size={20} />
-                        <input
-                          type="text"
-                          name="nrc"
-                          value={formData.nrc}
-                          onChange={handleChange}
-                          placeholder="123456/78/1"
-                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
-                          required
-                          disabled={loading}
-                        />
-                      </div>
-                      <p className="text-xs text-gray-500">Format: 123456/78/1</p>
-                    </div>
-
-                    {/* Date of Birth */}
-                    <div className="space-y-2">
-                      <label className="block text-sm font-medium text-gray-700">
-                        Date of Birth *
-                      </label>
-                      <div className="relative">
-                        <Calendar className="absolute left-3 top-3.5 text-gray-400" size={20} />
-                        <input
-                          type="date"
-                          name="dateOfBirth"
-                          value={formData.dateOfBirth}
-                          onChange={handleChange}
-                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
-                          required
-                          disabled={loading}
-                        />
-                      </div>
-                    </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* NRC */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    NRC Number *
+                  </label>
+                  <div className="relative">
+                    <CreditCard className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                    <input
+                      type="text"
+                      name="nrc"
+                      value={formData.nrc}
+                      onChange={handleChange}
+                      placeholder="123456/78/1"
+                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      required
+                      disabled={loading}
+                    />
                   </div>
+                  <p className="text-xs text-gray-500">Format: 123456/78/1</p>
+                </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* TS Number - UPDATED placeholder */}
-                    <div className="space-y-2">
-                      <label className="block text-sm font-medium text-gray-700">
-                        TS Number *
-                      </label>
-                      <div className="relative">
-                        <Hash className="absolute left-3 top-3.5 text-gray-400" size={20} />
-                        <input
-                          type="text"
-                          name="tsNumber"
-                          value={formData.tsNumber}
-                          onChange={handleChange}
-                          placeholder="e.g., TS123 or 45678"
-                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
-                          required
-                          disabled={loading}
-                          maxLength={9}
-                        />
-                      </div>
-                      <p className="text-xs text-gray-500">Any sequence less than 10 characters</p>
-                    </div>
-
-                    {/* Employee Number - UPDATED placeholder */}
-                    <div className="space-y-2">
-                      <label className="block text-sm font-medium text-gray-700">
-                        Employee Number *
-                      </label>
-                      <div className="relative">
-                        <Briefcase className="absolute left-3 top-3.5 text-gray-400" size={20} />
-                        <input
-                          type="text"
-                          name="employeeNumber"
-                          value={formData.employeeNumber}
-                          onChange={handleChange}
-                          placeholder="e.g., EMP123 or 7890"
-                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
-                          required
-                          disabled={loading}
-                          maxLength={9}
-                        />
-                      </div>
-                      <p className="text-xs text-gray-500">Any sequence less than 10 characters</p>
-                    </div>
+                {/* Date of Birth */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Date of Birth *
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                    <input
+                      type="date"
+                      name="dateOfBirth"
+                      value={formData.dateOfBirth}
+                      onChange={handleChange}
+                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      required
+                      disabled={loading}
+                    />
                   </div>
+                </div>
+              </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Date of First Appointment */}
-                    <div className="space-y-2">
-                      <label className="block text-sm font-medium text-gray-700">
-                        First Appointment Date *
-                      </label>
-                      <div className="relative">
-                        <Calendar className="absolute left-3 top-3.5 text-gray-400" size={20} />
-                        <input
-                          type="date"
-                          name="dateOfFirstAppointment"
-                          value={formData.dateOfFirstAppointment}
-                          onChange={handleChange}
-                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
-                          required
-                          disabled={loading}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Date of Current Appointment */}
-                    <div className="space-y-2">
-                      <label className="block text-sm font-medium text-gray-700">
-                        Current Appointment Date *
-                      </label>
-                      <div className="relative">
-                        <Calendar className="absolute left-3 top-3.5 text-gray-400" size={20} />
-                        <input
-                          type="date"
-                          name="dateOfCurrentAppointment"
-                          value={formData.dateOfCurrentAppointment}
-                          onChange={handleChange}
-                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
-                          required
-                          disabled={loading}
-                        />
-                      </div>
-                    </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* TS Number */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    TS Number *
+                  </label>
+                  <div className="relative">
+                    <Hash className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                    <input
+                      type="text"
+                      name="tsNumber"
+                      value={formData.tsNumber}
+                      onChange={handleChange}
+                      placeholder="e.g., TS123 or 45678"
+                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      required
+                      disabled={loading}
+                      maxLength={9}
+                    />
                   </div>
+                  <p className="text-xs text-gray-500">Any sequence less than 10 characters</p>
+                </div>
 
-                  {/* Subjects (Teacher Only) */}
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-gray-700">
-                      Subjects You Teach *
-                    </label>
-                    <div className="relative">
-                      <BookOpen className="absolute left-3 top-3.5 text-gray-400" size={20} />
-                      <textarea
-                        name="subjects"
-                        value={formData.subjects}
-                        onChange={handleChange}
-                        placeholder="Mathematics, English, Science, Physics, Chemistry"
-                        rows={2}
-                        className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
-                        required
-                        disabled={loading}
-                      />
-                    </div>
-                    <p className="text-xs text-gray-500">
-                      Separate subjects with commas
-                    </p>
+                {/* Employee Number */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Employee Number *
+                  </label>
+                  <div className="relative">
+                    <Briefcase className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                    <input
+                      type="text"
+                      name="employeeNumber"
+                      value={formData.employeeNumber}
+                      onChange={handleChange}
+                      placeholder="e.g., EMP123 or 7890"
+                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      required
+                      disabled={loading}
+                      maxLength={9}
+                    />
                   </div>
-                </>
-              )}
+                  <p className="text-xs text-gray-500">Any sequence less than 10 characters</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Date of First Appointment */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    First Appointment Date *
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                    <input
+                      type="date"
+                      name="dateOfFirstAppointment"
+                      value={formData.dateOfFirstAppointment}
+                      onChange={handleChange}
+                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
+
+                {/* Date of Current Appointment */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Current Appointment Date *
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                    <input
+                      type="date"
+                      name="dateOfCurrentAppointment"
+                      value={formData.dateOfCurrentAppointment}
+                      onChange={handleChange}
+                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Subjects (Teacher Only) */}
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Subjects You Teach *
+                </label>
+                <div className="relative">
+                  <BookOpen className="absolute left-3 top-3.5 text-gray-400" size={20} />
+                  <textarea
+                    name="subjects"
+                    value={formData.subjects}
+                    onChange={handleChange}
+                    placeholder="Mathematics, English, Science, Physics, Chemistry"
+                    rows={2}
+                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    required
+                    disabled={loading}
+                  />
+                </div>
+                <p className="text-xs text-gray-500">
+                  Separate subjects with commas
+                </p>
+              </div>
 
               {/* Password */}
               <div className="space-y-2">
@@ -760,19 +678,6 @@ export default function SignUp() {
                 )}
               </div>
 
-              {/* Admin Note */}
-              {userType === 'admin' && (
-                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
-                  <div className="flex items-start gap-2">
-                    <AlertCircle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-amber-700">
-                      <span className="font-medium">Important:</span> Only one administrator account is allowed per school. 
-                      Maximum of 5 administrators system-wide.
-                    </p>
-                  </div>
-                </div>
-              )}
-
               {/* Submit Button */}
               <button
                 type="submit"
@@ -786,7 +691,7 @@ export default function SignUp() {
                   </div>
                 ) : (
                   <>
-                    <span>Create {userType.charAt(0).toUpperCase() + userType.slice(1)} Account</span>
+                    <span>Create Teacher Account</span>
                     <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                   </>
                 )}
