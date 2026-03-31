@@ -15,15 +15,21 @@ export function Header() {
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full bg-white border-b border-gray-200">
+    <header className="sticky top-0 z-50 w-full bg-white/95 backdrop-blur-sm border-b border-gray-200 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
-          {/* Logo */}
-          <Link to="/" className="flex items-center gap-2">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg flex items-center justify-center shadow-md">
-              <span className="text-white font-bold text-lg">K</span>
+          {/* Logo with School Logo Image */}
+          <Link to="/" className="flex items-center gap-3 group">
+            <div className="w-10 h-10 rounded-lg bg-white shadow-md flex items-center justify-center overflow-hidden p-1.5 group-hover:shadow-lg transition-all">
+              <img 
+                src="/images/school-logo.png" 
+                alt="KalaboBoarding School Logo" 
+                className="w-full h-full object-contain"
+              />
             </div>
-            <span className="hidden sm:inline font-bold text-gray-900 text-lg">KalaboBoarding</span>
+            <span className="hidden sm:inline font-bold text-gray-900 text-lg group-hover:text-blue-600 transition-colors">
+              KalaboBoarding
+            </span>
           </Link>
 
           {/* Desktop Navigation */}
@@ -46,7 +52,7 @@ export function Header() {
             ) : (
               <>
                 <div className="flex items-center gap-4">
-                  <span className="text-gray-700 font-medium">{user?.name || user?.email}</span>
+                  <span className="text-gray-700 font-medium">{user?.fullName || user?.email}</span>
                   <span className="text-xs px-3 py-1 rounded-full bg-blue-100 text-blue-700 font-medium capitalize">
                     {user?.userType}
                   </span>
@@ -93,7 +99,7 @@ export function Header() {
             ) : (
               <>
                 <div className="px-4 py-2 border-b border-gray-200">
-                  <p className="text-gray-700 font-medium">{user?.name || user?.email}</p>
+                  <p className="text-gray-700 font-medium">{user?.fullName || user?.email}</p>
                   <p className="text-xs text-blue-600 capitalize font-medium">{user?.userType}</p>
                 </div>
                 <button

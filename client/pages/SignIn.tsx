@@ -46,8 +46,8 @@ const DialogModal = ({ isOpen, type, title, message, onClose }: DialogProps) => 
   const styles = getStyles();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
-      <div className={`w-full max-w-md rounded-2xl ${styles.bgColor} border ${styles.borderColor} shadow-2xl transform transition-all duration-300 scale-100 animate-scaleIn`}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className={`w-full max-w-md rounded-2xl ${styles.bgColor} border ${styles.borderColor} shadow-2xl transform transition-all duration-300 scale-100`}>
         <div className="p-6">
           <div className="flex items-start gap-4">
             <div className="flex-shrink-0">
@@ -197,8 +197,64 @@ export default function SignIn() {
     navigate('/forgot-password', { state: { email: formData.email } });
   };
 
+  // Inline keyframes styles
+  const animationStyles = `
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes scaleIn {
+      from {
+        opacity: 0;
+        transform: scale(0.95);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    .animate-fadeInUp {
+      animation: fadeInUp 0.6s ease-out forwards;
+    }
+    
+    .animate-fadeIn {
+      animation: fadeIn 0.3s ease-out forwards;
+    }
+    
+    .animate-scaleIn {
+      animation: scaleIn 0.3s ease-out forwards;
+    }
+    
+    .animation-delay-100 {
+      animation-delay: 0.1s;
+    }
+    
+    .animation-delay-200 {
+      animation-delay: 0.2s;
+    }
+  `;
+
   return (
     <>
+      <style>{animationStyles}</style>
+      
       <DialogModal
         isOpen={dialog.isOpen}
         type={dialog.type}
@@ -207,164 +263,196 @@ export default function SignIn() {
         onClose={handleDialogClose}
       />
       
-      <Layout className="flex items-center justify-center min-h-screen py-4 px-4">
-        <div className="w-full max-w-md mx-auto">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
-              Welcome Back
-            </h1>
-            <p className="text-gray-600 text-sm sm:text-base">
-              Sign in to KalaboBoarding-SRS
-            </p>
-          </div>
-
-          {/* Success message from signup */}
-          {location.state?.message && (
-            <div className="mb-6 p-4 bg-green-50 rounded-xl border border-green-200 animate-fadeIn">
-              <div className="flex items-start gap-3">
-                <CheckCircle className="text-green-500 flex-shrink-0" size={20} />
-                <div>
-                  <p className="text-green-700 text-sm font-medium mb-1">Account Created Successfully!</p>
-                  <p className="text-green-600 text-xs">
-                    {location.state.message}
-                    {location.state?.email && (
-                      <span className="block mt-1 font-mono">{location.state.email}</span>
-                    )}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Main Form Card */}
-          <div className="bg-white rounded-2xl shadow-lg p-6 sm:p-8 border border-gray-100">
-            <div className="mb-6">
-              <h2 className="text-xl font-bold text-gray-900 text-center">Sign In</h2>
-            </div>
-
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Email */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-3.5 text-gray-400" size={20} />
-                  <input
-                    type="email"
-                    name="email"
-                    value={formData.email}
-                    onChange={handleChange}
-                    placeholder="your@email.com"
-                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
-                    required
-                    disabled={loading}
-                    autoComplete="email"
+      <Layout className="relative min-h-screen overflow-hidden">
+        {/* Background Image with Overlay */}
+        <div 
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{
+            backgroundImage: 'url("/images/signin-bg.jpg")',
+            backgroundAttachment: 'fixed'
+          }}
+        />
+        
+        {/* Dark Gradient Overlay - Better contrast for glass morphism */}
+        <div className="absolute inset-0 bg-gradient-to-br from-black/60 via-black/50 to-black/60 backdrop-blur-[1px]" />
+        
+        {/* Content */}
+        <div className="relative z-10 flex items-center justify-center min-h-screen py-8 px-4">
+          <div className="w-full max-w-md mx-auto">
+            {/* Header with School Logo - Larger, no animation */}
+            <div className="text-center mb-8 animate-fadeInUp">
+              <div className="inline-block mb-4">
+                <div className="w-32 h-32 mx-auto bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl flex items-center justify-center p-3 border border-white/30">
+                  <img 
+                    src="/images/school-logo.png" 
+                    alt="KalaboBoarding School Logo" 
+                    className="w-full h-full object-contain"
                   />
                 </div>
               </div>
+              <h1 className="text-3xl sm:text-4xl font-bold text-white mb-2 drop-shadow-lg">
+                Welcome Back
+              </h1>
+              <p className="text-gray-200 text-sm sm:text-base drop-shadow">
+                Sign in to KalaboBoarding-SRS
+              </p>
+            </div>
 
-              {/* Password */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700">
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-3.5 text-gray-400" size={20} />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    name="password"
-                    value={formData.password}
-                    onChange={handleChange}
-                    placeholder="Enter your password"
-                    className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
-                    required
-                    disabled={loading}
-                    autoComplete="current-password"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-3.5 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
-                    disabled={loading}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                  >
-                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Forgot Password Link */}
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  className="text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors"
-                  onClick={handleForgotPassword}
-                >
-                  Forgot password?
-                </button>
-              </div>
-
-              {/* Resend Verification Section */}
-              {showResendVerification && (
-                <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                  <p className="text-sm text-yellow-700 mb-3">
-                    Haven't received the verification email?
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleResendVerification}
-                    disabled={resendLoading}
-                    className="w-full py-2 px-4 bg-yellow-600 text-white text-sm font-medium rounded-lg hover:bg-yellow-700 disabled:bg-yellow-300 transition-colors flex items-center justify-center gap-2"
-                  >
-                    {resendLoading ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                        <span>Sending...</span>
-                      </>
-                    ) : (
-                      'Resend Verification Email'
-                    )}
-                  </button>
-                </div>
-              )}
-
-              {/* Submit Button */}
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full mt-4 py-3.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold rounded-xl hover:from-blue-700 hover:to-blue-800 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2 group relative shadow-md hover:shadow-lg"
-              >
-                {loading ? (
-                  <div className="flex items-center gap-2">
-                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
-                    <span>Signing In...</span>
+            {/* Success message from signup */}
+            {location.state?.message && (
+              <div className="mb-6 p-4 bg-green-500/20 backdrop-blur-md rounded-xl border border-green-500/40 animate-fadeInUp">
+                <div className="flex items-start gap-3">
+                  <CheckCircle className="text-green-400 flex-shrink-0" size={20} />
+                  <div>
+                    <p className="text-green-100 text-sm font-medium mb-1">Account Created Successfully!</p>
+                    <p className="text-green-200 text-xs">
+                      {location.state.message}
+                      {location.state?.email && (
+                        <span className="block mt-1 font-mono text-green-300">{location.state.email}</span>
+                      )}
+                    </p>
                   </div>
-                ) : (
-                  <>
-                    <span>Sign In</span>
-                    <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                  </>
-                )}
-              </button>
-            </form>
-
-            {/* Sign Up Link */}
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <div className="text-center">
-                <p className="text-gray-600 text-sm">
-                  Don't have an account?{' '}
-                  <Link 
-                    to="/signup" 
-                    className="text-blue-600 font-semibold hover:text-blue-700 transition-colors inline-flex items-center gap-1 group"
-                  >
-                    <span>Create one</span>
-                    <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
-                  </Link>
-                </p>
+                </div>
               </div>
+            )}
+
+            {/* Main Form Card - Glass Morphism with better contrast */}
+            <div className="bg-white/15 backdrop-blur-xl rounded-2xl shadow-2xl p-6 sm:p-8 border border-white/30 animate-fadeInUp animation-delay-100">
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-white text-center">Sign In</h2>
+                <div className="w-12 h-1 bg-blue-500 mx-auto mt-2 rounded-full"></div>
+              </div>
+
+              {/* Form */}
+              <form onSubmit={handleSubmit} className="space-y-5">
+                {/* Email */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-200">
+                    Email Address
+                  </label>
+                  <div className="relative group">
+                    <Mail className="absolute left-3 top-3.5 text-gray-300 group-focus-within:text-blue-400 transition-colors" size={20} />
+                    <input
+                      type="email"
+                      name="email"
+                      value={formData.email}
+                      onChange={handleChange}
+                      placeholder="your@email.com"
+                      className="w-full pl-10 pr-4 py-3 bg-white/10 border border-white/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-white/60 backdrop-blur-sm"
+                      required
+                      disabled={loading}
+                      autoComplete="email"
+                    />
+                  </div>
+                </div>
+
+                {/* Password */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-200">
+                    Password
+                  </label>
+                  <div className="relative group">
+                    <Lock className="absolute left-3 top-3.5 text-gray-300 group-focus-within:text-blue-400 transition-colors" size={20} />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      name="password"
+                      value={formData.password}
+                      onChange={handleChange}
+                      placeholder="Enter your password"
+                      className="w-full pl-10 pr-12 py-3 bg-white/10 border border-white/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-white/60 backdrop-blur-sm"
+                      required
+                      disabled={loading}
+                      autoComplete="current-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-3.5 text-gray-300 hover:text-white transition-colors disabled:opacity-50"
+                      disabled={loading}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Forgot Password Link */}
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="text-sm text-blue-300 hover:text-blue-200 font-medium transition-colors"
+                    onClick={handleForgotPassword}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+
+                {/* Resend Verification Section */}
+                {showResendVerification && (
+                  <div className="p-4 bg-yellow-500/20 backdrop-blur-md rounded-xl border border-yellow-500/40">
+                    <p className="text-sm text-yellow-200 mb-3">
+                      Haven't received the verification email?
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleResendVerification}
+                      disabled={resendLoading}
+                      className="w-full py-2.5 px-4 bg-yellow-600/80 hover:bg-yellow-600 text-white text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2 backdrop-blur-sm"
+                    >
+                      {resendLoading ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                          <span>Sending...</span>
+                        </>
+                      ) : (
+                        'Resend Verification Email'
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {/* Submit Button */}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full mt-6 py-3.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 group relative shadow-lg hover:shadow-xl disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed"
+                >
+                  {loading ? (
+                    <div className="flex items-center gap-2">
+                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                      <span>Signing In...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <span>Sign In</span>
+                      <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                    </>
+                  )}
+                </button>
+              </form>
+
+              {/* Sign Up Link */}
+              <div className="mt-6 pt-6 border-t border-white/20">
+                <div className="text-center">
+                  <p className="text-gray-200 text-sm">
+                    Don't have an account?{' '}
+                    <Link 
+                      to="/signup" 
+                      className="text-blue-300 font-semibold hover:text-blue-200 transition-colors inline-flex items-center gap-1 group"
+                    >
+                      <span>Create one</span>
+                      <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                    </Link>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Note */}
+            <div className="text-center mt-8 animate-fadeInUp animation-delay-200">
+              <p className="text-gray-300/80 text-xs">
+                Secure access for authorized users only
+              </p>
             </div>
           </div>
         </div>
