@@ -151,7 +151,6 @@ export default function Landing() {
               <div className="space-y-8 animate-slideInLeft">
                 {/* Logo Badge */}
                 <div className="inline-flex items-center gap-2 bg-blue-50/80 backdrop-blur-sm px-4 py-2 rounded-full border border-blue-200 animate-fadeIn">
-                  <Sparkles size={16} className="text-blue-600" />
                   <span className="text-sm font-medium text-blue-700">Empowering Education</span>
                 </div>
                 

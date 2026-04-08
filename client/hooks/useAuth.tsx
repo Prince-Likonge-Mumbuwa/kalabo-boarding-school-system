@@ -99,7 +99,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               email: firebaseUser.email!,
               fullName: userData.fullName,
               userType: userData.userType,
-              emailVerified: firebaseUser.emailVerified,
+              // EMAIL VERIFICATION DISABLED: Always set to true
+              emailVerified: true, // firebaseUser.emailVerified,
               createdAt: userData.createdAt?.toDate(),
               nrc: userData.nrc,
               dateOfBirth: userData.dateOfBirth,
@@ -223,7 +224,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         email: data.email,
         userType: data.userType,
         createdAt: serverTimestamp(),
-        emailVerified: false,
+        // EMAIL VERIFICATION DISABLED: Set to true
+        emailVerified: true, // false,
         schoolId: null,
         schoolName: null
       };
@@ -248,18 +250,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       await setDoc(doc(db, 'users', firebaseUser.uid), userData);
       console.log('User data saved successfully');
 
+      // ==============================================
+      // EMAIL VERIFICATION DISABLED - Commented out for future use
+      // ==============================================
       // Send email verification
-      console.log('Sending verification email...');
-      await sendEmailVerification(firebaseUser);
-      console.log('Verification email sent');
+      // console.log('Sending verification email...');
+      // await sendEmailVerification(firebaseUser);
+      // console.log('Verification email sent');
 
       // Sign out to require email verification on next login
-      await signOut(auth);
-      console.log('User signed out');
+      // await signOut(auth);
+      // console.log('User signed out');
+
+      // EMAIL VERIFICATION DISABLED: Keep user signed in
+      console.log('User remains signed in (email verification disabled)');
 
       return { 
         success: true, 
-        message: 'Account created successfully. Please check your email to verify your account.',
+        // EMAIL VERIFICATION DISABLED: Updated message
+        message: 'Account created successfully! You can now access your dashboard.',
         email: data.email 
       };
     } catch (error: any) {
@@ -291,11 +300,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
 
-      if (!firebaseUser.emailVerified) {
-        console.log('Email not verified, signing out');
-        await signOut(auth);
-        throw new Error('Please verify your email before signing in. Check your inbox for the verification link.');
-      }
+      // ==============================================
+      // EMAIL VERIFICATION DISABLED - Commented out for future use
+      // ==============================================
+      // if (!firebaseUser.emailVerified) {
+      //   console.log('Email not verified, signing out');
+      //   await signOut(auth);
+      //   throw new Error('Please verify your email before signing in. Check your inbox for the verification link.');
+      // }
 
       const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
       if (!userDoc.exists()) {
@@ -332,17 +344,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // ==============================================
+  // EMAIL VERIFICATION DISABLED - Kept for future use but will throw if called
+  // ==============================================
   const resendVerificationEmail = async () => {
-    try {
-      if (auth.currentUser) {
-        await sendEmailVerification(auth.currentUser);
-      } else {
-        throw new Error('No user is currently signed in');
-      }
-    } catch (error: any) {
-      console.error('Resend verification error:', error);
-      throw new Error(error.message || 'Failed to resend verification email');
-    }
+    // EMAIL VERIFICATION DISABLED: This function is no longer functional
+    console.warn('Email verification is disabled. This function is not available.');
+    throw new Error('Email verification is currently disabled. Please contact support if you need assistance.');
+    
+    // Original implementation kept for future reference:
+    // try {
+    //   if (auth.currentUser) {
+    //     await sendEmailVerification(auth.currentUser);
+    //   } else {
+    //     throw new Error('No user is currently signed in');
+    //   }
+    // } catch (error: any) {
+    //   console.error('Resend verification error:', error);
+    //   throw new Error(error.message || 'Failed to resend verification email');
+    // }
   };
 
   const resetPassword = async (email: string) => {

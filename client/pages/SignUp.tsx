@@ -1,4 +1,4 @@
-// @/pages/SignUp.tsx - REDESIGNED with step-based progression
+// @/pages/SignUp.tsx - REDESIGNED with step-based progression (EMAIL VERIFICATION DISABLED)
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
@@ -337,6 +337,19 @@ export default function SignUp() {
         subjects
       });
       
+      // ==============================================
+      // EMAIL VERIFICATION DISABLED - Updated success message
+      // Original message: "Verification Email Sent!" with verification instructions
+      // ==============================================
+      setDialog({
+        isOpen: true,
+        type: 'success',
+        title: 'Account Created Successfully!',
+        message: `Your teacher account has been created successfully! You can now sign in to your dashboard.`,
+        redirectTo: '/signin'
+      });
+      
+      /* EMAIL VERIFICATION DISABLED - Original code kept for future reference
       setDialog({
         isOpen: true,
         type: 'success',
@@ -344,6 +357,7 @@ export default function SignUp() {
         message: `Your teacher account has been created. Please check your email (${formData.email}) to verify your account.`,
         redirectTo: '/signin'
       });
+      */
     } catch (err: any) {
       setDialog({
         isOpen: true,
@@ -358,12 +372,24 @@ export default function SignUp() {
   const handleDialogClose = () => {
     setDialog(prev => ({ ...prev, isOpen: false }));
     if (dialog.type === 'success' && dialog.redirectTo) {
+      // ==============================================
+      // EMAIL VERIFICATION DISABLED - Updated redirect message
+      // ==============================================
+      navigate(dialog.redirectTo, { 
+        state: { 
+          message: `Your teacher account has been created successfully! You can now sign in.`,
+          email: formData.email
+        } 
+      });
+      
+      /* EMAIL VERIFICATION DISABLED - Original code kept for future reference
       navigate(dialog.redirectTo, { 
         state: { 
           message: `Your teacher account has been created successfully! Please check your email to verify your account.`,
           email: formData.email
         } 
       });
+      */
     }
   };
 

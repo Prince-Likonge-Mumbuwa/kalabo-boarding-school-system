@@ -79,9 +79,13 @@ export default function SignIn() {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [showResendVerification, setShowResendVerification] = useState(false);
-  const [unverifiedEmail, setUnverifiedEmail] = useState('');
-  const [resendLoading, setResendLoading] = useState(false);
+  // ==============================================
+  // EMAIL VERIFICATION DISABLED - These states are no longer used
+  // Kept for future reference but disabled
+  // ==============================================
+  // const [showResendVerification, setShowResendVerification] = useState(false);
+  // const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  // const [resendLoading, setResendLoading] = useState(false);
   
   const [dialog, setDialog] = useState<{
     isOpen: boolean;
@@ -95,7 +99,7 @@ export default function SignIn() {
     message: ''
   });
 
-  const { login, user, isAuthenticated, resendVerificationEmail } = useAuth();
+  const { login, user, isAuthenticated } = useAuth(); // Removed resendVerificationEmail
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -128,7 +132,8 @@ export default function SignIn() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setShowResendVerification(false);
+    // EMAIL VERIFICATION DISABLED
+    // setShowResendVerification(false);
 
     if (!formData.email || !formData.password) {
       setDialog({
@@ -143,7 +148,14 @@ export default function SignIn() {
 
     try {
       await login(formData.email, formData.password);
+      // EMAIL VERIFICATION DISABLED: Login successful - no verification check
     } catch (err: any) {
+      // ==============================================
+      // EMAIL VERIFICATION DISABLED - Original verification error handling removed
+      // Now shows generic error for all login failures
+      // ==============================================
+      
+      /* EMAIL VERIFICATION DISABLED - Original code kept for future reference
       // Check if error is about email verification
       if (err.message.includes('verify your email')) {
         setUnverifiedEmail(formData.email);
@@ -162,10 +174,24 @@ export default function SignIn() {
           message: err.message || 'Unable to sign in. Please check your credentials.'
         });
       }
+      */
+      
+      // EMAIL VERIFICATION DISABLED: Simplified error handling
+      setDialog({
+        isOpen: true,
+        type: 'error',
+        title: 'Login Failed',
+        message: err.message || 'Unable to sign in. Please check your credentials.'
+      });
       setLoading(false);
     }
   };
 
+  // ==============================================
+  // EMAIL VERIFICATION DISABLED - Resend verification function removed
+  // Kept as comment for future reference
+  // ==============================================
+  /*
   const handleResendVerification = async () => {
     setResendLoading(true);
     try {
@@ -188,6 +214,7 @@ export default function SignIn() {
       setResendLoading(false);
     }
   };
+  */
 
   const handleDialogClose = () => {
     setDialog(prev => ({ ...prev, isOpen: false }));
@@ -387,7 +414,10 @@ export default function SignIn() {
                   </button>
                 </div>
 
-                {/* Resend Verification Section */}
+                {/* ============================================== */}
+                {/* EMAIL VERIFICATION DISABLED - Resend Verification Section removed */}
+                {/* ============================================== */}
+                {/* 
                 {showResendVerification && (
                   <div className="p-4 bg-yellow-500/20 backdrop-blur-md rounded-xl border border-yellow-500/40">
                     <p className="text-sm text-yellow-200 mb-3">
@@ -410,6 +440,7 @@ export default function SignIn() {
                     </button>
                   </div>
                 )}
+                */}
 
                 {/* Submit Button */}
                 <button
