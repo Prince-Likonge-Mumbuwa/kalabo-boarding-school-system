@@ -1,4 +1,4 @@
-// @/pages/teacher/ResultsEntry.tsx - COMPLETE FIXED VERSION
+// @/pages/teacher/ResultsEntry.tsx - LOCKING REMOVED VERSION - NO AUTO-REFRESH
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
@@ -10,7 +10,6 @@ import {
   CheckCircle, 
   XCircle, 
   GraduationCap, 
-  Lock,
   Download,
   Edit3,
   Trash2,
@@ -92,7 +91,7 @@ interface ExamData {
 
 // ==================== MODAL / TOAST STATE ====================
 interface ModalState {
-  type: 'confirmDelete' | 'confirmCancelEdit' | 'confirmClearDraft';
+  type: 'confirmDelete' | 'confirmCancelEdit' | 'confirmClearDraft' | 'confirmDiscardChanges';
   title: string;
   description: string;
   onConfirm: () => void;
@@ -100,7 +99,7 @@ interface ModalState {
 
 interface ToastState {
   id: number;
-  type: 'success' | 'error';
+  type: 'success' | 'error' | 'warning';
   message: string;
 }
 
@@ -347,23 +346,7 @@ const SubjectProgress = ({
     };
   });
 
-  // Determine which exams are enabled (sequential unlocking)
-  const enabledStates = useMemo(() => {
-    const states: Record<string, boolean> = {};
-    
-    examTypes.forEach((exam, index) => {
-      if (index === 0) {
-        states[exam.id] = true; // First exam always enabled
-      } else {
-        const previousExam = examTypes[index - 1];
-        states[exam.id] = previousExam.isComplete;
-      }
-    });
-    
-    return states;
-  }, [examTypes]);
-
-  // FIXED: Calculate overall progress based on configured exams only
+  // Calculate overall progress based on configured exams only
   const totalConfiguredExams = examTypes.length;
   const completedExams = examTypes.filter(exam => exam.isComplete).length;
   const progressPercentage = totalConfiguredExams > 0 
@@ -402,43 +385,39 @@ const SubjectProgress = ({
       <div className={`grid ${gridCols} gap-1.5 sm:gap-2`}>
         {examTypes.map((exam) => {
           const isSelected = selectedExamType === exam.id;
-          const isEnabled = enabledStates[exam.id];
           
           return (
             <button
               key={exam.id}
-              onClick={() => isEnabled && onExamTypeChange(exam.id as any)}
-              disabled={!isEnabled}
+              onClick={() => onExamTypeChange(exam.id as any)}
               className={`
-                relative flex flex-col items-center p-1.5 sm:p-2 rounded-lg transition-all
+                relative flex flex-col items-center p-1.5 sm:p-2 rounded-lg transition-all duration-200
                 ${isSelected 
-                  ? 'bg-blue-50 border-2 border-blue-500' 
-                  : 'border-2 border-transparent'
-                }
-                ${!isEnabled 
-                  ? 'opacity-50 cursor-not-allowed bg-gray-50' 
-                  : 'hover:bg-gray-50 cursor-pointer'
+                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md shadow-blue-200 scale-[1.02] border-0' 
+                  : 'bg-gray-50 border border-gray-200 hover:bg-gray-100 hover:border-gray-300 text-gray-700'
                 }
               `}
             >
               <div className="flex items-center gap-1 mb-0.5 sm:mb-1">
-                <span className={`text-xs font-semibold ${
-                  exam.isComplete ? 'text-green-600' : isSelected ? 'text-blue-600' : 'text-gray-600'
-                }`}>
+                <span className={`text-xs font-semibold ${isSelected ? 'text-white' : exam.isComplete ? 'text-green-600' : 'text-gray-600'}`}>
                   {exam.label}
                 </span>
-                {exam.isComplete ? (
+                {exam.isComplete && !isSelected && (
                   <CheckCircle size={10} className="text-green-500 flex-shrink-0" />
-                ) : !isEnabled && !exam.isComplete ? (
-                  <Lock size={8} className="text-gray-400 flex-shrink-0" />
-                ) : null}
+                )}
+                {exam.isComplete && isSelected && (
+                  <CheckCircle size={10} className="text-white flex-shrink-0" />
+                )}
               </div>
-              <span className="text-[10px] text-gray-500">
+              <span className={`text-[10px] ${isSelected ? 'text-blue-100' : 'text-gray-500'}`}>
                 {exam.count}/{completion.totalStudents}
               </span>
-              <span className="text-[8px] text-gray-400 mt-0.5">
+              <span className={`text-[8px] mt-0.5 ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>
                 {exam.totalMarks} marks
               </span>
+              {isSelected && (
+                <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-6 h-1 bg-white rounded-full opacity-60" />
+              )}
             </button>
           );
         })}
@@ -964,10 +943,12 @@ const ToastItem = ({ toast, onDismiss }: { toast: ToastState; onDismiss: (id: nu
     <div
       className={`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg
         text-white text-sm font-medium max-w-xs animate-in slide-in-from-bottom-2
-        ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}
+        ${toast.type === 'success' ? 'bg-green-600' : toast.type === 'warning' ? 'bg-yellow-600' : 'bg-red-600'}`}
     >
       {toast.type === 'success'
         ? <CheckCircle size={16} className="flex-shrink-0" />
+        : toast.type === 'warning'
+        ? <AlertCircle size={16} className="flex-shrink-0" />
         : <XCircle size={16} className="flex-shrink-0" />}
       <span className="flex-1">{toast.message}</span>
       <button
@@ -1036,12 +1017,15 @@ export default function ResultsEntry() {
 
   const [isEditMode, setIsEditMode] = useState(false);
   const [originalResults, setOriginalResults] = useState<Map<string, number>>(new Map());
+  
+  // Track if we have unsaved changes to warn before destructive actions
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   // Modal and toast state — replaces all alert()/confirm() calls
   const [modal, setModal] = useState<ModalState | null>(null);
   const [toasts, setToasts] = useState<ToastState[]>([]);
 
-  const showToast = useCallback((type: 'success' | 'error', message: string) => {
+  const showToast = useCallback((type: 'success' | 'error' | 'warning', message: string) => {
     setToasts(prev => [...prev, { id: Date.now(), type, message }]);
   }, []);
 
@@ -1084,14 +1068,13 @@ export default function ResultsEntry() {
     year,
   });
 
-  // Debug effect to verify assignments
+  // Track unsaved changes
   useEffect(() => {
-    if (user?.uid) {
-      console.log('👤 Teacher UID:', user.uid);
-      console.log('📚 Teacher assignments:', assignments);
-      console.log('🎯 getSubjectsForClass function available:', !!getSubjectsForClass);
+    if (students.length > 0 && !isEditMode) {
+      const hasChanges = students.some(s => s.marks && s.marks !== '');
+      setHasUnsavedChanges(hasChanges);
     }
-  }, [user, assignments, getSubjectsForClass]);
+  }, [students, isEditMode]);
 
   // Load drafts from localStorage
   useEffect(() => {
@@ -1155,34 +1138,22 @@ export default function ResultsEntry() {
     );
   }, [drafts, selectedClass, selectedSubject, examType, term, year]);
 
-  // Load draft data
+  // Load draft data - only when explicitly selected, not automatically
   useEffect(() => {
-    if (currentDraft && currentDraft.id !== activeDraftId) {
-      setStudents(currentDraft.results);
-      setActiveDraftId(currentDraft.id);
-    } else if (!currentDraft && activeDraftId) {
-      setActiveDraftId(null);
-      setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
+    if (currentDraft && currentDraft.id !== activeDraftId && !isEditMode) {
+      // Only auto-load draft if there are no unsaved changes
+      if (!hasUnsavedChanges) {
+        setStudents(currentDraft.results);
+        setActiveDraftId(currentDraft.id);
+      }
     }
-  }, [currentDraft, activeDraftId]);
+  }, [currentDraft, activeDraftId, isEditMode, hasUnsavedChanges]);
 
   // Check if current exam type is completed
   const isExamCompleted = useMemo(() => {
     if (!currentSubjectCompletion || !examType) return false;
     return currentSubjectCompletion[`${examType}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
   }, [currentSubjectCompletion, examType]);
-
-  // Check if exam type is enabled (based on previous exams completion)
-  const isExamTypeEnabled = useCallback((type: 'week4' | 'week8' | 'endOfTerm') => {
-    if (!currentSubjectCompletion || !availableExamTypes.length) return type === availableExamTypes[0]?.id;
-    
-    const examIndex = availableExamTypes.findIndex(t => t.id === type);
-    if (examIndex === 0) return true;
-    if (examIndex === -1) return false;
-    
-    const previousExam = availableExamTypes[examIndex - 1];
-    return currentSubjectCompletion[`${previousExam.id}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
-  }, [currentSubjectCompletion, availableExamTypes]);
 
   // Auto-select first available exam type
   useEffect(() => {
@@ -1201,7 +1172,7 @@ export default function ResultsEntry() {
     }
   }, [availableSubjects, selectedSubject]);
 
-  // Load students
+  // Load students - ONLY when class changes, not on any other refresh
   useEffect(() => {
     const loadStudents = async () => {
       if (!selectedClass) {
@@ -1232,6 +1203,7 @@ export default function ResultsEntry() {
             marks: '',
           }))
         );
+        setHasUnsavedChanges(false);
       } catch (error) {
         console.error('Error loading students:', error);
         setStudents([]);
@@ -1242,18 +1214,16 @@ export default function ResultsEntry() {
     };
 
     loadStudents();
-  }, [selectedClass, assignedClasses]);
+  }, [selectedClass, assignedClasses]); // Only depends on selectedClass
 
-  // Auto-save draft
+  // Auto-save draft - but don't clear draft when empty
   useEffect(() => {
     if (!selectedClass || !selectedSubject || !students.length || !selectedClassData || isEditMode) return;
 
     const filledCount = students.filter(s => s.marks && s.marks !== '').length;
+    
+    // Don't delete draft when empty - just skip saving
     if (filledCount === 0) {
-      if (currentDraft) {
-        const newDrafts = drafts.filter(d => d.id !== currentDraft.id);
-        saveDrafts(newDrafts);
-      }
       return;
     }
 
@@ -1357,27 +1327,62 @@ export default function ResultsEntry() {
     setStudents(prev => prev.map(s =>
       s.id === studentId ? { ...s, marks } : s
     ));
+    setHasUnsavedChanges(true);
   }, [totalMarks]);
 
   const handleMarkAbsent = useCallback((studentId: string) => {
     setStudents(prev => prev.map(s =>
       s.id === studentId ? { ...s, marks: s.marks.toLowerCase() === 'x' ? '' : 'x' } : s
     ));
+    setHasUnsavedChanges(true);
   }, []);
 
+  // Handle exam type change with unsaved changes warning
   const handleExamTypeChange = useCallback((type: 'week4' | 'week8' | 'endOfTerm') => {
-    if (isExamTypeEnabled(type)) {
+    if (hasUnsavedChanges && !isEditMode) {
+      setModal({
+        type: 'confirmDiscardChanges',
+        title: 'Unsaved changes',
+        description: 'You have unsaved marks. Switching exam types will discard your current entries. Are you sure?',
+        onConfirm: () => {
+          setModal(null);
+          setExamType(type);
+          setIsEditMode(false);
+          setHasUnsavedChanges(false);
+          // Clear current marks when discarding
+          setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
+        },
+      });
+    } else {
       setExamType(type);
       setIsEditMode(false);
     }
-  }, [isExamTypeEnabled]);
+  }, [hasUnsavedChanges, isEditMode]);
 
   const handleEditResults = async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
 
+    // Warn about unsaved changes before editing
+    if (hasUnsavedChanges) {
+      setModal({
+        type: 'confirmDiscardChanges',
+        title: 'Unsaved changes',
+        description: 'You have unsaved marks. Loading saved results will discard your current entries. Proceed?',
+        onConfirm: async () => {
+          setModal(null);
+          await performEditResults();
+        },
+      });
+      return;
+    }
+
+    await performEditResults();
+  };
+
+  const performEditResults = async () => {
+    if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
+
     try {
-      // Query Firestore directly — no dependency on completionStatus so this
-      // works for results saved any time in the past, not just the current session.
       const existingResponse = await checkExisting({
         classId: selectedClass,
         subjectId: selectedSubject,
@@ -1391,7 +1396,6 @@ export default function ResultsEntry() {
         return;
       }
 
-      // Build the original marks map so Cancel can restore them
       const originalMap = new Map<string, number>(
         existingResponse.results.map((r: any) => [
           (r.studentId ?? r.student_id) as string,
@@ -1400,7 +1404,6 @@ export default function ResultsEntry() {
       );
       setOriginalResults(originalMap);
 
-      // Populate each student row from the Firestore results
       setStudents(prevStudents =>
         prevStudents.map(student => {
           const existing = existingResponse.results.find(
@@ -1414,7 +1417,7 @@ export default function ResultsEntry() {
       );
 
       setIsEditMode(true);
-      refetchCompletion();
+      setHasUnsavedChanges(false);
 
     } catch (error: any) {
       console.error('Error loading results for editing:', error);
@@ -1440,6 +1443,7 @@ export default function ResultsEntry() {
         );
         setIsEditMode(false);
         setOriginalResults(new Map());
+        setHasUnsavedChanges(false);
       },
     });
   }, [originalResults]);
@@ -1447,7 +1451,6 @@ export default function ResultsEntry() {
   const handleSaveResults = async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
 
-    // Use Promise.all to prepare all student result payloads concurrently.
     const results = await Promise.all(
       students
         .filter(s => s.marks !== '')
@@ -1480,7 +1483,9 @@ export default function ResultsEntry() {
         overwrite: isEditMode,
       });
 
+      // Clear the current marks after successful save
       setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
+      setHasUnsavedChanges(false);
 
       if (currentDraft) {
         const newDrafts = drafts.filter(d => d.id !== currentDraft.id);
@@ -1489,9 +1494,6 @@ export default function ResultsEntry() {
 
       setIsEditMode(false);
       setOriginalResults(new Map());
-
-      // Non-blocking — let it refresh in the background without delaying the UI
-      refetchCompletion();
 
       showToast('success', `Results ${isEditMode ? 'updated' : 'saved'} successfully.`);
 
@@ -1503,6 +1505,12 @@ export default function ResultsEntry() {
 
   const handleDeleteResults = useCallback(() => {
     if (!selectedClass || !selectedSubject || !selectedClassData) return;
+    
+    if (hasUnsavedChanges) {
+      showToast('warning', 'Please save or clear your current entries before deleting saved results.');
+      return;
+    }
+    
     const examLabel = examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term';
     setModal({
       type: 'confirmDelete',
@@ -1519,13 +1527,10 @@ export default function ResultsEntry() {
           });
 
           setModal(null);
-          // Clear the input rows so the form is ready for fresh entry
           setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
           setIsEditMode(false);
           setOriginalResults(new Map());
-
-          // Non-blocking background refresh of completion counts
-          refetchCompletion();
+          setHasUnsavedChanges(false);
 
           showToast('success', `${examLabel} results deleted.`);
         } catch (error: any) {
@@ -1535,9 +1540,25 @@ export default function ResultsEntry() {
         }
       },
     });
-  }, [selectedClass, selectedSubject, selectedClassData, examType, term, year, deleteResults, refetchCompletion, showToast]);
+  }, [selectedClass, selectedSubject, selectedClassData, examType, term, year, deleteResults, hasUnsavedChanges, showToast]);
 
   const handleLoadDraft = useCallback((draft: SavedDraft) => {
+    if (hasUnsavedChanges) {
+      setModal({
+        type: 'confirmDiscardChanges',
+        title: 'Unsaved changes',
+        description: 'You have unsaved marks. Loading a draft will discard your current entries. Proceed?',
+        onConfirm: () => {
+          setModal(null);
+          performLoadDraft(draft);
+        },
+      });
+    } else {
+      performLoadDraft(draft);
+    }
+  }, [hasUnsavedChanges]);
+
+  const performLoadDraft = useCallback((draft: SavedDraft) => {
     setSelectedClass(draft.classId);
     setSelectedSubject(draft.subject);
     setExamType(draft.examType);
@@ -1546,6 +1567,7 @@ export default function ResultsEntry() {
     setStudents(draft.results);
     setActiveDraftId(draft.id);
     setIsEditMode(false);
+    setHasUnsavedChanges(false);
   }, []);
 
   const handleDeleteDraft = useCallback((draftId: string) => {
@@ -1569,14 +1591,12 @@ export default function ResultsEntry() {
     setShowPDFPreview(true);
   }, []);
 
-  // FIXED: PDF Generation with complete data
   const handleGeneratePDF = async () => {
     try {
       const { generateMarkSchedulePDF } = await import('@/services/pdf/markSchedulePDF');
       
       const teacherDisplayName = user?.fullName || user?.email || 'Teacher';
       
-      // Create a map of saved marks for quick lookup
       const savedMarksMap = new Map();
       if (allExamData && allExamData[examType]) {
         allExamData[examType].forEach((item: ExamDataItem) => {
@@ -1586,19 +1606,16 @@ export default function ResultsEntry() {
       }
       
       const studentsForPDF = students.map(student => {
-        // Get marks from current input or saved data
         let marksValue = student.marks || '';
         let marksNum = null;
         let percentage = null;
         let grade = null;
         
-        // If no current marks, try to get from saved data
         if (marksValue === '' && savedMarksMap.has(student.studentId)) {
           const savedMark = savedMarksMap.get(student.studentId);
           marksValue = savedMark === -1 ? 'X' : savedMark.toString();
         }
         
-        // Calculate numeric values if not absent
         const isAbsent = marksValue.toLowerCase() === 'x';
         if (!isAbsent && marksValue && marksValue !== '') {
           marksNum = parseInt(marksValue);
@@ -1637,11 +1654,22 @@ export default function ResultsEntry() {
     }
   };
 
+  const handleClearAllMarks = useCallback(() => {
+    setModal({
+      type: 'confirmCancelEdit',
+      title: 'Clear all marks?',
+      description: 'This will erase all marks you have entered so far. Your local draft will also be cleared. No Firestore data is affected.',
+      onConfirm: () => {
+        setModal(null);
+        setStudents(students.map(s => ({ ...s, marks: '' })));
+        setHasUnsavedChanges(false);
+      },
+    });
+  }, [students]);
+
   const filledCount = students.filter(s => s.marks && s.marks !== '').length;
   const totalStudents = students.length;
   const completionPercentage = totalStudents > 0 ? Math.round((filledCount / totalStudents) * 100) : 0;
-  
-  const isCurrentExamLocked = examType && availableExamTypes.length > 0 ? !isExamTypeEnabled(examType) : false;
 
   if (loadingClasses || loadingAssignments || loadingExamConfig) {
     return (
@@ -1656,13 +1684,29 @@ export default function ResultsEntry() {
     );
   }
 
-  // Check if exams are configured for this term
   const noExamsConfigured = selectedClass && selectedSubject && availableExamTypes.length === 0;
 
   return (
     <DashboardLayout activeTab="results">
       <div className="p-3 sm:p-4 lg:p-6 space-y-4 sm:space-y-6">
         
+        {/* Unsaved Changes Warning Banner */}
+        {hasUnsavedChanges && !isEditMode && (
+          <div className="bg-yellow-50 border-l-4 border-yellow-500 p-3 rounded-lg flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={18} className="text-yellow-600" />
+              <span className="text-sm text-yellow-700">You have unsaved marks. Save before leaving or switching exams.</span>
+            </div>
+            <button
+              onClick={handleSaveResults}
+              disabled={isSaving || filledCount === 0}
+              className="px-3 py-1 bg-yellow-500 text-white rounded-lg text-sm hover:bg-yellow-600 transition-colors"
+            >
+              Save Now
+            </button>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="min-w-0">
@@ -1700,9 +1744,7 @@ export default function ResultsEntry() {
                 <span className="hidden xs:inline">Download</span>
               </button>
 
-              {/* Edit Button — always visible when not in edit mode.
-                  handleEditResults queries Firestore directly so it works
-                  regardless of completionStatus or how old the saved results are. */}
+              {/* Edit Button */}
               {!isEditMode && (
                 <button
                   onClick={handleEditResults}
@@ -1727,7 +1769,7 @@ export default function ResultsEntry() {
                 </button>
               )}
 
-              {/* Delete Button — only active when Firestore results exist for this exam */}
+              {/* Delete Button */}
               {!isEditMode && (
                 <button
                   onClick={handleDeleteResults}
@@ -1756,7 +1798,7 @@ export default function ResultsEntry() {
               {(!isExamCompleted || isEditMode) && (
                 <button
                   onClick={handleSaveResults}
-                  disabled={isSaving || filledCount === 0 || isCurrentExamLocked}
+                  disabled={isSaving || filledCount === 0}
                   className={`
                     inline-flex items-center justify-center gap-1 sm:gap-2
                     ${isEditMode ? 'bg-amber-600' : 'bg-blue-600'} 
@@ -1819,9 +1861,24 @@ export default function ResultsEntry() {
               <select
                 value={selectedClass}
                 onChange={e => {
-                  setSelectedClass(e.target.value);
-                  setSelectedSubject('');
-                  setIsEditMode(false);
+                  if (hasUnsavedChanges) {
+                    setModal({
+                      type: 'confirmDiscardChanges',
+                      title: 'Unsaved changes',
+                      description: 'You have unsaved marks. Changing class will discard your current entries. Proceed?',
+                      onConfirm: () => {
+                        setModal(null);
+                        setSelectedClass(e.target.value);
+                        setSelectedSubject('');
+                        setIsEditMode(false);
+                        setHasUnsavedChanges(false);
+                      },
+                    });
+                  } else {
+                    setSelectedClass(e.target.value);
+                    setSelectedSubject('');
+                    setIsEditMode(false);
+                  }
                 }}
                 className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white truncate"
                 disabled={assignedClasses.length === 0 || isEditMode}
@@ -1843,8 +1900,22 @@ export default function ResultsEntry() {
               <select
                 value={selectedSubject}
                 onChange={e => {
-                  setSelectedSubject(e.target.value);
-                  setIsEditMode(false);
+                  if (hasUnsavedChanges) {
+                    setModal({
+                      type: 'confirmDiscardChanges',
+                      title: 'Unsaved changes',
+                      description: 'You have unsaved marks. Changing subject will discard your current entries. Proceed?',
+                      onConfirm: () => {
+                        setModal(null);
+                        setSelectedSubject(e.target.value);
+                        setIsEditMode(false);
+                        setHasUnsavedChanges(false);
+                      },
+                    });
+                  } else {
+                    setSelectedSubject(e.target.value);
+                    setIsEditMode(false);
+                  }
                 }}
                 className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white truncate"
                 disabled={!selectedClass || availableSubjects.length === 0 || isEditMode}
@@ -1915,7 +1986,7 @@ export default function ResultsEntry() {
           </div>
         </div>
 
-        {/* Subject Progress - FIXED: Now shows correct percentage based on configured exams */}
+        {/* Subject Progress */}
         {selectedClass && selectedSubject && currentSubjectCompletion && availableExamTypes.length > 0 && (
           <SubjectProgress 
             completion={currentSubjectCompletion}
@@ -1959,9 +2030,14 @@ export default function ResultsEntry() {
                         Edit Mode
                       </span>
                     )}
+                    {hasUnsavedChanges && !isEditMode && (
+                      <span className="text-[10px] sm:text-xs bg-yellow-100 text-yellow-700 px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap">
+                        Unsaved
+                      </span>
+                    )}
                   </div>
                   
-                  {/* Progress - This shows marks entry progress, not exam completion */}
+                  {/* Progress */}
                   <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
                     <span className="text-[10px] sm:text-xs text-gray-500">
                       {filledCount}/{totalStudents}
@@ -1974,15 +2050,7 @@ export default function ResultsEntry() {
                     </div>
                     {filledCount > 0 && !isExamCompleted && !isEditMode && (
                       <button
-                        onClick={() => setModal({
-                          type: 'confirmCancelEdit',
-                          title: 'Clear all marks?',
-                          description: 'This will erase all marks you have entered so far. Your local draft will also be cleared. No Firestore data is affected.',
-                          onConfirm: () => {
-                            setModal(null);
-                            setStudents(students.map(s => ({ ...s, marks: '' })));
-                          },
-                        })}
+                        onClick={handleClearAllMarks}
                         className="text-[10px] sm:text-xs text-gray-500 hover:text-gray-700 hover:underline"
                       >
                         Clear
@@ -2061,12 +2129,12 @@ export default function ResultsEntry() {
                 )}
                 
                 {/* Status Messages */}
-                {!isExamCompleted && !isCurrentExamLocked && !isEditMode && (
+                {!isExamCompleted && !isEditMode && (
                   <div className="px-3 sm:px-4 py-2 bg-gray-50 border-t border-gray-200 text-[10px] sm:text-xs text-gray-500 flex flex-wrap items-center gap-2 sm:gap-4">
-                    <span>⏎ Enter: next</span>
+                    <span>⏎ Enter: next student</span>
                     <span>X: absent (click absent button)</span>
                     <span>0-{totalMarks}: marks</span>
-                    <span className="ml-auto">Auto-saved</span>
+                    <span className="ml-auto">Auto-saved draft</span>
                   </div>
                 )}
                 
@@ -2074,7 +2142,7 @@ export default function ResultsEntry() {
                   <div className="px-3 sm:px-4 py-3 bg-amber-50 border-t border-amber-200 text-xs sm:text-sm text-amber-700 flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <Edit3 size={16} />
-                      <span>✎ Editing existing results.</span>
+                      <span>✎ Editing existing results. Click Update to save changes.</span>
                     </div>
                   </div>
                 )}
@@ -2093,13 +2161,6 @@ export default function ResultsEntry() {
                       {isCheckingExisting ? <Loader2 size={12} className="animate-spin" /> : <Edit3 size={12} />}
                       <span>Edit</span>
                     </button>
-                  </div>
-                )}
-                
-                {isCurrentExamLocked && !isExamCompleted && (
-                  <div className="px-3 sm:px-4 py-3 bg-yellow-50 border-t border-yellow-200 text-xs sm:text-sm text-yellow-700 flex items-center gap-2">
-                    <Lock size={16} />
-                    <span>🔒 Complete previous exam type to unlock</span>
                   </div>
                 )}
               </div>
@@ -2152,14 +2213,14 @@ export default function ResultsEntry() {
         />
       )}
 
-      {/* Confirm Modal — replaces all confirm() dialogs */}
+      {/* Confirm Modal */}
       <ConfirmModal
         modal={modal}
         onClose={() => setModal(null)}
-        isLoading={isDeleting}
+        isLoading={isDeleting || isSaving}
       />
 
-      {/* Toast notifications — replaces all alert() calls */}
+      {/* Toast notifications */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </DashboardLayout>
   );
