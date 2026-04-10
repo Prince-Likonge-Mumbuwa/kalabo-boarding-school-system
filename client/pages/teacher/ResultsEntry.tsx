@@ -1,4 +1,7 @@
-// @/pages/teacher/ResultsEntry.tsx - LOCKING REMOVED VERSION - NO AUTO-REFRESH
+// @/pages/teacher/ResultsEntry.tsx - COMPLETE FULLY CORRECTED VERSION
+// Preserves ALL original functionality while fixing multi-subject (RE and English) issue
+// Fixed: Edit/Delete properly checks Firestore for existing results
+// Fixed: Subject switching properly refreshes completion status
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
@@ -99,19 +102,26 @@ interface ModalState {
 
 interface ToastState {
   id: number;
-  type: 'success' | 'error' | 'warning';
+  type: 'success' | 'error' | 'warning' | 'info';
   message: string;
 }
 
-// ==================== AVAILABLE EXAM TYPES BASED ON CONFIG ====================
+// ==================== HELPER FUNCTIONS ====================
 const getAvailableExamTypes = (config: any) => {
   if (!config?.examTypes) return [];
   
   const types = [];
-  if (config.examTypes.week4) types.push({ id: 'week4', label: 'Week 4', shortLabel: 'W4' });
-  if (config.examTypes.week8) types.push({ id: 'week8', label: 'Week 8', shortLabel: 'W8' });
-  if (config.examTypes.endOfTerm) types.push({ id: 'endOfTerm', label: 'End of Term', shortLabel: 'EOT' });
+  if (config.examTypes.week4 === true) types.push({ id: 'week4', label: 'Week 4', shortLabel: 'W4' });
+  if (config.examTypes.week8 === true) types.push({ id: 'week8', label: 'Week 8', shortLabel: 'W8' });
+  if (config.examTypes.endOfTerm === true) types.push({ id: 'endOfTerm', label: 'End of Term', shortLabel: 'EOT' });
+  
   return types;
+};
+
+const getTotalMarksForExamType = (config: any, examType: string): number => {
+  if (!config) return 100;
+  const marksKey = `${examType}TotalMarks`;
+  return config[marksKey] || 100;
 };
 
 // ==================== GRADE BADGE ====================
@@ -311,12 +321,14 @@ const StudentRow = ({
 
 // ==================== SUBJECT PROGRESS BAR ====================
 interface SubjectProgressProps {
-  completion: ExtendedSubjectCompletion;
+  completion: ExtendedSubjectCompletion | null;
   selectedExamType: string;
   onExamTypeChange: (type: 'week4' | 'week8' | 'endOfTerm') => void;
   hasDraft?: boolean;
   availableExamTypes: Array<{ id: string; label: string; shortLabel: string }>;
   examConfig: any;
+  subjectName: string;
+  isLoading?: boolean;
 }
 
 const SubjectProgress = ({ 
@@ -325,16 +337,49 @@ const SubjectProgress = ({
   onExamTypeChange,
   hasDraft,
   availableExamTypes,
-  examConfig
+  examConfig,
+  subjectName,
+  isLoading = false
 }: SubjectProgressProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
   
-  if (!completion) return null;
+  if (availableExamTypes.length === 0) {
+    return (
+      <div className="bg-yellow-50 rounded-xl border border-yellow-200 p-4 text-center">
+        <AlertCircle size={20} className="text-yellow-600 mx-auto mb-2" />
+        <p className="text-sm text-yellow-700 font-medium">No Exams Configured for {examConfig?.term || 'this term'}</p>
+        <p className="text-xs text-yellow-600 mt-1">
+          No exam types are enabled for this term. Please contact the administrator.
+        </p>
+      </div>
+    );
+  }
+  
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <div className="flex items-center justify-center gap-2">
+          <Loader2 size={20} className="animate-spin text-blue-600" />
+          <span className="text-sm text-gray-600">Loading completion status...</span>
+        </div>
+      </div>
+    );
+  }
+  
+  const safeCompletion = completion || {
+    subjectName,
+    totalStudents: 0,
+    percentComplete: 0,
+    week4Complete: false,
+    week8Complete: false,
+    endOfTermComplete: false,
+    enteredStudents: { week4: 0, week8: 0, endOfTerm: 0 }
+  };
   
   const examTypes = availableExamTypes.map(type => {
-    const isComplete = completion[`${type.id}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
-    const count = completion.enteredStudents[type.id as keyof typeof completion.enteredStudents] || 0;
-    const totalMarks = examConfig?.[`${type.id}TotalMarks`] || 100;
+    const isComplete = safeCompletion[`${type.id}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
+    const count = safeCompletion.enteredStudents?.[type.id as keyof typeof safeCompletion.enteredStudents] || 0;
+    const totalMarks = getTotalMarksForExamType(examConfig, type.id);
     
     return {
       id: type.id,
@@ -342,18 +387,17 @@ const SubjectProgress = ({
       fullLabel: type.label,
       isComplete,
       count,
-      totalMarks
+      totalMarks,
+      totalStudents: safeCompletion.totalStudents || 0
     };
   });
 
-  // Calculate overall progress based on configured exams only
   const totalConfiguredExams = examTypes.length;
   const completedExams = examTypes.filter(exam => exam.isComplete).length;
   const progressPercentage = totalConfiguredExams > 0 
     ? Math.round((completedExams / totalConfiguredExams) * 100) 
     : 0;
 
-  // Grid columns based on number of exam types
   const gridCols = examTypes.length === 3 ? 'grid-cols-3' : examTypes.length === 2 ? 'grid-cols-2' : 'grid-cols-1';
 
   return (
@@ -361,25 +405,14 @@ const SubjectProgress = ({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
         <div className="flex items-center gap-2 flex-wrap">
           <GraduationCap size={16} className="text-gray-500 flex-shrink-0" />
-          <span className="text-sm font-medium text-gray-700">
-            {completion.subjectName}
-          </span>
-          {hasDraft && (
-            <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
-              Draft
-            </span>
-          )}
+          <span className="text-sm font-medium text-gray-700">{safeCompletion.subjectName}</span>
+          {hasDraft && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Draft</span>}
         </div>
-        <span className="text-xs text-gray-500">
-          {progressPercentage}% complete ({completedExams}/{totalConfiguredExams} exams)
-        </span>
+        <span className="text-xs text-gray-500">{progressPercentage}% complete ({completedExams}/{totalConfiguredExams} exams)</span>
       </div>
       
       <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-4">
-        <div 
-          className="h-full bg-blue-500 rounded-full transition-all duration-500"
-          style={{ width: `${progressPercentage}%` }}
-        />
+        <div className="h-full bg-blue-500 rounded-full transition-all duration-500" style={{ width: `${progressPercentage}%` }} />
       </div>
       
       <div className={`grid ${gridCols} gap-1.5 sm:gap-2`}>
@@ -402,22 +435,12 @@ const SubjectProgress = ({
                 <span className={`text-xs font-semibold ${isSelected ? 'text-white' : exam.isComplete ? 'text-green-600' : 'text-gray-600'}`}>
                   {exam.label}
                 </span>
-                {exam.isComplete && !isSelected && (
-                  <CheckCircle size={10} className="text-green-500 flex-shrink-0" />
-                )}
-                {exam.isComplete && isSelected && (
-                  <CheckCircle size={10} className="text-white flex-shrink-0" />
-                )}
+                {exam.isComplete && !isSelected && <CheckCircle size={10} className="text-green-500 flex-shrink-0" />}
+                {exam.isComplete && isSelected && <CheckCircle size={10} className="text-white flex-shrink-0" />}
               </div>
-              <span className={`text-[10px] ${isSelected ? 'text-blue-100' : 'text-gray-500'}`}>
-                {exam.count}/{completion.totalStudents}
-              </span>
-              <span className={`text-[8px] mt-0.5 ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>
-                {exam.totalMarks} marks
-              </span>
-              {isSelected && (
-                <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-6 h-1 bg-white rounded-full opacity-60" />
-              )}
+              <span className={`text-[10px] ${isSelected ? 'text-blue-100' : 'text-gray-500'}`}>{exam.count}/{exam.totalStudents}</span>
+              <span className={`text-[8px] mt-0.5 ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>{exam.totalMarks} marks</span>
+              {isSelected && <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-6 h-1 bg-white rounded-full opacity-60" />}
             </button>
           );
         })}
@@ -435,6 +458,7 @@ interface DraftCardProps {
 
 const DraftCard = ({ draft, onLoad, onDelete }: DraftCardProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
+  const examLabel = draft.examType === 'week4' ? 'Week 4' : draft.examType === 'week8' ? 'Week 8' : 'End of Term';
   
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md transition-all">
@@ -444,7 +468,7 @@ const DraftCard = ({ draft, onLoad, onDelete }: DraftCardProps) => {
             {draft.className} • {draft.subject}
           </h4>
           <p className="text-xs text-gray-500 truncate">
-            {draft.examType} • {draft.term} {draft.year}
+            {examLabel} • {draft.term} {draft.year}
           </p>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -557,7 +581,6 @@ const MarksPDFPreview = ({
         isFromSaved = true;
       }
       
-      // Calculate percentage and grade for display
       let percentage = null;
       let grade = null;
       const marksNum = displayMarks && displayMarks.toLowerCase() !== 'x' ? parseInt(displayMarks) : null;
@@ -876,7 +899,6 @@ const ConfirmModal = ({ modal, onClose, isLoading = false }: ConfirmModalProps) 
         onClick={isLoading ? undefined : onClose}
       />
       <div className="relative bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6 flex flex-col gap-4">
-        {/* Icon */}
         <div className={`inline-flex items-center justify-center w-12 h-12 rounded-full self-start
           ${isDanger ? 'bg-red-100' : 'bg-amber-100'}`}>
           {isDanger
@@ -884,13 +906,11 @@ const ConfirmModal = ({ modal, onClose, isLoading = false }: ConfirmModalProps) 
             : <AlertCircle size={22} className="text-amber-600" />}
         </div>
 
-        {/* Text */}
         <div>
           <h3 className="text-base font-semibold text-gray-900 mb-1">{modal.title}</h3>
           <p className="text-sm text-gray-500 leading-relaxed">{modal.description}</p>
         </div>
 
-        {/* Buttons */}
         <div className="flex gap-2.5 pt-1">
           <button
             onClick={isLoading ? undefined : onClose}
@@ -939,17 +959,15 @@ const ToastItem = ({ toast, onDismiss }: { toast: ToastState; onDismiss: (id: nu
     return () => clearTimeout(t);
   }, [toast.id, onDismiss]);
 
+  const bgColor = toast.type === 'success' ? 'bg-green-600' : toast.type === 'warning' ? 'bg-yellow-600' : toast.type === 'info' ? 'bg-blue-600' : 'bg-red-600';
+  const Icon = toast.type === 'success' ? CheckCircle : toast.type === 'warning' ? AlertCircle : toast.type === 'info' ? GraduationCap : XCircle;
+
   return (
     <div
       className={`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg
-        text-white text-sm font-medium max-w-xs animate-in slide-in-from-bottom-2
-        ${toast.type === 'success' ? 'bg-green-600' : toast.type === 'warning' ? 'bg-yellow-600' : 'bg-red-600'}`}
+        text-white text-sm font-medium max-w-xs animate-in slide-in-from-bottom-2 ${bgColor}`}
     >
-      {toast.type === 'success'
-        ? <CheckCircle size={16} className="flex-shrink-0" />
-        : toast.type === 'warning'
-        ? <AlertCircle size={16} className="flex-shrink-0" />
-        : <XCircle size={16} className="flex-shrink-0" />}
+      <Icon size={16} className="flex-shrink-0" />
       <span className="flex-1">{toast.message}</span>
       <button
         onClick={() => onDismiss(toast.id)}
@@ -998,34 +1016,39 @@ export default function ResultsEntry() {
   const inputElements = useRef<Map<string, HTMLInputElement>>(new Map());
   const tableContainerRef = useRef<HTMLDivElement>(null);
   
+  // Core State
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
   const [examType, setExamType] = useState<'week4' | 'week8' | 'endOfTerm'>('week4');
   const [term, setTerm] = useState('Term 1');
   const [year, setYear] = useState(new Date().getFullYear());
   
+  // Data State
   const [students, setStudents] = useState<StudentResultInput[]>([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [selectedClassData, setSelectedClassData] = useState<ClassInfo | null>(null);
-  
   const [drafts, setDrafts] = useState<SavedDraft[]>([]);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
   
+  // PDF Preview State
   const [showPDFPreview, setShowPDFPreview] = useState(false);
   const [allExamData, setAllExamData] = useState<ExamData | null>(null);
   const [loadingAllData, setLoadingAllData] = useState(false);
 
+  // UI State
   const [isEditMode, setIsEditMode] = useState(false);
   const [originalResults, setOriginalResults] = useState<Map<string, number>>(new Map());
-  
-  // Track if we have unsaved changes to warn before destructive actions
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  
+  // Track last subject to detect changes (CRITICAL FIX for RE and English)
+  const lastSubjectRef = useRef<string>('');
 
-  // Modal and toast state — replaces all alert()/confirm() calls
+  // Modal and toast state
   const [modal, setModal] = useState<ModalState | null>(null);
   const [toasts, setToasts] = useState<ToastState[]>([]);
 
-  const showToast = useCallback((type: 'success' | 'error' | 'warning', message: string) => {
+  // Helper functions
+  const showToast = useCallback((type: 'success' | 'error' | 'warning' | 'info', message: string) => {
     setToasts(prev => [...prev, { id: Date.now(), type, message }]);
   }, []);
 
@@ -1033,41 +1056,73 @@ export default function ResultsEntry() {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
+  // Hooks
   const { classes, isLoading: loadingClasses } = useSchoolClasses({ isActive: true });
-  
-  // Get exam configuration for the selected term and year
-  const { 
-    configs: examConfigs, 
-    isLoading: loadingExamConfig 
-  } = useExamConfig({ year, term });
-  
-  const currentExamConfig = examConfigs?.[0];
-  
-  // Determine available exam types based on config
-  const availableExamTypes = useMemo(() => {
-    return getAvailableExamTypes(currentExamConfig);
-  }, [currentExamConfig]);
-  
-  // Get total marks from config
-  const totalMarks = useMemo(() => {
-    if (!currentExamConfig || !examType) return 100;
-    return currentExamConfig[`${examType}TotalMarks`] || 100;
-  }, [currentExamConfig, examType]);
-  
-  const { assignments, getSubjectsForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.uid);
-  
-  const { saveResults, isSaving, checkExisting, isCheckingExisting, editResults, isEditing, deleteResults, isDeleting } = useResults();
-  
-  const {
-    completionStatus,
-    isLoading: loadingCompletion,
-    refetch: refetchCompletion
-  } = useSubjectCompletion({
+  const { assignments, getSubjectsForClass, isFormTeacherForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.uid);
+  const { configs: examConfigs, isLoading: loadingExamConfig } = useExamConfig({ year, term });
+  const { saveResults, isSaving, checkExisting, isCheckingExisting, deleteResults, isDeleting } = useResults();
+  const { completionStatus, isLoading: loadingCompletion, refetch: refetchCompletion } = useSubjectCompletion({
     classId: selectedClass,
     term,
     year,
   });
 
+  // Memoized values
+  const currentExamConfig = examConfigs?.[0];
+  const availableExamTypes = useMemo(() => getAvailableExamTypes(currentExamConfig), [currentExamConfig]);
+  const totalMarks = useMemo(() => getTotalMarksForExamType(currentExamConfig, examType), [currentExamConfig, examType]);
+  
+  // Get unique subjects for selected class (handles RE and English correctly)
+  const availableSubjects = useMemo(() => {
+    if (!selectedClass || !user?.uid) return [];
+    const subjects = getSubjectsForClass(selectedClass);
+    console.log('📚 Available subjects for class:', subjects);
+    return subjects;
+  }, [selectedClass, user?.uid, getSubjectsForClass]);
+
+  const isOnlyFormTeacher = useMemo(() => {
+    if (!selectedClass || !user?.uid) return false;
+    const subjects = getSubjectsForClass(selectedClass);
+    const isFormTeacher = isFormTeacherForClass(selectedClass);
+    return subjects.length === 0 && isFormTeacher;
+  }, [selectedClass, user?.uid, getSubjectsForClass, isFormTeacherForClass]);
+
+  const currentSubjectCompletion = useMemo(() => {
+    if (!selectedSubject || !completionStatus.length) return null;
+    return completionStatus.find((s: any) => s.subjectName === selectedSubject) as ExtendedSubjectCompletion | null;
+  }, [selectedSubject, completionStatus]);
+
+  const hasFirestoreResults = useMemo(() => {
+    if (!currentSubjectCompletion || !examType) return false;
+    const count = currentSubjectCompletion.enteredStudents?.[examType as keyof typeof currentSubjectCompletion.enteredStudents] ?? 0;
+    console.log(`🔍 Firestore check - Subject: ${selectedSubject}, Exam: ${examType}, Results found: ${count}`);
+    return count > 0;
+  }, [currentSubjectCompletion, examType, selectedSubject]);
+
+  const isExamCompleted = useMemo(() => {
+    if (!currentSubjectCompletion || !examType) return false;
+    return currentSubjectCompletion[`${examType}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
+  }, [currentSubjectCompletion, examType]);
+
+  const currentDraft = useMemo(() => {
+    return drafts.find(d => 
+      d.classId === selectedClass &&
+      d.subject === selectedSubject &&
+      d.examType === examType &&
+      d.term === term &&
+      d.year === year
+    );
+  }, [drafts, selectedClass, selectedSubject, examType, term, year]);
+
+  // Get assigned classes for dropdown
+  const assignedClasses = useMemo(() => {
+    if (!user?.uid || !classes.length) return [];
+    const assignedClassIds = new Set(assignments.map(a => a.classId));
+    return classes.filter((cls: ClassInfo) => assignedClassIds.has(cls.id));
+  }, [classes, assignments, user?.uid]);
+
+  // ==================== EFFECTS ====================
+  
   // Track unsaved changes
   useEffect(() => {
     if (students.length > 0 && !isEditMode) {
@@ -1093,86 +1148,62 @@ export default function ResultsEntry() {
     localStorage.setItem('results_drafts', JSON.stringify(newDrafts));
   }, []);
 
-  // Get all classes the teacher is assigned to
-  const assignedClasses = useMemo(() => {
-    if (!user?.uid || !classes.length) return [];
-    return classes.filter((cls: ClassInfo) => 
-      cls.teachers?.includes(user.uid) || 
-      cls.formTeacherId === user.uid
-    );
-  }, [classes, user?.uid]);
-
-  // Get subjects the teacher actually teaches in the selected class
-  const availableSubjects = useMemo(() => {
-    if (!selectedClass || !user?.uid) return [];
-    return getSubjectsForClass(selectedClass);
-  }, [selectedClass, user?.uid, getSubjectsForClass]);
-
-  // Check if teacher is ONLY a form teacher (no subjects) in this class
-  const isOnlyFormTeacher = useMemo(() => {
-    if (!selectedClass || !user?.uid) return false;
-    const subjects = getSubjectsForClass(selectedClass);
-    return subjects.length === 0;
-  }, [selectedClass, user?.uid, getSubjectsForClass]);
-
-  const currentSubjectCompletion = useMemo(() => {
-    if (!selectedSubject || !completionStatus.length) return null;
-    return completionStatus.find((s: any) => s.subjectName === selectedSubject) as ExtendedSubjectCompletion | null;
-  }, [selectedSubject, completionStatus]);
-
-  // Derived from completionStatus — no extra Firestore round-trip needed.
-  // True when at least one student result is stored for the current exam type.
-  const hasFirestoreResults = useMemo(() => {
-    if (!currentSubjectCompletion || !examType) return false;
-    const count = currentSubjectCompletion.enteredStudents?.[examType as keyof typeof currentSubjectCompletion.enteredStudents] ?? 0;
-    return count > 0;
-  }, [currentSubjectCompletion, examType]);
-
-  const currentDraft = useMemo(() => {
-    return drafts.find(d => 
-      d.classId === selectedClass &&
-      d.subject === selectedSubject &&
-      d.examType === examType &&
-      d.term === term &&
-      d.year === year
-    );
-  }, [drafts, selectedClass, selectedSubject, examType, term, year]);
-
-  // Load draft data - only when explicitly selected, not automatically
-  useEffect(() => {
-    if (currentDraft && currentDraft.id !== activeDraftId && !isEditMode) {
-      // Only auto-load draft if there are no unsaved changes
-      if (!hasUnsavedChanges) {
-        setStudents(currentDraft.results);
-        setActiveDraftId(currentDraft.id);
-      }
-    }
-  }, [currentDraft, activeDraftId, isEditMode, hasUnsavedChanges]);
-
-  // Check if current exam type is completed
-  const isExamCompleted = useMemo(() => {
-    if (!currentSubjectCompletion || !examType) return false;
-    return currentSubjectCompletion[`${examType}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
-  }, [currentSubjectCompletion, examType]);
-
-  // Auto-select first available exam type
-  useEffect(() => {
-    if (availableExamTypes.length > 0) {
-      const firstType = availableExamTypes[0].id as 'week4' | 'week8' | 'endOfTerm';
-      if (!availableExamTypes.some(t => t.id === examType)) {
-        setExamType(firstType);
-      }
-    }
-  }, [availableExamTypes, examType]);
-
-  // Auto-select subject if there's exactly one
+  // Auto-select first subject if only one available
   useEffect(() => {
     if (availableSubjects.length === 1 && !selectedSubject) {
+      console.log('🎯 Auto-selecting single subject:', availableSubjects[0]);
       setSelectedSubject(availableSubjects[0]);
     }
   }, [availableSubjects, selectedSubject]);
 
-  // Load students - ONLY when class changes, not on any other refresh
+  // CRITICAL FIX: Complete state reset when subject changes (for RE and English)
+  useEffect(() => {
+    if (selectedSubject && selectedSubject !== lastSubjectRef.current) {
+      console.log(`🔄 Subject changed from "${lastSubjectRef.current}" to "${selectedSubject}" - Refetching completion status`);
+      
+      // Reset exam type to first available configured exam
+      if (availableExamTypes.length > 0) {
+        const firstExamType = availableExamTypes[0].id as 'week4' | 'week8' | 'endOfTerm';
+        setExamType(firstExamType);
+      }
+      
+      // Clear edit mode completely
+      setIsEditMode(false);
+      setOriginalResults(new Map());
+      
+      // Clear unsaved changes flag
+      setHasUnsavedChanges(false);
+      
+      // Clear all marks for the new subject
+      setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
+      
+      // Clear active draft ID
+      setActiveDraftId(null);
+      
+      // CRITICAL: Force refetch completion status for the new subject
+      refetchCompletion();
+      
+      // Update the ref
+      lastSubjectRef.current = selectedSubject;
+      
+      // Show feedback to user
+      showToast('info', `Switched to ${selectedSubject}. Select an exam type to begin.`);
+    }
+  }, [selectedSubject, availableExamTypes, refetchCompletion, showToast]);
+
+  // Auto-select first available exam type when they become available
+  useEffect(() => {
+    if (availableExamTypes.length > 0 && selectedSubject) {
+      const currentTypeExists = availableExamTypes.some(t => t.id === examType);
+      if (!currentTypeExists) {
+        const firstType = availableExamTypes[0].id as 'week4' | 'week8' | 'endOfTerm';
+        setExamType(firstType);
+        console.log(`🎯 Auto-selected exam type: ${firstType} for subject ${selectedSubject}`);
+      }
+    }
+  }, [availableExamTypes, examType, selectedSubject]);
+
+  // Load students when class changes
   useEffect(() => {
     const loadStudents = async () => {
       if (!selectedClass) {
@@ -1206,6 +1237,7 @@ export default function ResultsEntry() {
         setHasUnsavedChanges(false);
       } catch (error) {
         console.error('Error loading students:', error);
+        showToast('error', 'Failed to load students');
         setStudents([]);
         setSelectedClassData(null);
       } finally {
@@ -1214,18 +1246,22 @@ export default function ResultsEntry() {
     };
 
     loadStudents();
-  }, [selectedClass, assignedClasses]); // Only depends on selectedClass
+  }, [selectedClass, assignedClasses, showToast]);
 
-  // Auto-save draft - but don't clear draft when empty
+  // Load draft data
+  useEffect(() => {
+    if (currentDraft && currentDraft.id !== activeDraftId && !isEditMode && !hasUnsavedChanges) {
+      setStudents(currentDraft.results);
+      setActiveDraftId(currentDraft.id);
+    }
+  }, [currentDraft, activeDraftId, isEditMode, hasUnsavedChanges]);
+
+  // Auto-save draft
   useEffect(() => {
     if (!selectedClass || !selectedSubject || !students.length || !selectedClassData || isEditMode) return;
 
     const filledCount = students.filter(s => s.marks && s.marks !== '').length;
-    
-    // Don't delete draft when empty - just skip saving
-    if (filledCount === 0) {
-      return;
-    }
+    if (filledCount === 0) return;
 
     const timer = setTimeout(() => {
       const draftId = currentDraft?.id || `draft_${Date.now()}`;
@@ -1310,25 +1346,31 @@ export default function ResultsEntry() {
         
       } catch (error) {
         console.error('Error fetching exam data:', error);
+        showToast('error', 'Failed to fetch exam data');
       } finally {
         setLoadingAllData(false);
       }
     };
     
     fetchAllExamData();
-  }, [showPDFPreview, selectedClass, selectedSubject, term, year, checkExisting, availableExamTypes]);
+  }, [showPDFPreview, selectedClass, selectedSubject, term, year, checkExisting, availableExamTypes, showToast]);
 
+  // ==================== EVENT HANDLERS ====================
+  
   const handleMarksChange = useCallback((studentId: string, marks: string) => {
     if (marks && marks.toLowerCase() !== 'x' && !/^\d*$/.test(marks)) return;
     
     const marksNum = parseInt(marks);
-    if (marks && marks.toLowerCase() !== 'x' && marksNum > totalMarks) return;
+    if (marks && marks.toLowerCase() !== 'x' && marksNum > totalMarks) {
+      showToast('warning', `Marks cannot exceed ${totalMarks}`);
+      return;
+    }
 
     setStudents(prev => prev.map(s =>
       s.id === studentId ? { ...s, marks } : s
     ));
     setHasUnsavedChanges(true);
-  }, [totalMarks]);
+  }, [totalMarks, showToast]);
 
   const handleMarkAbsent = useCallback((studentId: string) => {
     setStudents(prev => prev.map(s =>
@@ -1349,7 +1391,6 @@ export default function ResultsEntry() {
           setExamType(type);
           setIsEditMode(false);
           setHasUnsavedChanges(false);
-          // Clear current marks when discarding
           setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
         },
       });
@@ -1358,26 +1399,6 @@ export default function ResultsEntry() {
       setIsEditMode(false);
     }
   }, [hasUnsavedChanges, isEditMode]);
-
-  const handleEditResults = async () => {
-    if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
-
-    // Warn about unsaved changes before editing
-    if (hasUnsavedChanges) {
-      setModal({
-        type: 'confirmDiscardChanges',
-        title: 'Unsaved changes',
-        description: 'You have unsaved marks. Loading saved results will discard your current entries. Proceed?',
-        onConfirm: async () => {
-          setModal(null);
-          await performEditResults();
-        },
-      });
-      return;
-    }
-
-    await performEditResults();
-  };
 
   const performEditResults = async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
@@ -1418,12 +1439,32 @@ export default function ResultsEntry() {
 
       setIsEditMode(true);
       setHasUnsavedChanges(false);
+      showToast('info', 'Edit mode activated. Update marks and click Update.');
 
     } catch (error: any) {
       console.error('Error loading results for editing:', error);
       showToast('error', `Failed to load results: ${error.message || 'Please try again'}`);
     }
   };
+
+  const handleEditResults = useCallback(async () => {
+    if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
+
+    if (hasUnsavedChanges) {
+      setModal({
+        type: 'confirmDiscardChanges',
+        title: 'Unsaved changes',
+        description: 'You have unsaved marks. Loading saved results will discard your current entries. Proceed?',
+        onConfirm: async () => {
+          setModal(null);
+          await performEditResults();
+        },
+      });
+      return;
+    }
+
+    await performEditResults();
+  }, [selectedClass, selectedSubject, selectedClassData, user, hasUnsavedChanges]);
 
   const handleCancelEdit = useCallback(() => {
     setModal({
@@ -1444,25 +1485,24 @@ export default function ResultsEntry() {
         setIsEditMode(false);
         setOriginalResults(new Map());
         setHasUnsavedChanges(false);
+        showToast('info', 'Edit cancelled');
       },
     });
-  }, [originalResults]);
+  }, [originalResults, showToast]);
 
-  const handleSaveResults = async () => {
+  const handleSaveResults = useCallback(async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
 
-    const results = await Promise.all(
-      students
-        .filter(s => s.marks !== '')
-        .map(async (s) => ({
-          studentId: s.studentId,
-          studentName: s.name,
-          marks: s.marks.toLowerCase() === 'x' ? -1 : parseInt(s.marks),
-        }))
-    );
+    const results = students
+      .filter(s => s.marks !== '')
+      .map(s => ({
+        studentId: s.studentId,
+        studentName: s.name,
+        marks: s.marks.toLowerCase() === 'x' ? -1 : parseInt(s.marks),
+      }));
 
     if (results.length === 0) {
-      showToast('error', 'Please enter marks for at least one student.');
+      showToast('warning', 'Please enter marks for at least one student.');
       return;
     }
 
@@ -1483,7 +1523,6 @@ export default function ResultsEntry() {
         overwrite: isEditMode,
       });
 
-      // Clear the current marks after successful save
       setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
       setHasUnsavedChanges(false);
 
@@ -1494,6 +1533,7 @@ export default function ResultsEntry() {
 
       setIsEditMode(false);
       setOriginalResults(new Map());
+      await refetchCompletion();
 
       showToast('success', `Results ${isEditMode ? 'updated' : 'saved'} successfully.`);
 
@@ -1501,7 +1541,7 @@ export default function ResultsEntry() {
       console.error('Error saving results:', error);
       showToast('error', `Failed to save: ${error.message || 'Please try again'}`);
     }
-  };
+  }, [selectedClass, selectedSubject, selectedClassData, user, students, examType, term, year, totalMarks, isEditMode, saveResults, currentDraft, drafts, saveDrafts, refetchCompletion, showToast]);
 
   const handleDeleteResults = useCallback(() => {
     if (!selectedClass || !selectedSubject || !selectedClassData) return;
@@ -1531,6 +1571,7 @@ export default function ResultsEntry() {
           setIsEditMode(false);
           setOriginalResults(new Map());
           setHasUnsavedChanges(false);
+          await refetchCompletion();
 
           showToast('success', `${examLabel} results deleted.`);
         } catch (error: any) {
@@ -1540,7 +1581,7 @@ export default function ResultsEntry() {
         }
       },
     });
-  }, [selectedClass, selectedSubject, selectedClassData, examType, term, year, deleteResults, hasUnsavedChanges, showToast]);
+  }, [selectedClass, selectedSubject, selectedClassData, examType, term, year, deleteResults, hasUnsavedChanges, refetchCompletion, showToast]);
 
   const handleLoadDraft = useCallback((draft: SavedDraft) => {
     if (hasUnsavedChanges) {
@@ -1576,22 +1617,23 @@ export default function ResultsEntry() {
       type: 'confirmClearDraft',
       title: 'Delete draft?',
       description: draft
-        ? `Delete the draft for ${draft.subject} (${draft.examType}) in ${draft.className}? This only removes it from local storage — no Firestore data is affected.`
+        ? `Delete the draft for ${draft.subject} (${draft.examType === 'week4' ? 'Week 4' : draft.examType === 'week8' ? 'Week 8' : 'End of Term'}) in ${draft.className}? This only removes it from local storage — no Firestore data is affected.`
         : 'Delete this draft?',
       onConfirm: () => {
         setModal(null);
         const newDrafts = drafts.filter(d => d.id !== draftId);
         saveDrafts(newDrafts);
         if (activeDraftId === draftId) setActiveDraftId(null);
+        showToast('info', 'Draft deleted');
       },
     });
-  }, [drafts, activeDraftId, saveDrafts]);
+  }, [drafts, activeDraftId, saveDrafts, showToast]);
 
   const handleDownloadMarks = useCallback(() => {
     setShowPDFPreview(true);
   }, []);
 
-  const handleGeneratePDF = async () => {
+  const handleGeneratePDF = useCallback(async () => {
     try {
       const { generateMarkSchedulePDF } = await import('@/services/pdf/markSchedulePDF');
       
@@ -1614,13 +1656,19 @@ export default function ResultsEntry() {
         if (marksValue === '' && savedMarksMap.has(student.studentId)) {
           const savedMark = savedMarksMap.get(student.studentId);
           marksValue = savedMark === -1 ? 'X' : savedMark.toString();
+          marksNum = savedMark === -1 ? null : savedMark;
+        } else {
+          const isAbsent = marksValue.toLowerCase() === 'x';
+          if (!isAbsent && marksValue && marksValue !== '') {
+            marksNum = parseInt(marksValue);
+          }
         }
         
-        const isAbsent = marksValue.toLowerCase() === 'x';
-        if (!isAbsent && marksValue && marksValue !== '') {
-          marksNum = parseInt(marksValue);
+        if (marksNum !== null && marksNum !== -1) {
           percentage = ((marksNum / totalMarks) * 100).toFixed(1);
           grade = calculateGrade(parseFloat(percentage || '0'));
+        } else if (marksValue.toLowerCase() === 'x') {
+          grade = -1;
         }
         
         return {
@@ -1630,7 +1678,7 @@ export default function ResultsEntry() {
           marksNum: marksNum,
           percentage: percentage,
           grade: grade,
-          isAbsent: isAbsent
+          isAbsent: marksValue.toLowerCase() === 'x'
         };
       });
 
@@ -1648,11 +1696,12 @@ export default function ResultsEntry() {
       });
       
       setShowPDFPreview(false);
+      showToast('success', 'PDF generated successfully');
     } catch (error) {
       console.error('PDF generation error:', error);
       showToast('error', 'Failed to generate PDF. Check console for details.');
     }
-  };
+  }, [user, allExamData, examType, students, totalMarks, selectedClassData, selectedSubject, term, year, showToast]);
 
   const handleClearAllMarks = useCallback(() => {
     setModal({
@@ -1663,14 +1712,18 @@ export default function ResultsEntry() {
         setModal(null);
         setStudents(students.map(s => ({ ...s, marks: '' })));
         setHasUnsavedChanges(false);
+        showToast('info', 'All marks cleared');
       },
     });
-  }, [students]);
+  }, [students, showToast]);
 
+  // Computed values for UI
   const filledCount = students.filter(s => s.marks && s.marks !== '').length;
   const totalStudents = students.length;
   const completionPercentage = totalStudents > 0 ? Math.round((filledCount / totalStudents) * 100) : 0;
+  const noExamsConfigured = selectedClass && selectedSubject && availableExamTypes.length === 0;
 
+  // Loading state
   if (loadingClasses || loadingAssignments || loadingExamConfig) {
     return (
       <DashboardLayout activeTab="results">
@@ -1683,8 +1736,6 @@ export default function ResultsEntry() {
       </DashboardLayout>
     );
   }
-
-  const noExamsConfigured = selectedClass && selectedSubject && availableExamTypes.length === 0;
 
   return (
     <DashboardLayout activeTab="results">
@@ -1837,7 +1888,7 @@ export default function ResultsEntry() {
               <span className="text-[10px] sm:text-xs text-gray-500">(Auto-saved)</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
-              {drafts.map(draft => (
+              {drafts.slice(0, 6).map(draft => (
                 <DraftCard
                   key={draft.id}
                   draft={draft}
@@ -1892,7 +1943,7 @@ export default function ResultsEntry() {
               </select>
             </div>
             
-            {/* Subject Select */}
+            {/* Subject Select - Shows all subjects including RE and English */}
             <div className="min-w-0">
               <label className="block text-[10px] sm:text-xs font-medium text-gray-600 mb-0.5 sm:mb-1">
                 Subject <span className="text-red-500">*</span>
@@ -1950,9 +2001,9 @@ export default function ResultsEntry() {
                   className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white"
                   disabled={isEditMode}
                 >
-                  <option value="Term 1">T1</option>
-                  <option value="Term 2">T2</option>
-                  <option value="Term 3">T3</option>
+                  <option value="Term 1">Term 1</option>
+                  <option value="Term 2">Term 2</option>
+                  <option value="Term 3">Term 3</option>
                 </select>
               </div>
               <div className="min-w-0">
@@ -1979,15 +2030,15 @@ export default function ResultsEntry() {
               <div className="min-w-0 bg-blue-50 rounded-lg p-2 flex items-center gap-2">
                 <GraduationCap size={14} className="text-blue-600 flex-shrink-0" />
                 <span className="text-xs text-blue-700">
-                  {availableExamTypes.length} of 3 exams configured
+                  {availableExamTypes.length} exam(s) configured for {term}
                 </span>
               </div>
             )}
           </div>
         </div>
 
-        {/* Subject Progress */}
-        {selectedClass && selectedSubject && currentSubjectCompletion && availableExamTypes.length > 0 && (
+        {/* Subject Progress - Always shows when subject selected */}
+        {selectedClass && selectedSubject && availableSubjects.length > 0 && (
           <SubjectProgress 
             completion={currentSubjectCompletion}
             selectedExamType={examType}
@@ -1995,6 +2046,8 @@ export default function ResultsEntry() {
             hasDraft={!!currentDraft}
             availableExamTypes={availableExamTypes}
             examConfig={currentExamConfig}
+            subjectName={selectedSubject}
+            isLoading={loadingCompletion}
           />
         )}
 
