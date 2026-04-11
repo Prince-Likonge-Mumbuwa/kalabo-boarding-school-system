@@ -1,7 +1,6 @@
-// @/pages/teacher/ResultsEntry.tsx - COMPLETE FULLY CORRECTED VERSION
-// Preserves ALL original functionality while fixing multi-subject (RE and English) issue
-// Fixed: Edit/Delete properly checks Firestore for existing results
-// Fixed: Subject switching properly refreshes completion status
+// @/pages/teacher/ResultsEntry.tsx - COMPLETE FIXED VERSION
+// Fixed: PDF generation and subject-specific completion for same teacher two subjects
+
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
@@ -17,7 +16,8 @@ import {
   Edit3,
   Trash2,
   History,
-  UserX
+  UserX,
+  RefreshCw
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useResults, useSubjectCompletion } from '@/hooks/useResults';
@@ -26,7 +26,7 @@ import { learnerService } from '@/services/schoolService';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { calculateGrade } from '@/services/resultsService';
+import { calculateGrade, normalizeSubjectName } from '@/services/resultsService';
 
 // ==================== INTERFACES ====================
 interface StudentResultInput {
@@ -52,6 +52,7 @@ interface SavedDraft {
 }
 
 interface ExtendedSubjectCompletion {
+  subjectId: string;
   subjectName: string;
   totalStudents: number;
   percentComplete: number;
@@ -94,7 +95,7 @@ interface ExamData {
 
 // ==================== MODAL / TOAST STATE ====================
 interface ModalState {
-  type: 'confirmDelete' | 'confirmCancelEdit' | 'confirmClearDraft' | 'confirmDiscardChanges';
+  type: 'confirmDelete' | 'confirmCancelEdit' | 'confirmClearDraft' | 'confirmDiscardChanges' | 'confirmOverwrite';
   title: string;
   description: string;
   onConfirm: () => void;
@@ -329,6 +330,7 @@ interface SubjectProgressProps {
   examConfig: any;
   subjectName: string;
   isLoading?: boolean;
+  hasExistingResults?: boolean;
 }
 
 const SubjectProgress = ({ 
@@ -339,7 +341,8 @@ const SubjectProgress = ({
   availableExamTypes,
   examConfig,
   subjectName,
-  isLoading = false
+  isLoading = false,
+  hasExistingResults = false
 }: SubjectProgressProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
   
@@ -367,6 +370,7 @@ const SubjectProgress = ({
   }
   
   const safeCompletion = completion || {
+    subjectId: normalizeSubjectName(subjectName),
     subjectName,
     totalStudents: 0,
     percentComplete: 0,
@@ -407,6 +411,11 @@ const SubjectProgress = ({
           <GraduationCap size={16} className="text-gray-500 flex-shrink-0" />
           <span className="text-sm font-medium text-gray-700">{safeCompletion.subjectName}</span>
           {hasDraft && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Draft</span>}
+          {hasExistingResults && !hasDraft && (
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <CheckCircle size={10} /> Saved Results Exist
+            </span>
+          )}
         </div>
         <span className="text-xs text-gray-500">{progressPercentage}% complete ({completedExams}/{totalConfiguredExams} exams)</span>
       </div>
@@ -979,30 +988,25 @@ const ToastItem = ({ toast, onDismiss }: { toast: ToastState; onDismiss: (id: nu
   );
 };
 
-// ==================== EDIT MODE INDICATOR ====================
-interface EditModeIndicatorProps {
-  isEditing: boolean;
-  onCancelEdit: () => void;
+// ==================== OVERWRITE INFO BANNER ====================
+interface OverwriteInfoProps {
+  hasExistingResults: boolean;
 }
 
-const EditModeIndicator = ({ isEditing, onCancelEdit }: EditModeIndicatorProps) => {
-  if (!isEditing) return null;
+const OverwriteInfo = ({ hasExistingResults }: OverwriteInfoProps) => {
+  if (!hasExistingResults) return null;
   
   return (
-    <div className="bg-amber-50 border-l-4 border-amber-500 p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+    <div className="bg-blue-50 border-l-4 border-blue-500 p-3 sm:p-4 rounded-lg">
       <div className="flex items-center gap-2 sm:gap-3">
-        <Edit3 size={18} className="text-amber-600 flex-shrink-0" />
+        <RefreshCw size={18} className="text-blue-600 flex-shrink-0" />
         <div className="min-w-0">
-          <p className="font-medium text-amber-800 text-sm sm:text-base">Edit Mode Active</p>
-          <p className="text-xs sm:text-sm text-amber-700 truncate">Changes will overwrite saved data.</p>
+          <p className="font-medium text-blue-800 text-sm sm:text-base">Auto-Overwrite Mode Active</p>
+          <p className="text-xs sm:text-sm text-blue-700">
+            Saved results exist for this exam. Simply enter new marks and click <strong>Overwrite</strong> to automatically replace all results. No need to enter edit mode first.
+          </p>
         </div>
       </div>
-      <button
-        onClick={onCancelEdit}
-        className="px-3 py-1.5 bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200 text-xs sm:text-sm font-medium self-start sm:self-center"
-      >
-        Cancel Edit
-      </button>
     </div>
   );
 };
@@ -1036,8 +1040,6 @@ export default function ResultsEntry() {
   const [loadingAllData, setLoadingAllData] = useState(false);
 
   // UI State
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [originalResults, setOriginalResults] = useState<Map<string, number>>(new Map());
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   
   // Track last subject to detect changes (CRITICAL FIX for RE and English)
@@ -1061,8 +1063,11 @@ export default function ResultsEntry() {
   const { assignments, getSubjectsForClass, isFormTeacherForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.uid);
   const { configs: examConfigs, isLoading: loadingExamConfig } = useExamConfig({ year, term });
   const { saveResults, isSaving, checkExisting, isCheckingExisting, deleteResults, isDeleting } = useResults();
+  
+  // FIXED: Added subjectId to useSubjectCompletion to prevent cross-subject contamination
   const { completionStatus, isLoading: loadingCompletion, refetch: refetchCompletion } = useSubjectCompletion({
     classId: selectedClass,
+    subjectId: selectedSubject, // CRITICAL: Pass subjectId to filter specific subject
     term,
     year,
   });
@@ -1087,22 +1092,22 @@ export default function ResultsEntry() {
     return subjects.length === 0 && isFormTeacher;
   }, [selectedClass, user?.uid, getSubjectsForClass, isFormTeacherForClass]);
 
+  // FIXED: Use subjectId for matching, not subjectName
   const currentSubjectCompletion = useMemo(() => {
     if (!selectedSubject || !completionStatus.length) return null;
-    return completionStatus.find((s: any) => s.subjectName === selectedSubject) as ExtendedSubjectCompletion | null;
+    const normalizedSelected = normalizeSubjectName(selectedSubject);
+    const found = completionStatus.find((s: any) => s.subjectId === normalizedSelected) as ExtendedSubjectCompletion | null;
+    console.log(`🔍 Looking for subject: ${selectedSubject} (normalized: ${normalizedSelected}), found: ${found?.subjectName || 'not found'}`);
+    return found;
   }, [selectedSubject, completionStatus]);
 
+  // FIXED: Enhanced hasFirestoreResults with better logging
   const hasFirestoreResults = useMemo(() => {
     if (!currentSubjectCompletion || !examType) return false;
     const count = currentSubjectCompletion.enteredStudents?.[examType as keyof typeof currentSubjectCompletion.enteredStudents] ?? 0;
-    console.log(`🔍 Firestore check - Subject: ${selectedSubject}, Exam: ${examType}, Results found: ${count}`);
+    console.log(`🔍 Firestore check - Subject: ${selectedSubject}, SubjectId: ${currentSubjectCompletion.subjectId}, Exam: ${examType}, Results found: ${count}`);
     return count > 0;
   }, [currentSubjectCompletion, examType, selectedSubject]);
-
-  const isExamCompleted = useMemo(() => {
-    if (!currentSubjectCompletion || !examType) return false;
-    return currentSubjectCompletion[`${examType}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
-  }, [currentSubjectCompletion, examType]);
 
   const currentDraft = useMemo(() => {
     return drafts.find(d => 
@@ -1125,11 +1130,11 @@ export default function ResultsEntry() {
   
   // Track unsaved changes
   useEffect(() => {
-    if (students.length > 0 && !isEditMode) {
+    if (students.length > 0) {
       const hasChanges = students.some(s => s.marks && s.marks !== '');
       setHasUnsavedChanges(hasChanges);
     }
-  }, [students, isEditMode]);
+  }, [students]);
 
   // Load drafts from localStorage
   useEffect(() => {
@@ -1166,10 +1171,6 @@ export default function ResultsEntry() {
         const firstExamType = availableExamTypes[0].id as 'week4' | 'week8' | 'endOfTerm';
         setExamType(firstExamType);
       }
-      
-      // Clear edit mode completely
-      setIsEditMode(false);
-      setOriginalResults(new Map());
       
       // Clear unsaved changes flag
       setHasUnsavedChanges(false);
@@ -1248,17 +1249,60 @@ export default function ResultsEntry() {
     loadStudents();
   }, [selectedClass, assignedClasses, showToast]);
 
-  // Load draft data
+  // Load existing results when subject/exam type changes (for display only)
   useEffect(() => {
-    if (currentDraft && currentDraft.id !== activeDraftId && !isEditMode && !hasUnsavedChanges) {
+    const loadExistingResults = async () => {
+      if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
+      
+      // Only load if there are existing results AND no unsaved changes
+      if (hasFirestoreResults && !hasUnsavedChanges) {
+        try {
+          const existingResponse = await checkExisting({
+            classId: selectedClass,
+            subjectId: selectedSubject,
+            examType,
+            term,
+            year,
+          });
+
+          if (existingResponse?.results?.length) {
+            // Display existing marks in the input fields (so teacher can see what's saved)
+            setStudents(prevStudents =>
+              prevStudents.map(student => {
+                const existing = existingResponse.results.find(
+                  (r: any) => r.studentId === student.studentId || r.student_id === student.studentId
+                );
+                return {
+                  ...student,
+                  marks: existing ? (existing.marks === -1 ? 'X' : String(existing.marks)) : '',
+                };
+              })
+            );
+            console.log(`📋 Loaded ${existingResponse.results.length} existing results for display`);
+          }
+        } catch (error) {
+          console.error('Error loading existing results:', error);
+        }
+      }
+    };
+    
+    loadExistingResults();
+  }, [selectedClass, selectedSubject, examType, term, year, hasFirestoreResults, hasUnsavedChanges, checkExisting, selectedClassData, user]);
+
+  // Load draft data (only if no Firestore results)
+  useEffect(() => {
+    if (currentDraft && currentDraft.id !== activeDraftId && !hasFirestoreResults && !hasUnsavedChanges) {
       setStudents(currentDraft.results);
       setActiveDraftId(currentDraft.id);
     }
-  }, [currentDraft, activeDraftId, isEditMode, hasUnsavedChanges]);
+  }, [currentDraft, activeDraftId, hasUnsavedChanges, hasFirestoreResults]);
 
-  // Auto-save draft
+  // Auto-save draft (only if no Firestore results, or as backup)
   useEffect(() => {
-    if (!selectedClass || !selectedSubject || !students.length || !selectedClassData || isEditMode) return;
+    if (!selectedClass || !selectedSubject || !students.length || !selectedClassData) return;
+    
+    // Don't auto-save draft if there are Firestore results (to avoid confusion)
+    if (hasFirestoreResults) return;
 
     const filledCount = students.filter(s => s.marks && s.marks !== '').length;
     if (filledCount === 0) return;
@@ -1295,7 +1339,7 @@ export default function ResultsEntry() {
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [students, selectedClass, selectedSubject, examType, term, year, totalMarks, selectedClassData, isEditMode, drafts, currentDraft, saveDrafts]);
+  }, [students, selectedClass, selectedSubject, examType, term, year, totalMarks, selectedClassData, drafts, currentDraft, saveDrafts, hasFirestoreResults]);
 
   const focusNextInput = useCallback((currentStudentId: string) => {
     const currentIndex = students.findIndex(s => s.id === currentStudentId);
@@ -1381,7 +1425,7 @@ export default function ResultsEntry() {
 
   // Handle exam type change with unsaved changes warning
   const handleExamTypeChange = useCallback((type: 'week4' | 'week8' | 'endOfTerm') => {
-    if (hasUnsavedChanges && !isEditMode) {
+    if (hasUnsavedChanges) {
       setModal({
         type: 'confirmDiscardChanges',
         title: 'Unsaved changes',
@@ -1389,107 +1433,15 @@ export default function ResultsEntry() {
         onConfirm: () => {
           setModal(null);
           setExamType(type);
-          setIsEditMode(false);
           setHasUnsavedChanges(false);
-          setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
         },
       });
     } else {
       setExamType(type);
-      setIsEditMode(false);
     }
-  }, [hasUnsavedChanges, isEditMode]);
+  }, [hasUnsavedChanges]);
 
-  const performEditResults = async () => {
-    if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
-
-    try {
-      const existingResponse = await checkExisting({
-        classId: selectedClass,
-        subjectId: selectedSubject,
-        examType,
-        term,
-        year,
-      });
-
-      if (!existingResponse?.results?.length) {
-        showToast('error', 'No saved results found in Firestore for this exam type.');
-        return;
-      }
-
-      const originalMap = new Map<string, number>(
-        existingResponse.results.map((r: any) => [
-          (r.studentId ?? r.student_id) as string,
-          r.marks as number,
-        ])
-      );
-      setOriginalResults(originalMap);
-
-      setStudents(prevStudents =>
-        prevStudents.map(student => {
-          const existing = existingResponse.results.find(
-            (r: any) => r.studentId === student.studentId || r.student_id === student.studentId
-          );
-          return {
-            ...student,
-            marks: existing ? (existing.marks === -1 ? 'X' : String(existing.marks)) : '',
-          };
-        })
-      );
-
-      setIsEditMode(true);
-      setHasUnsavedChanges(false);
-      showToast('info', 'Edit mode activated. Update marks and click Update.');
-
-    } catch (error: any) {
-      console.error('Error loading results for editing:', error);
-      showToast('error', `Failed to load results: ${error.message || 'Please try again'}`);
-    }
-  };
-
-  const handleEditResults = useCallback(async () => {
-    if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
-
-    if (hasUnsavedChanges) {
-      setModal({
-        type: 'confirmDiscardChanges',
-        title: 'Unsaved changes',
-        description: 'You have unsaved marks. Loading saved results will discard your current entries. Proceed?',
-        onConfirm: async () => {
-          setModal(null);
-          await performEditResults();
-        },
-      });
-      return;
-    }
-
-    await performEditResults();
-  }, [selectedClass, selectedSubject, selectedClassData, user, hasUnsavedChanges]);
-
-  const handleCancelEdit = useCallback(() => {
-    setModal({
-      type: 'confirmCancelEdit',
-      title: 'Cancel editing?',
-      description: 'Any unsaved changes will be discarded and marks will revert to what was last saved.',
-      onConfirm: () => {
-        setModal(null);
-        setStudents(prevStudents =>
-          prevStudents.map(student => {
-            const originalMark = originalResults.get(student.studentId);
-            return {
-              ...student,
-              marks: originalMark !== undefined ? (originalMark === -1 ? 'X' : originalMark.toString()) : '',
-            };
-          })
-        );
-        setIsEditMode(false);
-        setOriginalResults(new Map());
-        setHasUnsavedChanges(false);
-        showToast('info', 'Edit cancelled');
-      },
-    });
-  }, [originalResults, showToast]);
-
+  // ==================== SAVE RESULTS WITH AUTO-OVERWRITE ====================
   const handleSaveResults = useCallback(async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
 
@@ -1506,43 +1458,62 @@ export default function ResultsEntry() {
       return;
     }
 
+    // If there are existing results, show a confirmation before overwriting
+    if (hasFirestoreResults) {
+      setModal({
+        type: 'confirmOverwrite',
+        title: 'Overwrite Existing Results?',
+        description: `Results already exist for ${selectedSubject} (${examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'}). Saving will OVERWRITE all existing results. This action cannot be undone. Are you sure?`,
+        onConfirm: async () => {
+          setModal(null);
+          await performSave(results);
+        },
+      });
+    } else {
+      await performSave(results);
+    }
+  }, [selectedClass, selectedSubject, selectedClassData, user, students, examType, term, year, totalMarks, hasFirestoreResults, showToast]);
+
+  const performSave = async (results: Array<{ studentId: string; studentName: string; marks: number }>) => {
     try {
-      await saveResults({
+      const saveResult = await saveResults({
         classId: selectedClass,
-        className: selectedClassData.name,
+        className: selectedClassData!.name,
         subjectId: selectedSubject,
         subjectName: selectedSubject,
-        teacherId: user.uid,
-        teacherName: user.fullName || user.email || 'Unknown',
+        teacherId: user!.uid,
+        teacherName: user!.fullName || user!.email || 'Unknown',
         examType,
         examName: `${examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'} - ${selectedSubject}`,
         term,
         year,
         totalMarks,
         results,
-        overwrite: isEditMode,
+        overwrite: true, // ALWAYS overwrite existing results
       });
 
+      // Clear students after successful save
       setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
       setHasUnsavedChanges(false);
 
+      // Clear draft if exists
       if (currentDraft) {
         const newDrafts = drafts.filter(d => d.id !== currentDraft.id);
         saveDrafts(newDrafts);
       }
 
-      setIsEditMode(false);
-      setOriginalResults(new Map());
+      // Refresh completion status
       await refetchCompletion();
 
-      showToast('success', `Results ${isEditMode ? 'updated' : 'saved'} successfully.`);
+      showToast('success', `Results ${saveResult.overwritten ? 'updated' : 'saved'} successfully.`);
 
     } catch (error: any) {
       console.error('Error saving results:', error);
       showToast('error', `Failed to save: ${error.message || 'Please try again'}`);
     }
-  }, [selectedClass, selectedSubject, selectedClassData, user, students, examType, term, year, totalMarks, isEditMode, saveResults, currentDraft, drafts, saveDrafts, refetchCompletion, showToast]);
+  };
 
+  // ==================== DELETE RESULTS ====================
   const handleDeleteResults = useCallback(() => {
     if (!selectedClass || !selectedSubject || !selectedClassData) return;
     
@@ -1568,8 +1539,6 @@ export default function ResultsEntry() {
 
           setModal(null);
           setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
-          setIsEditMode(false);
-          setOriginalResults(new Map());
           setHasUnsavedChanges(false);
           await refetchCompletion();
 
@@ -1607,7 +1576,6 @@ export default function ResultsEntry() {
     setYear(draft.year);
     setStudents(draft.results);
     setActiveDraftId(draft.id);
-    setIsEditMode(false);
     setHasUnsavedChanges(false);
   }, []);
 
@@ -1633,12 +1601,14 @@ export default function ResultsEntry() {
     setShowPDFPreview(true);
   }, []);
 
+  // FIXED: PDF generation now uses the same displayStudents logic as the preview
   const handleGeneratePDF = useCallback(async () => {
     try {
       const { generateMarkSchedulePDF } = await import('@/services/pdf/markSchedulePDF');
       
       const teacherDisplayName = user?.fullName || user?.email || 'Teacher';
       
+      // Build saved marks map exactly like the preview does
       const savedMarksMap = new Map();
       if (allExamData && allExamData[examType]) {
         allExamData[examType].forEach((item: ExamDataItem) => {
@@ -1647,38 +1617,48 @@ export default function ResultsEntry() {
         });
       }
       
+      // Build display students exactly like MarksPDFPreview does
       const studentsForPDF = students.map(student => {
-        let marksValue = student.marks || '';
+        let saved = savedMarksMap.get(student.studentId);
+        if (!saved) {
+          saved = savedMarksMap.get(student.id);
+        }
+        
+        let displayMarks = student.marks;
+        let isFromSaved = false;
+        
+        if ((!displayMarks || displayMarks === '') && saved !== undefined) {
+          if (saved === -1) {
+            displayMarks = 'X';
+          } else if (saved >= 0) {
+            displayMarks = saved.toString();
+          }
+          isFromSaved = true;
+        }
+        
         let marksNum = null;
         let percentage = null;
         let grade = null;
+        const isAbsent = displayMarks?.toLowerCase() === 'x';
         
-        if (marksValue === '' && savedMarksMap.has(student.studentId)) {
-          const savedMark = savedMarksMap.get(student.studentId);
-          marksValue = savedMark === -1 ? 'X' : savedMark.toString();
-          marksNum = savedMark === -1 ? null : savedMark;
-        } else {
-          const isAbsent = marksValue.toLowerCase() === 'x';
-          if (!isAbsent && marksValue && marksValue !== '') {
-            marksNum = parseInt(marksValue);
+        if (!isAbsent && displayMarks && displayMarks !== '') {
+          marksNum = parseInt(displayMarks);
+          if (!isNaN(marksNum)) {
+            percentage = ((marksNum / totalMarks) * 100).toFixed(1);
+            grade = calculateGrade(parseFloat(percentage));
           }
-        }
-        
-        if (marksNum !== null && marksNum !== -1) {
-          percentage = ((marksNum / totalMarks) * 100).toFixed(1);
-          grade = calculateGrade(parseFloat(percentage || '0'));
-        } else if (marksValue.toLowerCase() === 'x') {
+        } else if (isAbsent) {
           grade = -1;
         }
         
         return {
           name: student.name,
           studentId: student.studentId,
-          marks: marksValue,
+          marks: displayMarks || '',
           marksNum: marksNum,
           percentage: percentage,
           grade: grade,
-          isAbsent: marksValue.toLowerCase() === 'x'
+          isAbsent: isAbsent
         };
       });
 
@@ -1742,7 +1722,7 @@ export default function ResultsEntry() {
       <div className="p-3 sm:p-4 lg:p-6 space-y-4 sm:space-y-6">
         
         {/* Unsaved Changes Warning Banner */}
-        {hasUnsavedChanges && !isEditMode && (
+        {hasUnsavedChanges && (
           <div className="bg-yellow-50 border-l-4 border-yellow-500 p-3 rounded-lg flex items-center justify-between">
             <div className="flex items-center gap-2">
               <AlertCircle size={18} className="text-yellow-600" />
@@ -1757,6 +1737,9 @@ export default function ResultsEntry() {
             </button>
           </div>
         )}
+
+        {/* Overwrite Info Banner */}
+        <OverwriteInfo hasExistingResults={hasFirestoreResults && !hasUnsavedChanges} />
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -1795,92 +1778,59 @@ export default function ResultsEntry() {
                 <span className="hidden xs:inline">Download</span>
               </button>
 
-              {/* Edit Button */}
-              {!isEditMode && (
-                <button
-                  onClick={handleEditResults}
-                  disabled={isCheckingExisting || !hasFirestoreResults}
-                  className={`
-                    inline-flex items-center justify-center gap-1 sm:gap-2
-                    bg-amber-600 text-white rounded-xl hover:bg-amber-700
-                    font-medium transition-all active:scale-[0.98]
-                    focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2
-                    disabled:opacity-40 disabled:cursor-not-allowed
-                    px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
-                    ${isSmallMobile ? 'flex-1' : ''}
-                  `}
-                  title={!hasFirestoreResults ? 'No saved results to edit for this exam' : 'Edit saved results'}
-                >
-                  {isCheckingExisting ? (
-                    <Loader2 size={16} className="animate-spin" />
-                  ) : (
-                    <Edit3 size={16} />
-                  )}
-                  <span className="hidden xs:inline">Edit Saved</span>
-                </button>
-              )}
-
               {/* Delete Button */}
-              {!isEditMode && (
-                <button
-                  onClick={handleDeleteResults}
-                  disabled={isDeleting || !hasFirestoreResults}
-                  className={`
-                    inline-flex items-center justify-center gap-1 sm:gap-2
-                    bg-red-600 text-white rounded-xl hover:bg-red-700
-                    font-medium transition-all active:scale-[0.98]
-                    focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2
-                    disabled:opacity-40 disabled:cursor-not-allowed
-                    px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
-                    ${isSmallMobile ? 'flex-1' : ''}
-                  `}
-                  title={!hasFirestoreResults ? 'No saved results to delete for this exam' : 'Delete saved results'}
-                >
-                  {isDeleting ? (
-                    <Loader2 size={16} className="animate-spin" />
-                  ) : (
-                    <Trash2 size={16} />
-                  )}
-                  <span className="hidden xs:inline">Delete</span>
-                </button>
-              )}
+              <button
+                onClick={handleDeleteResults}
+                disabled={isDeleting || !hasFirestoreResults}
+                className={`
+                  inline-flex items-center justify-center gap-1 sm:gap-2
+                  bg-red-600 text-white rounded-xl hover:bg-red-700
+                  font-medium transition-all active:scale-[0.98]
+                  focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2
+                  disabled:opacity-40 disabled:cursor-not-allowed
+                  px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
+                  ${isSmallMobile ? 'flex-1' : ''}
+                `}
+                title={!hasFirestoreResults ? 'No saved results to delete for this exam' : 'Delete saved results'}
+              >
+                {isDeleting ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Trash2 size={16} />
+                )}
+                <span className="hidden xs:inline">Delete</span>
+              </button>
 
-              {/* Save Button */}
-              {(!isExamCompleted || isEditMode) && (
-                <button
-                  onClick={handleSaveResults}
-                  disabled={isSaving || filledCount === 0}
-                  className={`
-                    inline-flex items-center justify-center gap-1 sm:gap-2
-                    ${isEditMode ? 'bg-amber-600' : 'bg-blue-600'} 
-                    text-white rounded-xl hover:bg-opacity-90
-                    font-medium transition-all active:scale-[0.98]
-                    focus:outline-none focus:ring-2 focus:ring-offset-2
-                    ${isEditMode ? 'focus:ring-amber-500' : 'focus:ring-blue-500'}
-                    disabled:opacity-50 disabled:cursor-not-allowed
-                    px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
-                    ${isSmallMobile ? 'flex-1' : ''}
-                  `}
-                >
-                  {isSaving ? (
-                    <Loader2 size={16} className="animate-spin" />
-                  ) : (
-                    <Save size={16} />
-                  )}
-                  <span className="hidden xs:inline">
-                    {isEditMode ? 'Update' : 'Save'}
-                  </span>
-                </button>
-              )}
+              {/* Save Button - ALWAYS enabled when there are entries */}
+              <button
+                onClick={handleSaveResults}
+                disabled={isSaving || filledCount === 0}
+                className={`
+                  inline-flex items-center justify-center gap-1 sm:gap-2
+                  ${hasFirestoreResults ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'}
+                  text-white rounded-xl font-medium transition-all active:scale-[0.98]
+                  focus:outline-none focus:ring-2 focus:ring-offset-2
+                  ${hasFirestoreResults ? 'focus:ring-amber-500' : 'focus:ring-blue-500'}
+                  disabled:opacity-50 disabled:cursor-not-allowed
+                  px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
+                  ${isSmallMobile ? 'flex-1' : ''}
+                `}
+              >
+                {isSaving ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Save size={16} />
+                )}
+                <span className="hidden xs:inline">
+                  {hasFirestoreResults ? 'Overwrite' : 'Save'}
+                </span>
+              </button>
             </div>
           )}
         </div>
 
-        {/* Edit Mode Indicator */}
-        <EditModeIndicator isEditing={isEditMode} onCancelEdit={handleCancelEdit} />
-
-        {/* Drafts Section */}
-        {drafts.length > 0 && !isEditMode && selectedSubject && (
+        {/* Drafts Section - only show if no Firestore results */}
+        {drafts.length > 0 && selectedSubject && !hasFirestoreResults && (
           <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4">
             <div className="flex items-center gap-1 sm:gap-2 mb-2 sm:mb-3">
               <History size={14} className="text-gray-500 flex-shrink-0" />
@@ -1921,18 +1871,16 @@ export default function ResultsEntry() {
                         setModal(null);
                         setSelectedClass(e.target.value);
                         setSelectedSubject('');
-                        setIsEditMode(false);
                         setHasUnsavedChanges(false);
                       },
                     });
                   } else {
                     setSelectedClass(e.target.value);
                     setSelectedSubject('');
-                    setIsEditMode(false);
                   }
                 }}
                 className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white truncate"
-                disabled={assignedClasses.length === 0 || isEditMode}
+                disabled={assignedClasses.length === 0}
               >
                 <option value="">Select class...</option>
                 {assignedClasses.map(cls => (
@@ -1959,17 +1907,15 @@ export default function ResultsEntry() {
                       onConfirm: () => {
                         setModal(null);
                         setSelectedSubject(e.target.value);
-                        setIsEditMode(false);
                         setHasUnsavedChanges(false);
                       },
                     });
                   } else {
                     setSelectedSubject(e.target.value);
-                    setIsEditMode(false);
                   }
                 }}
                 className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white truncate"
-                disabled={!selectedClass || availableSubjects.length === 0 || isEditMode}
+                disabled={!selectedClass || availableSubjects.length === 0}
               >
                 <option value="">
                   {!selectedClass ? 'Select class first' : 
@@ -1996,10 +1942,8 @@ export default function ResultsEntry() {
                   value={term}
                   onChange={e => {
                     setTerm(e.target.value);
-                    setIsEditMode(false);
                   }}
                   className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white"
-                  disabled={isEditMode}
                 >
                   <option value="Term 1">Term 1</option>
                   <option value="Term 2">Term 2</option>
@@ -2015,12 +1959,10 @@ export default function ResultsEntry() {
                   value={year}
                   onChange={e => {
                     setYear(parseInt(e.target.value) || new Date().getFullYear());
-                    setIsEditMode(false);
                   }}
                   className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm"
                   min="2020"
                   max="2030"
-                  disabled={isEditMode}
                 />
               </div>
             </div>
@@ -2043,11 +1985,12 @@ export default function ResultsEntry() {
             completion={currentSubjectCompletion}
             selectedExamType={examType}
             onExamTypeChange={handleExamTypeChange}
-            hasDraft={!!currentDraft}
+            hasDraft={!!currentDraft && !hasFirestoreResults}
             availableExamTypes={availableExamTypes}
             examConfig={currentExamConfig}
             subjectName={selectedSubject}
             isLoading={loadingCompletion}
+            hasExistingResults={hasFirestoreResults}
           />
         )}
 
@@ -2073,17 +2016,17 @@ export default function ResultsEntry() {
                     <span className="font-medium text-gray-900 text-xs sm:text-sm truncate">
                       {selectedClassData?.name} • {selectedSubject}
                     </span>
-                    {currentDraft && !isEditMode && (
+                    {currentDraft && !hasFirestoreResults && (
                       <span className="text-[10px] sm:text-xs bg-yellow-100 text-yellow-700 px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap">
                         Draft
                       </span>
                     )}
-                    {isEditMode && (
-                      <span className="text-[10px] sm:text-xs bg-amber-100 text-amber-700 px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap">
-                        Edit Mode
+                    {hasFirestoreResults && (
+                      <span className="text-[10px] sm:text-xs bg-blue-100 text-blue-700 px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap">
+                        Saved Results
                       </span>
                     )}
-                    {hasUnsavedChanges && !isEditMode && (
+                    {hasUnsavedChanges && (
                       <span className="text-[10px] sm:text-xs bg-yellow-100 text-yellow-700 px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap">
                         Unsaved
                       </span>
@@ -2101,7 +2044,7 @@ export default function ResultsEntry() {
                         style={{ width: `${completionPercentage}%` }}
                       />
                     </div>
-                    {filledCount > 0 && !isExamCompleted && !isEditMode && (
+                    {filledCount > 0 && !hasFirestoreResults && (
                       <button
                         onClick={handleClearAllMarks}
                         className="text-[10px] sm:text-xs text-gray-500 hover:text-gray-700 hover:underline"
@@ -2132,7 +2075,7 @@ export default function ResultsEntry() {
                           }}
                           onEnterPress={() => focusNextInput(student.id)}
                           isMobile={true}
-                          disabled={isExamCompleted && !isEditMode}
+                          disabled={false}
                           showExistingMark={existingMark}
                           onMarkAbsent={handleMarkAbsent}
                         />
@@ -2170,7 +2113,7 @@ export default function ResultsEntry() {
                               }}
                               onEnterPress={() => focusNextInput(student.id)}
                               isMobile={false}
-                              disabled={isExamCompleted && !isEditMode}
+                              disabled={false}
                               showExistingMark={existingMark}
                               onMarkAbsent={handleMarkAbsent}
                             />
@@ -2182,38 +2125,26 @@ export default function ResultsEntry() {
                 )}
                 
                 {/* Status Messages */}
-                {!isExamCompleted && !isEditMode && (
-                  <div className="px-3 sm:px-4 py-2 bg-gray-50 border-t border-gray-200 text-[10px] sm:text-xs text-gray-500 flex flex-wrap items-center gap-2 sm:gap-4">
-                    <span>⏎ Enter: next student</span>
-                    <span>X: absent (click absent button)</span>
-                    <span>0-{totalMarks}: marks</span>
+                <div className="px-3 sm:px-4 py-2 bg-gray-50 border-t border-gray-200 text-[10px] sm:text-xs text-gray-500 flex flex-wrap items-center gap-2 sm:gap-4">
+                  <span>⏎ Enter: next student</span>
+                  <span>X: absent (click absent button)</span>
+                  <span>0-{totalMarks}: marks</span>
+                  {hasFirestoreResults && (
+                    <span className="ml-auto text-amber-600 font-medium">
+                      ⚡ Overwrite mode: Saving will replace existing results
+                    </span>
+                  )}
+                  {!hasFirestoreResults && (
                     <span className="ml-auto">Auto-saved draft</span>
-                  </div>
-                )}
+                  )}
+                </div>
                 
-                {isEditMode && (
-                  <div className="px-3 sm:px-4 py-3 bg-amber-50 border-t border-amber-200 text-xs sm:text-sm text-amber-700 flex flex-wrap items-center justify-between gap-2">
+                {hasFirestoreResults && (
+                  <div className="px-3 sm:px-4 py-3 bg-blue-50 border-t border-blue-200 text-xs sm:text-sm text-blue-700">
                     <div className="flex items-center gap-2">
-                      <Edit3 size={16} />
-                      <span>✎ Editing existing results. Click Update to save changes.</span>
+                      <RefreshCw size={16} />
+                      <span>⚡ Results exist for this exam. Simply enter new marks and click <strong>Overwrite</strong> to replace all existing results.</span>
                     </div>
-                  </div>
-                )}
-                
-                {isExamCompleted && !isEditMode && (
-                  <div className="px-3 sm:px-4 py-3 bg-green-50 border-t border-green-200 text-xs sm:text-sm text-green-700 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle size={16} />
-                      <span>✓ Results are complete</span>
-                    </div>
-                    <button
-                      onClick={handleEditResults}
-                      disabled={isCheckingExisting}
-                      className="text-xs bg-green-100 hover:bg-green-200 px-2 sm:px-3 py-1 rounded-full transition-colors flex items-center gap-1"
-                    >
-                      {isCheckingExisting ? <Loader2 size={12} className="animate-spin" /> : <Edit3 size={12} />}
-                      <span>Edit</span>
-                    </button>
                   </div>
                 )}
               </div>

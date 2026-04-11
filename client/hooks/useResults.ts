@@ -1,5 +1,5 @@
-// @/hooks/useResults.ts - UPDATED WITH EXAM CONFIGURATION SUPPORT
-// Version 2.4.0 - Added support for configured exams in progress calculation
+// @/hooks/useResults.ts - UPDATED WITH EXAM CONFIGURATION SUPPORT AND SUBJECT-SPECIFIC COMPLETION
+// Version 2.5.0 - Added subjectId to useSubjectCompletion for unique problem fix
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
@@ -12,6 +12,7 @@ import {
   BulkReportOperation,
   StudentProgress,
 } from '@/services/resultsService';
+import { normalizeSubjectName } from '@/services/resultsService';
 
 // ==================== TYPES FOR STUDENT PROGRESS ====================
 
@@ -241,7 +242,7 @@ export const useResults = (options?: {
       studentId: string;
       term: string;
       year: number;
-      options?: ReportGenerationOptions; // UPDATED: Use extended options
+      options?: ReportGenerationOptions;
     }) => resultsService.generateReportCard(studentId, term, year, options),
     onSuccess: (data, variables) => {
       if (data) {
@@ -264,7 +265,7 @@ export const useResults = (options?: {
       classId: string;
       term: string;
       year: number;
-      options?: ReportGenerationOptions; // UPDATED: Use extended options
+      options?: ReportGenerationOptions;
     }) => resultsService.generateClassReportCards(classId, term, year, options),
     onSuccess: (data, variables) => {
       console.log(`✅ Generated ${data.reportCards.length} class report cards with ${variables.options?.configuredExamTypes?.length || 3} configured exams`);
@@ -536,25 +537,49 @@ export const useExamResults = (options: {
   };
 };
 
-// ==================== SUBJECT COMPLETION HOOK ====================
+// ==================== FIXED SUBJECT COMPLETION HOOK ====================
+// CRITICAL FIX: Added subjectId parameter to prevent cross-subject contamination
+// This solves the unique problem where same teacher teaches two subjects in same class
 
 export const useSubjectCompletion = (options: {
   classId?: string;
+  subjectId?: string; // ADDED: Optional subject ID to filter specific subject
   term: string;
   year: number;
 }) => {
   const completionQuery = useQuery({
-    queryKey: ['subjectCompletion', options.classId, options.term, options.year],
-    queryFn: () => {
+    // FIX: Include subjectId in query key to prevent cross-subject contamination
+    queryKey: ['subjectCompletion', options.classId, options.subjectId, options.term, options.year],
+    queryFn: async () => {
       if (!options.classId) throw new Error('Class ID required');
-      return resultsService.getSubjectCompletionStatus(
+      
+      console.log('📊 Fetching subject completion for:', {
+        classId: options.classId,
+        subjectId: options.subjectId,
+        term: options.term,
+        year: options.year,
+      });
+      
+      const allStatuses = await resultsService.getSubjectCompletionStatus(
         options.classId,
         options.term,
         options.year
       );
+      
+      // If subjectId is provided, filter to just that subject
+      if (options.subjectId) {
+        const normalizedSubjectId = normalizeSubjectName(options.subjectId);
+        const filtered = allStatuses.filter(s => s.subjectId === normalizedSubjectId);
+        console.log(`✅ Filtered to subject "${normalizedSubjectId}": ${filtered.length} status(es) found`);
+        return filtered;
+      }
+      
+      console.log(`✅ Returning all ${allStatuses.length} subject statuses`);
+      return allStatuses;
     },
     enabled: !!options.classId,
     staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: true,
   });
 
   return {
@@ -564,6 +589,22 @@ export const useSubjectCompletion = (options: {
     isError: completionQuery.isError,
     error: completionQuery.error,
     refetch: completionQuery.refetch,
+    
+    // Helper to get specific subject status by ID
+    getSubjectStatus: (subjectId: string): SubjectCompletionStatus | null => {
+      if (!completionQuery.data) return null;
+      const normalizedId = normalizeSubjectName(subjectId);
+      return completionQuery.data.find(s => s.subjectId === normalizedId) || null;
+    },
+    
+    // Helper to check if a specific subject has results for an exam type
+    hasResultsForExam: (subjectId: string, examType: 'week4' | 'week8' | 'endOfTerm'): boolean => {
+      const status = completionQuery.data?.find(s => s.subjectId === normalizeSubjectName(subjectId));
+      if (!status) return false;
+      
+      const count = status.enteredStudents?.[examType] ?? 0;
+      return count > 0;
+    },
   };
 };
 

@@ -2,6 +2,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { normalizeSubjectName } from '@/services/resultsService';
 
 export interface TeacherAssignment {
   id: string;
@@ -9,6 +10,7 @@ export interface TeacherAssignment {
   classId: string;
   className: string;
   subject: string;
+  subjectId: string; // ADDED: Normalized subject ID for consistent matching
   isFormTeacher: boolean;
   createdAt?: Date;
   updatedAt?: Date;
@@ -43,12 +45,17 @@ export const useTeacherAssignments = (teacherId?: string) => {
             }
           }
           
+          // Normalize the subject name for consistent matching across the app
+          const rawSubject = data.subject || '';
+          const normalizedSubjectId = normalizeSubjectName(rawSubject);
+          
           return {
             id: docSnapshot.id,
             teacherId: data.teacherId,
             classId: data.classId,
             className,
-            subject: data.subject,
+            subject: rawSubject,
+            subjectId: normalizedSubjectId, // Store normalized version
             isFormTeacher: data.isFormTeacher || false,
             createdAt: data.createdAt?.toDate(),
             updatedAt: data.updatedAt?.toDate(),
@@ -80,10 +87,27 @@ export const useTeacherAssignments = (teacherId?: string) => {
     return assignmentsQuery.data.filter(assignment => assignment.classId === classId);
   };
 
-  // Helper: Get subjects for a specific class
+  // Helper: Get subjects for a specific class (RETURNS NORMALIZED NAMES for consistent matching)
   const getSubjectsForClass = (classId: string): string[] => {
     const assignments = getAssignmentsForClass(classId);
+    // Return normalized subject IDs for consistent matching with resultsService
+    return assignments.map(assignment => assignment.subjectId);
+  };
+
+  // Helper: Get raw subject names for a specific class (for display)
+  const getRawSubjectsForClass = (classId: string): string[] => {
+    const assignments = getAssignmentsForClass(classId);
     return assignments.map(assignment => assignment.subject);
+  };
+
+  // Helper: Get full assignment details including both raw and normalized names
+  const getSubjectAssignmentsForClass = (classId: string): Array<{ raw: string; normalized: string; assignmentId: string }> => {
+    const assignments = getAssignmentsForClass(classId);
+    return assignments.map(assignment => ({
+      raw: assignment.subject,
+      normalized: assignment.subjectId,
+      assignmentId: assignment.id
+    }));
   };
 
   // Helper: Check if teacher is form teacher for a specific class
@@ -101,10 +125,10 @@ export const useTeacherAssignments = (teacherId?: string) => {
   };
 
   // Helper: Get all classes with their subjects
-  const getClassesWithSubjects = (): Array<{ classId: string; className: string; subjects: string[]; isFormTeacher: boolean }> => {
+  const getClassesWithSubjects = (): Array<{ classId: string; className: string; subjects: string[]; subjectIds: string[]; isFormTeacher: boolean }> => {
     if (!assignmentsQuery.data) return [];
     
-    const classMap = new Map<string, { classId: string; className: string; subjects: Set<string>; isFormTeacher: boolean }>();
+    const classMap = new Map<string, { classId: string; className: string; subjects: Set<string>; subjectIds: Set<string>; isFormTeacher: boolean }>();
     
     assignmentsQuery.data.forEach(assignment => {
       if (!classMap.has(assignment.classId)) {
@@ -112,11 +136,13 @@ export const useTeacherAssignments = (teacherId?: string) => {
           classId: assignment.classId,
           className: assignment.className,
           subjects: new Set(),
+          subjectIds: new Set(),
           isFormTeacher: false
         });
       }
       const classData = classMap.get(assignment.classId)!;
       classData.subjects.add(assignment.subject);
+      classData.subjectIds.add(assignment.subjectId);
       if (assignment.isFormTeacher) {
         classData.isFormTeacher = true;
       }
@@ -124,7 +150,8 @@ export const useTeacherAssignments = (teacherId?: string) => {
     
     return Array.from(classMap.values()).map(item => ({
       ...item,
-      subjects: Array.from(item.subjects)
+      subjects: Array.from(item.subjects),
+      subjectIds: Array.from(item.subjectIds)
     }));
   };
 
@@ -145,7 +172,9 @@ export const useTeacherAssignments = (teacherId?: string) => {
     
     // Helpers
     getAssignmentsForClass,
-    getSubjectsForClass,
+    getSubjectsForClass,        // Returns normalized names (for matching)
+    getRawSubjectsForClass,     // Returns raw names (for display)
+    getSubjectAssignmentsForClass, // Returns both raw and normalized
     isFormTeacherForClass,
     getAssignedClasses,
     getClassesWithSubjects,
