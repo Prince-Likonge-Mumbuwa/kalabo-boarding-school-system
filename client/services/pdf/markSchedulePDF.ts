@@ -1,4 +1,5 @@
-// @/services/pdf/markSchedulePDF.ts - FIXED VERSION WITH CENTERED LOGO
+// @/services/pdf/markSchedulePDF.ts - COMPLETE FIXED VERSION
+// Features: Clean minimalism, proper alignment, correct math, professional layout
 import { PDFDocument, rgb, StandardFonts, PDFImage } from 'pdf-lib';
 
 interface MarkScheduleOptions {
@@ -28,37 +29,62 @@ interface MarkScheduleOptions {
   isNotConducted?: boolean;
 }
 
-/**
- * Helper function to embed school logo
- */
+// ==================== OFFICIAL GRADE SYSTEM ====================
+const GRADE_SYSTEM: Record<number, { min: number; max: number; description: string; color: [number, number, number] }> = {
+  1: { min: 75, max: 100, description: 'Distinction', color: [0, 0.5, 0] },
+  2: { min: 70, max: 74, description: 'Distinction', color: [0.2, 0.6, 0.2] },
+  3: { min: 65, max: 69, description: 'Merit', color: [0.3, 0.7, 0.3] },
+  4: { min: 60, max: 64, description: 'Merit', color: [0.2, 0.5, 0.8] },
+  5: { min: 55, max: 59, description: 'Credit', color: [0.4, 0.5, 0.9] },
+  6: { min: 50, max: 54, description: 'Credit', color: [0.7, 0.7, 0.2] },
+  7: { min: 45, max: 49, description: 'Satisfactory', color: [0.9, 0.5, 0.2] },
+  8: { min: 40, max: 44, description: 'Satisfactory', color: [0.9, 0.4, 0.2] },
+  9: { min: 0, max: 39, description: 'Unsatisfactory', color: [0.8, 0.2, 0.2] },
+};
+
+const calculateOfficialGrade = (percentage: number): number => {
+  if (percentage < 0) return -1;
+  if (percentage >= 75) return 1;
+  if (percentage >= 70) return 2;
+  if (percentage >= 65) return 3;
+  if (percentage >= 60) return 4;
+  if (percentage >= 55) return 5;
+  if (percentage >= 50) return 6;
+  if (percentage >= 45) return 7;
+  if (percentage >= 40) return 8;
+  return 9;
+};
+
+const getGradeColor = (grade: number): [number, number, number] => {
+  if (grade === -1) return [0.5, 0.5, 0.5];
+  const gradeInfo = GRADE_SYSTEM[grade];
+  return gradeInfo ? gradeInfo.color : [0.5, 0.5, 0.5];
+};
+
+// ==================== HELPER FUNCTIONS ====================
 const embedSchoolLogo = async (pdfDoc: PDFDocument): Promise<PDFImage | null> => {
   try {
-    // Try to load logo from public/images/school-logo.png
     const logoUrl = '/images/school-logo.png';
     const response = await fetch(logoUrl);
-    
-    if (!response.ok) {
-      console.warn('Logo image not found at /images/school-logo.png');
-      return null;
-    }
-    
+    if (!response.ok) return null;
     const logoImageBytes = await response.arrayBuffer();
-    
-    // Try to embed as PNG first, then as JPG
     try {
       return await pdfDoc.embedPng(logoImageBytes);
     } catch {
       try {
         return await pdfDoc.embedJpg(logoImageBytes);
       } catch {
-        console.warn('Logo image format not supported. Please use PNG or JPG.');
         return null;
       }
     }
-  } catch (error) {
-    console.warn('Could not load logo image:', error);
+  } catch {
     return null;
   }
+};
+
+const truncateText = (text: string, maxLength: number): string => {
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength - 3) + '...';
 };
 
 export const generateMarkSchedulePDF = async ({
@@ -75,374 +101,343 @@ export const generateMarkSchedulePDF = async ({
   isNotConducted = false
 }: MarkScheduleOptions): Promise<void> => {
   try {
-    console.log('📄 PDF Generator - Starting with data:', {
-      className,
-      subject,
-      examType,
-      term,
-      year,
-      totalMarks,
-      studentCount: students.length,
-      isNotConducted,
-      studentsWithMarks: students.filter(s => s.marks && s.marks !== '' && s.marks !== 'N/A').length,
-      sampleStudent: students[0] ? {
-        name: students[0].name,
-        marks: students[0].marks
-      } : null
-    });
-
     const pdfDoc = await PDFDocument.create();
-    const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    const helveticaOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const fontOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
     
-    // Embed logo
     const logoImage = await embedSchoolLogo(pdfDoc);
     
-    const pageWidth = 595.28; // A4 width
-    const pageHeight = 841.89; // A4 height
-    const margin = 50;
+    // Page dimensions - A4
+    const pageWidth = 595.28;
+    const pageHeight = 841.89;
+    const margin = 48;
     const contentWidth = pageWidth - (margin * 2);
+    
+    // Color palette - Clean minimalism
+    const colors = {
+      primary: rgb(0.05, 0.25, 0.45),      // Deep navy blue
+      secondary: rgb(0.4, 0.6, 0.8),       // Soft blue
+      accent: rgb(0.2, 0.5, 0.3),          // Muted green
+      text: rgb(0.15, 0.15, 0.15),         // Dark gray
+      textLight: rgb(0.5, 0.5, 0.5),       // Medium gray
+      border: rgb(0.85, 0.85, 0.85),       // Light gray
+      background: rgb(0.98, 0.98, 0.98),   // Off-white
+      warning: rgb(0.8, 0.3, 0.2),         // Muted red
+    };
     
     let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
     let yPosition = pageHeight - margin;
-
-    // Helper function to calculate centered X position
-    const centerText = (text: string, fontSize: number) => {
-      const textWidth = helveticaBold.widthOfTextAtSize(text, fontSize);
-      return (pageWidth - textWidth) / 2;
+    
+    // Helper: Center text horizontally
+    const centerX = (text: string, size: number, fontObj: any = fontBold): number => {
+      const width = fontObj.widthOfTextAtSize(text, size);
+      return (pageWidth - width) / 2;
     };
-
-    // Helper function to add header to page with centered logo
+    
+    // ==================== HEADER SECTION ====================
     const addHeader = async (page: typeof currentPage, pageNum: number) => {
-      let headerY = pageHeight - margin;
+      let y = pageHeight - margin;
       
+      // Logo
       if (logoImage) {
-        // Scale logo appropriately
-        const logoDims = logoImage.scale(0.12);
+        const logoDims = logoImage.scale(0.1);
         const logoX = (pageWidth - logoDims.width) / 2;
-        
-        // Draw logo centered at top
         page.drawImage(logoImage, {
           x: logoX,
-          y: headerY - logoDims.height,
+          y: y - logoDims.height,
           width: logoDims.width,
           height: logoDims.height,
         });
-        
-        headerY -= logoDims.height + 10;
-        
-        // School name
-        const schoolText = schoolName.toUpperCase();
-        page.drawText(schoolText, {
-          x: centerText(schoolText, 18),
-          y: headerY,
-          size: 18,
-          font: helveticaBold,
-          color: rgb(0, 0.2, 0.4),
-        });
-        headerY -= 20;
-        
-        // Ministry of Education text
-        const ministryText = 'MINISTRY OF EDUCATION';
-        page.drawText(ministryText, {
-          x: centerText(ministryText, 12),
-          y: headerY,
-          size: 12,
-          font: helveticaBold,
-          color: rgb(0.3, 0.3, 0.3),
-        });
-        headerY -= 25;
-      } else {
-        // Fallback without logo
-        const schoolText = schoolName.toUpperCase();
-        page.drawText(schoolText, {
-          x: centerText(schoolText, 20),
-          y: headerY,
-          size: 20,
-          font: helveticaBold,
-          color: rgb(0, 0.2, 0.4),
-        });
-        
-        const ministryText = 'MINISTRY OF EDUCATION';
-        page.drawText(ministryText, {
-          x: centerText(ministryText, 14),
-          y: headerY - 25,
-          size: 14,
-          font: helveticaBold,
-          color: rgb(0.3, 0.3, 0.3),
-        });
-        headerY -= 45;
+        y -= logoDims.height + 12;
       }
-
+      
+      // School name
+      const schoolText = schoolName.toUpperCase();
+      page.drawText(schoolText, {
+        x: centerX(schoolText, 16),
+        y,
+        size: 16,
+        font: fontBold,
+        color: colors.primary,
+      });
+      y -= 18;
+      
+      // Ministry line
+      const ministryText = 'MINISTRY OF EDUCATION';
+      page.drawText(ministryText, {
+        x: centerX(ministryText, 9),
+        y,
+        size: 9,
+        font: font,
+        color: colors.textLight,
+      });
+      y -= 20;
+      
+      // Main title
+      const titleText = isNotConducted ? 'MARK SCHEDULE - NOT CONDUCTED' : 'MARK SCHEDULE';
+      page.drawText(titleText, {
+        x: centerX(titleText, 20),
+        y,
+        size: 20,
+        font: fontBold,
+        color: colors.primary,
+      });
+      y -= 28;
+      
       // Decorative line
       page.drawLine({
-        start: { x: margin + 50, y: headerY - 5 },
-        end: { x: pageWidth - margin - 50, y: headerY - 5 },
+        start: { x: margin + 50, y: y + 8 },
+        end: { x: pageWidth - margin - 50, y: y + 8 },
         thickness: 1.5,
-        color: rgb(0, 0.2, 0.4),
+        color: colors.primary,
       });
-
-      // MARK SCHEDULE title
-      const titleText = 'MARK SCHEDULE';
-      page.drawText(titleText, {
-        x: centerText(titleText, 18),
-        y: headerY - 20,
-        size: 18,
-        font: helveticaBold,
-        color: rgb(0, 0, 0),
-      });
-
+      
       // Page number
       page.drawText(`Page ${pageNum}`, {
-        x: pageWidth - margin - 40,
-        y: margin - 15,
+        x: pageWidth - margin - 50,
+        y: margin - 12,
         size: 8,
-        font: helveticaFont,
-        color: rgb(0.5, 0.5, 0.5),
+        font: font,
+        color: colors.textLight,
       });
-
-      return headerY - 40; // Return the new Y position after header
+      
+      return y;
     };
-
-    // Add header to first page and get starting Y position
-    yPosition = await addHeader(currentPage, 1);
-
-    // Create info box
-    const infoBoxY = yPosition;
-    const infoBoxHeight = 80;
     
-    // Draw info box background
+    yPosition = await addHeader(currentPage, 1);
+    
+    // ==================== INFO CARD - COMPLETELY RESTRUCTURED ====================
+    const cardHeight = 120;
+    const cardY = yPosition - cardHeight;
+    
+    // Card background
     currentPage.drawRectangle({
       x: margin,
-      y: infoBoxY - infoBoxHeight,
+      y: cardY,
       width: contentWidth,
-      height: infoBoxHeight,
-      color: isNotConducted ? rgb(0.97, 0.97, 0.97) : rgb(0.95, 0.97, 1),
-      borderColor: isNotConducted ? rgb(0.8, 0.8, 0.8) : rgb(0.7, 0.7, 0.7),
+      height: cardHeight,
+      color: colors.background,
+      borderColor: colors.border,
       borderWidth: 0.5,
     });
-
-    // If not conducted, add a prominent badge
-    if (isNotConducted) {
-      const badgeText = 'TEST NOT CONDUCTED';
-      currentPage.drawText(badgeText, {
-        x: centerText(badgeText, 14),
-        y: infoBoxY - 15,
-        size: 14,
-        font: helveticaBold,
-        color: rgb(0.5, 0.5, 0.5),
-      });
-    }
-
-    // Format exam type for display
+    
+    // ===== METADATA SECTION =====
+    let currentY = yPosition - 20;
+    const labelWidth = 85;
+    const col1X = margin + 16;
+    const col2X = margin + contentWidth / 2 + 8;
+    
     const examTypeDisplay = examType === 'week4' ? 'Week 4' : 
                            examType === 'week8' ? 'Week 8' : 'End of Term';
-
-    // Count entered marks and calculate statistics
-    const enteredMarks = students.filter(s => 
-      s.marks && s.marks !== '' && s.marks.toLowerCase() !== 'x' && s.marks !== 'N/A'
-    );
-    const absentCount = students.filter(s => s.marks.toLowerCase() === 'x').length;
-    const notConductedCount = students.filter(s => s.marks === 'N/A').length;
-    const enteredCount = enteredMarks.length;
     
-    // Calculate average if there are marks
-    let averageMark = 'N/A';
-    if (enteredCount > 0) {
-      const sum = enteredMarks.reduce((acc, s) => {
-        const mark = parseInt(s.marks);
-        return acc + (isNaN(mark) ? 0 : mark);
-      }, 0);
-      const avg = (sum / enteredCount).toFixed(1);
-      averageMark = `${avg}/${totalMarks}`;
-    }
-
-    // Info grid - left column
-    let infoX = margin + 10;
-    let infoY = infoBoxY - 20;
-    
-    const drawInfoItem = (label: string, value: string, x: number, y: number) => {
+    const drawAlignedRow = (label: string, value: string, x: number, y: number) => {
       currentPage.drawText(label, {
         x,
         y,
-        size: 9,
-        font: helveticaBold,
-        color: rgb(0.3, 0.3, 0.3),
+        size: 8,
+        font: fontBold,
+        color: colors.textLight,
       });
       currentPage.drawText(value, {
-        x: x + 55,
+        x: x + labelWidth,
         y,
         size: 9,
-        font: helveticaFont,
-        color: rgb(0, 0, 0),
+        font: font,
+        color: colors.text,
       });
     };
-
-    // Row 1
-    drawInfoItem('Class:', className, infoX, infoY);
-    drawInfoItem('Subject:', subject, infoX + 150, infoY);
-    drawInfoItem('Exam:', examTypeDisplay, infoX + 300, infoY);
-
-    // Row 2
-    infoY -= 18;
-    drawInfoItem('Term:', `${term} ${year}`, infoX, infoY);
-    drawInfoItem('Total:', isNotConducted ? 'N/A' : totalMarks.toString(), infoX + 150, infoY);
-    drawInfoItem('Teacher:', teacherName, infoX + 300, infoY);
-
-    // Row 3
-    infoY -= 18;
-    const today = new Date();
-    drawInfoItem('Date:', today.toLocaleDateString(), infoX, infoY);
-    drawInfoItem('Students:', students.length.toString(), infoX + 150, infoY);
-    drawInfoItem('Entered:', isNotConducted ? 'N/A' : `${enteredCount}/${students.length}`, infoX + 300, infoY);
-
-    // Row 4 - Additional stats when not conducted
-    if (isNotConducted) {
-      infoY -= 18;
-      drawInfoItem('Status:', 'NOT CONDUCTED', infoX + 150, infoY);
-    } else if (notConductedCount > 0) {
-      infoY -= 18;
-      drawInfoItem('N/A:', notConductedCount.toString(), infoX + 150, infoY);
+    
+    // Metadata rows
+    drawAlignedRow('CLASS:', className, col1X, currentY);
+    drawAlignedRow('SUBJECT:', subject, col2X, currentY);
+    
+    currentY -= 22;
+    drawAlignedRow('EXAM:', examTypeDisplay, col1X, currentY);
+    drawAlignedRow('TERM:', `${term} ${year}`, col2X, currentY);
+    
+    currentY -= 22;
+    drawAlignedRow('TEACHER:', teacherName, col1X, currentY);
+    drawAlignedRow('TOTAL MARKS:', isNotConducted ? 'N/A' : totalMarks.toString(), col2X, currentY);
+    
+    currentY -= 22;
+    const dateStr = new Date().toLocaleDateString('en-GB');
+    drawAlignedRow('DATE:', dateStr, col1X, currentY);
+    drawAlignedRow('STUDENTS:', students.length.toString(), col2X, currentY);
+    
+    // ===== STATISTICS SECTION =====
+    currentY -= 32;
+    
+    // Divider
+    currentPage.drawLine({
+      start: { x: margin + 10, y: currentY + 10 },
+      end: { x: pageWidth - margin - 10, y: currentY + 10 },
+      thickness: 0.5,
+      color: colors.border,
+    });
+    
+    if (!isNotConducted) {
+      const enteredCount = students.filter(s => 
+        s.marks && s.marks !== '' && s.marks.toLowerCase() !== 'x' && s.marks !== 'N/A'
+      ).length;
+      const absentCount = students.filter(s => s.marks.toLowerCase() === 'x').length;
+      const notConductedCount = students.filter(s => s.marks === 'N/A').length;
+      const pendingCount = students.length - enteredCount - absentCount - notConductedCount;
+      
+      const stats = [
+        { label: 'Entered', value: enteredCount, color: colors.accent },
+        { label: 'Absent', value: absentCount, color: colors.warning },
+        { label: 'N/A', value: notConductedCount, color: colors.textLight },
+        { label: 'Pending', value: pendingCount, color: colors.secondary },
+      ];
+      
+      const statWidth = contentWidth / stats.length;
+      
+      stats.forEach((stat, idx) => {
+        const statX = margin + (idx * statWidth);
+        const centerXPos = statX + (statWidth / 2);
+        const valueStr = stat.value.toString();
+        
+        currentPage.drawText(valueStr, {
+          x: centerXPos - (fontBold.widthOfTextAtSize(valueStr, 16) / 2),
+          y: currentY,
+          size: 16,
+          font: fontBold,
+          color: stat.color,
+        });
+        
+        currentPage.drawText(stat.label, {
+          x: centerXPos - (font.widthOfTextAtSize(stat.label, 8) / 2),
+          y: currentY - 16,
+          size: 8,
+          font: font,
+          color: colors.textLight,
+        });
+      });
+      
+      yPosition = cardY - 16;
+    } else {
+      const badgeText = 'NOT CONDUCTED';
+      currentPage.drawText(badgeText, {
+        x: centerX(badgeText, 14),
+        y: currentY,
+        size: 14,
+        font: fontBold,
+        color: colors.textLight,
+      });
+      
+      yPosition = cardY - 36;
     }
-
-    yPosition = infoBoxY - infoBoxHeight - 20;
-
-    // Table headers
-    const headers = [
-      { text: '#', x: margin + 5, width: 25 },
-      { text: 'Student Name', x: margin + 35, width: 180 },
-      { text: 'Student ID', x: margin + 220, width: 90 },
-      { text: 'Marks', x: margin + 315, width: 45 },
-      { text: 'Score', x: margin + 365, width: 55 },
-      { text: '%', x: margin + 425, width: 35 },
-      { text: 'Grade', x: margin + 465, width: 40 }
+    
+    // ==================== STUDENT TABLE ====================
+    const tableHeaders = [
+      { text: '#', width: 30, align: 'center' },
+      { text: 'Student Name', width: 170, align: 'left' },
+      { text: 'Student ID', width: 100, align: 'left' },
+      { text: 'Marks', width: 50, align: 'center' },
+      { text: 'Score', width: 60, align: 'center' },
+      { text: '%', width: 45, align: 'center' },
+      { text: 'Grade', width: 45, align: 'center' },
     ];
-
-    // Draw header background
+    
+    // Header background
+    const headerY = yPosition;
     currentPage.drawRectangle({
       x: margin,
-      y: yPosition - 5,
+      y: headerY - 22,
       width: contentWidth,
-      height: 20,
-      color: isNotConducted ? rgb(0.5, 0.5, 0.5) : rgb(0.2, 0.4, 0.6),
+      height: 22,
+      color: colors.primary,
     });
-
-    // Draw header text
-    headers.forEach(header => {
+    
+    // Header text
+    let currentX = margin;
+    tableHeaders.forEach(header => {
+      const textX = header.align === 'center' 
+        ? currentX + (header.width / 2) - (fontBold.widthOfTextAtSize(header.text, 9) / 2)
+        : currentX + 8;
+      
       currentPage.drawText(header.text, {
-        x: header.x,
-        y: yPosition,
+        x: textX,
+        y: headerY - 14,
         size: 9,
-        font: helveticaBold,
+        font: fontBold,
         color: rgb(1, 1, 1),
       });
+      currentX += header.width;
     });
-
-    yPosition -= 18;
-
-    // Helper function to calculate grade
-    const calculateGrade = (marksNum: number | null): { grade: string; color: any } => {
-      if (marksNum === null || isNaN(marksNum)) return { grade: '-', color: rgb(0.5, 0.5, 0.5) };
-      if (marksNum === -1) return { grade: 'ABS', color: rgb(0.7, 0.3, 0.3) };
-      if (marksNum === -2) return { grade: 'N/A', color: rgb(0.5, 0.5, 0.5) };
-      
-      const percentage = (marksNum / totalMarks) * 100;
-      
-      if (percentage >= 80) return { grade: '1', color: rgb(0, 0.6, 0) };
-      if (percentage >= 70) return { grade: '2', color: rgb(0.2, 0.7, 0.2) };
-      if (percentage >= 65) return { grade: '3', color: rgb(0.4, 0.8, 0.4) };
-      if (percentage >= 60) return { grade: '4', color: rgb(0.3, 0.6, 1) };
-      if (percentage >= 55) return { grade: '5', color: rgb(0.5, 0.5, 1) };
-      if (percentage >= 50) return { grade: '6', color: rgb(0.8, 0.8, 0.2) };
-      if (percentage >= 45) return { grade: '7', color: rgb(1, 0.6, 0.2) };
-      if (percentage >= 40) return { grade: '8', color: rgb(1, 0.4, 0.2) };
-      return { grade: '9', color: rgb(1, 0.2, 0.2) };
-    };
-
-    // Create saved marks map for current exam type
+    
+    yPosition = headerY - 24;
+    
+    // Table rows
+    const rowHeight = 18;
     const savedMarksMap = new Map();
+    
     if (allExamData && !isNotConducted) {
       const currentExamData = allExamData[examType] || [];
-      console.log(`📊 PDF - Current exam data for ${examType}:`, currentExamData);
-      
       currentExamData.forEach(item => {
-        // Store by studentId
-        if (item.studentId) {
-          savedMarksMap.set(item.studentId, item.marks);
-        }
-        // Also store by student_id if different
-        if (item.student_id) {
-          savedMarksMap.set(item.student_id, item.marks);
-        }
+        if (item.studentId) savedMarksMap.set(item.studentId, item.marks);
+        if (item.student_id) savedMarksMap.set(item.student_id, item.marks);
       });
     }
-
-    // Table rows
+    
     for (let i = 0; i < students.length; i++) {
       const student = students[i];
       
-      // Check if we need a new page
-      if (yPosition < margin + 60) {
+      // Check for new page
+      if (yPosition < margin + 50) {
         currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
         yPosition = await addHeader(currentPage, pdfDoc.getPageCount());
         
-        // Redraw headers on new page
+        // Redraw header on new page
         currentPage.drawRectangle({
           x: margin,
-          y: yPosition - 5,
+          y: yPosition - 22,
           width: contentWidth,
-          height: 20,
-          color: isNotConducted ? rgb(0.5, 0.5, 0.5) : rgb(0.2, 0.4, 0.6),
+          height: 22,
+          color: colors.primary,
         });
-
-        headers.forEach(header => {
+        
+        let headerX = margin;
+        tableHeaders.forEach(header => {
+          const textX = header.align === 'center' 
+            ? headerX + (header.width / 2) - (fontBold.widthOfTextAtSize(header.text, 9) / 2)
+            : headerX + 8;
+          
           currentPage.drawText(header.text, {
-            x: header.x,
-            y: yPosition,
+            x: textX,
+            y: yPosition - 14,
             size: 9,
-            font: helveticaBold,
+            font: fontBold,
             color: rgb(1, 1, 1),
           });
+          headerX += header.width;
         });
-
-        yPosition -= 18;
+        yPosition -= 24;
       }
-
-      // Alternate row background
+      
+      // Row background (zebra striping)
       if (i % 2 === 0) {
         currentPage.drawRectangle({
           x: margin,
-          y: yPosition - 3,
+          y: yPosition - rowHeight + 2,
           width: contentWidth,
-          height: 16,
-          color: rgb(0.97, 0.97, 0.97),
+          height: rowHeight,
+          color: colors.background,
         });
       }
-
-      // Get marks - prioritize current input, fall back to saved marks
+      
+      // Get marks
       let marksValue = student.marks || '';
       let isFromSaved = false;
       
-      // If current input is empty, check for saved marks
       if ((!marksValue || marksValue === '') && !isNotConducted) {
-        // Try to find saved mark using multiple ID fields
-        let savedMark = savedMarksMap.get(student.studentId);
-        
-        // If not found by studentId, try by document id if available
-        if (!savedMark && student.id) {
-          savedMark = savedMarksMap.get(student.id);
-        }
-        
+        const savedMark = savedMarksMap.get(student.studentId) || savedMarksMap.get(student.id);
         if (savedMark !== undefined) {
           isFromSaved = true;
-          if (savedMark === -1) {
-            marksValue = 'X';
-          } else if (savedMark === -2) {
-            marksValue = 'N/A';
-          } else if (savedMark >= 0) {
-            marksValue = savedMark.toString();
-          }
+          if (savedMark === -1) marksValue = 'X';
+          else if (savedMark === -2) marksValue = 'N/A';
+          else if (savedMark >= 0) marksValue = savedMark.toString();
         }
       }
       
@@ -450,261 +445,231 @@ export const generateMarkSchedulePDF = async ({
       const isAbsent = marksStr.toLowerCase() === 'x';
       const isNA = marksStr === 'N/A' || marksStr === 'na';
       
-      // Parse marks number if not absent, not NA, and not empty
       let marksNum: number | null = null;
       if (!isAbsent && !isNA && marksStr !== '') {
         marksNum = parseInt(marksStr);
         if (isNaN(marksNum)) marksNum = null;
       }
       
-      const percentage = marksNum !== null && !isNaN(marksNum) ? ((marksNum / totalMarks) * 100).toFixed(0) : null;
-      const { grade, color: gradeColor } = calculateGrade(isNA ? -2 : marksNum);
-
-      // Draw row data
-      currentPage.drawText(`${i + 1}`, {
-        x: margin + 10,
-        y: yPosition,
-        size: 9,
-        font: helveticaFont,
-      });
-
-      // Truncate long names
-      const displayName = student.name.length > 28 ? student.name.substring(0, 25) + '...' : student.name;
-      currentPage.drawText(displayName, {
-        x: margin + 35,
-        y: yPosition,
-        size: 9,
-        font: helveticaFont,
-      });
-
-      currentPage.drawText(student.studentId, {
-        x: margin + 220,
-        y: yPosition,
-        size: 9,
-        font: helveticaFont,
-      });
-
-      // Marks display with better handling of different states
-      if (isNotConducted) {
-        // Entire test not conducted
-        currentPage.drawText('N/A', {
-          x: margin + 315,
-          y: yPosition,
-          size: 9,
-          font: helveticaOblique,
-          color: rgb(0.5, 0.5, 0.5),
-        });
+      // CORRECT percentage and grade calculation
+      let percentage: string | null = null;
+      let gradeNum = -1;
+      
+      if (!isNotConducted && !isNA && marksNum !== null && !isNaN(marksNum)) {
+        const percentValue = (marksNum / totalMarks) * 100;
+        percentage = percentValue.toFixed(0);
+        gradeNum = calculateOfficialGrade(percentValue);
       } else if (isNA) {
-        // Individual student marked as N/A
-        currentPage.drawText('N/A', {
-          x: margin + 315,
-          y: yPosition,
-          size: 9,
-          font: helveticaOblique,
-          color: rgb(0.5, 0.5, 0.5),
-        });
+        gradeNum = -2;
       } else if (isAbsent) {
-        // Student is absent
-        currentPage.drawText('ABS', {
-          x: margin + 315,
-          y: yPosition,
-          size: 9,
-          font: helveticaOblique,
-          color: rgb(0.7, 0.3, 0.3),
-        });
-      } else if (marksStr !== '') {
-        // Student has a mark
-        currentPage.drawText(marksStr, {
-          x: margin + 315,
-          y: yPosition,
-          size: 9,
-          font: helveticaFont,
-        });
-        
-        // Optionally indicate if mark came from saved data
-        if (isFromSaved) {
-          currentPage.drawText('*', {
-            x: margin + 310,
-            y: yPosition,
-            size: 9,
-            font: helveticaBold,
-            color: rgb(0, 0.5, 0),
-          });
-        }
-      } else {
-        // No mark entered - show dash
-        currentPage.drawText('-', {
-          x: margin + 315,
-          y: yPosition,
-          size: 9,
-          font: helveticaFont,
-          color: rgb(0.7, 0.7, 0.7),
-        });
+        gradeNum = -1;
       }
-
-      // Score
-      let score = '-';
-      if (isNotConducted || isNA) {
-        score = 'N/A';
-      } else if (marksNum !== null && !isNaN(marksNum)) {
-        score = `${marksNum}/${totalMarks}`;
-      }
-      currentPage.drawText(score, {
-        x: margin + 365,
-        y: yPosition,
+      
+      const gradeText = isNA ? 'N/A' : (isAbsent ? 'ABS' : (gradeNum === -1 ? '-' : gradeNum.toString()));
+      const gradeColor = isNA ? colors.textLight : (isAbsent ? colors.warning : rgb(...getGradeColor(gradeNum)));
+      
+      const rowY = yPosition - 12;
+      
+      // Draw row data
+      let xPos = margin;
+      
+      // # column
+      const numText = `${i + 1}`;
+      currentPage.drawText(numText, {
+        x: xPos + (30 / 2) - (font.widthOfTextAtSize(numText, 9) / 2),
+        y: rowY,
         size: 9,
-        font: helveticaFont,
+        font: font,
+        color: colors.text,
       });
-
-      // Percentage
-      let percentText = '-';
-      if (isNotConducted || isNA) {
-        percentText = 'N/A';
-      } else if (percentage) {
-        percentText = `${percentage}%`;
-      }
-      currentPage.drawText(percentText, {
-        x: margin + 430,
-        y: yPosition,
+      xPos += 30;
+      
+      // Name column
+      const displayName = truncateText(student.name, 28);
+      currentPage.drawText(displayName, {
+        x: xPos + 8,
+        y: rowY,
         size: 9,
-        font: helveticaFont,
+        font: font,
+        color: colors.text,
       });
-
-      // Grade
-      currentPage.drawText(grade, {
-        x: margin + 475,
-        y: yPosition,
+      xPos += 170;
+      
+      // Student ID column
+      currentPage.drawText(student.studentId, {
+        x: xPos + 8,
+        y: rowY,
         size: 9,
-        font: helveticaBold,
+        font: font,
+        color: colors.text,
+      });
+      xPos += 100;
+      
+      // Marks column
+      let marksDisplay = '-';
+      if (isNotConducted) marksDisplay = 'N/A';
+      else if (isNA) marksDisplay = 'N/A';
+      else if (isAbsent) marksDisplay = 'ABS';
+      else if (marksStr !== '') marksDisplay = marksStr;
+      
+      currentPage.drawText(marksDisplay, {
+        x: xPos + (50 / 2) - (font.widthOfTextAtSize(marksDisplay, 9) / 2),
+        y: rowY,
+        size: 9,
+        font: isAbsent || isNA ? fontOblique : font,
+        color: isAbsent ? colors.warning : (isNA ? colors.textLight : colors.text),
+      });
+      
+      // Asterisk for saved marks
+      if (isFromSaved && !isNotConducted && !isAbsent && !isNA && marksStr !== '') {
+        currentPage.drawText('*', {
+          x: xPos + 42,
+          y: rowY + 2,
+          size: 8,
+          font: fontBold,
+          color: colors.accent,
+        });
+      }
+      xPos += 50;
+      
+      // Score column
+      let scoreDisplay = '-';
+      if (isNotConducted || isNA) scoreDisplay = 'N/A';
+      else if (marksNum !== null && !isNaN(marksNum)) scoreDisplay = `${marksNum}/${totalMarks}`;
+      
+      currentPage.drawText(scoreDisplay, {
+        x: xPos + (60 / 2) - (font.widthOfTextAtSize(scoreDisplay, 9) / 2),
+        y: rowY,
+        size: 8,
+        font: font,
+        color: colors.text,
+      });
+      xPos += 60;
+      
+      // Percentage column
+      let percentDisplay = '-';
+      if (isNotConducted || isNA) percentDisplay = 'N/A';
+      else if (percentage) percentDisplay = `${percentage}%`;
+      
+      currentPage.drawText(percentDisplay, {
+        x: xPos + (45 / 2) - (font.widthOfTextAtSize(percentDisplay, 9) / 2),
+        y: rowY,
+        size: 9,
+        font: fontBold,
+        color: colors.text,
+      });
+      xPos += 45;
+      
+      // Grade column
+      currentPage.drawText(gradeText, {
+        x: xPos + (45 / 2) - (fontBold.widthOfTextAtSize(gradeText, 10) / 2),
+        y: rowY,
+        size: 10,
+        font: fontBold,
         color: gradeColor,
       });
-
-      yPosition -= 16;
+      
+      yPosition -= rowHeight;
     }
-
-    // Summary section
-    yPosition -= 10;
     
-    // Draw summary box
-    currentPage.drawRectangle({
+    // ==================== FOOTER ====================
+    const footerY = margin - 10;
+    
+    // Light separator line above footer
+    currentPage.drawLine({
+      start: { x: margin, y: footerY + 20 },
+      end: { x: pageWidth - margin, y: footerY + 20 },
+      thickness: 0.5,
+      color: colors.border,
+    });
+    
+    // Footer text
+    currentPage.drawText(`Generated on ${new Date().toLocaleString()}`, {
       x: margin,
-      y: yPosition - 30,
-      width: contentWidth,
-      height: 40,
-      color: isNotConducted ? rgb(0.97, 0.97, 0.97) : rgb(0.95, 0.95, 0.95),
-      borderColor: rgb(0.7, 0.7, 0.7),
-      borderWidth: 0.5,
+      y: footerY,
+      size: 7,
+      font: font,
+      color: colors.textLight,
     });
-
-    // Summary text
-    currentPage.drawText('SUMMARY STATISTICS', {
-      x: margin + 10,
-      y: yPosition - 10,
-      size: 10,
-      font: helveticaBold,
+    
+    currentPage.drawText("Teacher's Signature: _________________________", {
+      x: pageWidth - margin - 220,
+      y: footerY,
+      size: 8,
+      font: font,
+      color: colors.textLight,
     });
-
-    let summaryItems: string[];
-    if (isNotConducted) {
-      summaryItems = [
-        `Total Students: ${students.length}`,
-        `Status: NOT CONDUCTED`,
-        `-`,
-        `-`,
-        `-`,
-      ];
-    } else {
-      summaryItems = [
-        `Total Students: ${students.length}`,
-        `Marks Entered: ${enteredCount}`,
-        `Absent: ${absentCount}`,
-        `N/A: ${notConductedCount}`,
-        `Pending: ${students.length - enteredCount - absentCount - notConductedCount}`,
-        `Average: ${averageMark}`,
-      ];
-    }
-
-    summaryItems.forEach((item, index) => {
-      if (item !== '-') {
-        currentPage.drawText(item, {
-          x: margin + 10 + (index * 85),
-          y: yPosition - 22,
-          size: 8,
-          font: helveticaFont,
-        });
-      }
-    });
-
-    // Add a legend if we used saved marks
+    
     if (!isNotConducted && savedMarksMap.size > 0) {
       currentPage.drawText('* Mark loaded from saved data', {
-        x: margin + 10,
-        y: yPosition - 45,
+        x: margin,
+        y: footerY - 12,
         size: 7,
-        font: helveticaOblique,
-        color: rgb(0, 0.5, 0),
+        font: fontOblique,
+        color: colors.accent,
       });
     }
-
-    // Term summary page with proper data mapping
+    
+    // ==================== TERM SUMMARY PAGE ====================
     if (allExamData && (allExamData.week4?.length || allExamData.week8?.length || allExamData.endOfTerm?.length) && !isNotConducted) {
-      console.log('📊 Adding term summary page with all exam data:', {
-        week4Count: allExamData.week4?.length,
-        week8Count: allExamData.week8?.length,
-        endOfTermCount: allExamData.endOfTerm?.length
-      });
-      
       const summaryPage = pdfDoc.addPage([pageWidth, pageHeight]);
-      const summaryYStart = await addHeader(summaryPage, pdfDoc.getPageCount());
+      let summaryY = await addHeader(summaryPage, pdfDoc.getPageCount());
       
-      let summaryY = summaryYStart;
-
-      // Title for term summary
-      const termTitle = 'TERM PERFORMANCE SUMMARY';
-      summaryPage.drawText(termTitle, {
-        x: centerText(termTitle, 14),
+      // Summary title
+      const summaryTitle = 'TERM PERFORMANCE SUMMARY';
+      summaryPage.drawText(summaryTitle, {
+        x: centerX(summaryTitle, 14),
         y: summaryY,
         size: 14,
-        font: helveticaBold,
-        color: rgb(0, 0.2, 0.4),
+        font: fontBold,
+        color: colors.primary,
       });
-
-      summaryY -= 30;
-
-      // Table headers for term summary
-      const termHeaders = [
-        { text: '#', x: margin + 5, width: 25 },
-        { text: 'Student Name', x: margin + 35, width: 170 },
-        { text: 'Student ID', x: margin + 210, width: 85 },
-        { text: 'Week 4', x: margin + 300, width: 40 },
-        { text: 'Week 8', x: margin + 345, width: 40 },
-        { text: 'End Term', x: margin + 390, width: 40 },
-        { text: 'Average', x: margin + 435, width: 45 },
-        { text: 'Grade', x: margin + 485, width: 35 }
+      
+      summaryY -= 20;
+      summaryPage.drawLine({
+        start: { x: margin, y: summaryY + 5 },
+        end: { x: pageWidth - margin, y: summaryY + 5 },
+        thickness: 0.8,
+        color: colors.border,
+      });
+      summaryY -= 20;
+      
+      // Summary table headers
+      const summaryHeaders = [
+        { text: '#', width: 25 },
+        { text: 'Student Name', width: 160 },
+        { text: 'Student ID', width: 85 },
+        { text: 'W4', width: 35 },
+        { text: 'W8', width: 35 },
+        { text: 'EOT', width: 35 },
+        { text: 'Avg %', width: 50 },
+        { text: 'Grade', width: 40 },
       ];
-
-      // Draw header background
+      
+      // Header background
       summaryPage.drawRectangle({
         x: margin,
-        y: summaryY - 5,
+        y: summaryY - 20,
         width: contentWidth,
         height: 20,
-        color: rgb(0.3, 0.5, 0.7),
+        color: colors.secondary,
       });
-
-      termHeaders.forEach(header => {
+      
+      let headerX = margin;
+      summaryHeaders.forEach(header => {
         summaryPage.drawText(header.text, {
-          x: header.x,
-          y: summaryY,
+          x: headerX + 8,
+          y: summaryY - 14,
           size: 8,
-          font: helveticaBold,
+          font: fontBold,
           color: rgb(1, 1, 1),
         });
+        headerX += header.width;
       });
-
-      summaryY -= 18;
-
-      // Create comprehensive maps of marks by student
+      
+      summaryY -= 22;
+      
+      // Create data maps
       const week4Map = new Map();
       allExamData.week4?.forEach(item => {
         if (item.studentId) week4Map.set(item.studentId, item.marks);
@@ -722,120 +687,120 @@ export const generateMarkSchedulePDF = async ({
         if (item.studentId) eotMap.set(item.studentId, item.marks);
         if (item.student_id) eotMap.set(item.student_id, item.marks);
       });
-
-      // Display each student's term performance
+      
+      // Display student summaries
       for (let i = 0; i < students.length; i++) {
         const student = students[i];
         
-        if (summaryY < margin + 60) {
-          // Add a note about truncation
-          summaryPage.drawText('... more students (truncated for space)', {
-            x: margin + 35,
+        if (summaryY < margin + 40) {
+          summaryPage.drawText('... additional students', {
+            x: margin + 8,
             y: summaryY,
             size: 8,
-            font: helveticaOblique,
-            color: rgb(0.5, 0.5, 0.5),
+            font: fontOblique,
+            color: colors.textLight,
           });
           break;
         }
-
-        // Try to find marks by various identifiers
+        
+        if (i % 2 === 0) {
+          summaryPage.drawRectangle({
+            x: margin,
+            y: summaryY - 14,
+            width: contentWidth,
+            height: 14,
+            color: colors.background,
+          });
+        }
+        
         const week4Mark = week4Map.get(student.studentId);
         const week8Mark = week8Map.get(student.studentId);
         const eotMark = eotMap.get(student.studentId);
         
-        // Calculate average of valid marks (not absent, not N/A, and not undefined)
-        const validMarks = [
-          week4Mark !== undefined && week4Mark !== -1 && week4Mark !== -2 ? week4Mark : null,
-          week8Mark !== undefined && week8Mark !== -1 && week8Mark !== -2 ? week8Mark : null,
-          eotMark !== undefined && eotMark !== -1 && eotMark !== -2 ? eotMark : null
-        ].filter((m): m is number => m !== null);
+        // CORRECT: Calculate percentages using the SAME totalMarks
+        const week4Percent = week4Mark !== undefined && week4Mark >= 0 ? (week4Mark / totalMarks) * 100 : null;
+        const week8Percent = week8Mark !== undefined && week8Mark >= 0 ? (week8Mark / totalMarks) * 100 : null;
+        const eotPercent = eotMark !== undefined && eotMark >= 0 ? (eotMark / totalMarks) * 100 : null;
         
-        const avg = validMarks.length > 0 
-          ? (validMarks.reduce((a, b) => a + b, 0) / validMarks.length).toFixed(1)
-          : '-';
+        const validPercentages = [week4Percent, week8Percent, eotPercent].filter((p): p is number => p !== null);
+        const avgPercentage = validPercentages.length > 0 
+          ? validPercentages.reduce((a, b) => a + b, 0) / validPercentages.length
+          : null;
         
-        // Calculate overall grade based on average
-        const avgNum = avg !== '-' ? parseFloat(avg) : null;
-        const avgGrade = avgNum !== null ? calculateGrade(avgNum).grade : '-';
-        const avgGradeColor = avgNum !== null ? calculateGrade(avgNum).color : rgb(0.5, 0.5, 0.5);
-
-        // Alternate row background
-        if (i % 2 === 0) {
-          summaryPage.drawRectangle({
-            x: margin,
-            y: summaryY - 3,
-            width: contentWidth,
-            height: 15,
-            color: rgb(0.97, 0.97, 0.97),
-          });
-        }
-
-        summaryPage.drawText(`${i + 1}`, { x: margin + 10, y: summaryY, size: 8, font: helveticaFont });
+        const avgGrade = avgPercentage !== null ? calculateOfficialGrade(avgPercentage) : -1;
+        const avgGradeText = avgGrade === -1 ? '-' : avgGrade.toString();
+        const avgPercentDisplay = avgPercentage !== null ? `${Math.round(avgPercentage)}%` : '-';
         
-        const displayName = student.name.length > 25 ? student.name.substring(0, 22) + '...' : student.name;
-        summaryPage.drawText(displayName, { x: margin + 35, y: summaryY, size: 8, font: helveticaFont });
-        summaryPage.drawText(student.studentId, { x: margin + 210, y: summaryY, size: 8, font: helveticaFont });
-        
-        // Draw marks with appropriate styling
         const drawMark = (mark: number | undefined, x: number) => {
           if (mark === undefined) {
-            summaryPage.drawText('-', { x, y: summaryY, size: 8, font: helveticaFont, color: rgb(0.7, 0.7, 0.7) });
+            summaryPage.drawText('-', { x, y: summaryY - 8, size: 8, font, color: colors.textLight });
           } else if (mark === -1) {
-            summaryPage.drawText('ABS', { x, y: summaryY, size: 8, font: helveticaOblique, color: rgb(0.7, 0.3, 0.3) });
+            summaryPage.drawText('A', { x, y: summaryY - 8, size: 8, font: fontOblique, color: colors.warning });
           } else if (mark === -2) {
-            summaryPage.drawText('N/A', { x, y: summaryY, size: 8, font: helveticaOblique, color: rgb(0.5, 0.5, 0.5) });
+            summaryPage.drawText('N', { x, y: summaryY - 8, size: 8, font: fontOblique, color: colors.textLight });
           } else {
-            summaryPage.drawText(mark.toString(), { x, y: summaryY, size: 8, font: helveticaFont });
+            summaryPage.drawText(mark.toString(), { x, y: summaryY - 8, size: 8, font });
           }
         };
-
-        drawMark(week4Mark, margin + 300);
-        drawMark(week8Mark, margin + 345);
-        drawMark(eotMark, margin + 390);
         
-        summaryPage.drawText(avg.toString(), { x: margin + 440, y: summaryY, size: 8, font: helveticaBold });
-        summaryPage.drawText(avgGrade, { x: margin + 495, y: summaryY, size: 8, font: helveticaBold, color: avgGradeColor });
-
-        summaryY -= 15;
+        let rowX = margin;
+        
+        // # column
+        summaryPage.drawText(`${i + 1}`, { x: rowX + 12, y: summaryY - 8, size: 8, font });
+        rowX += 25;
+        
+        // Name column
+        const shortName = truncateText(student.name, 22);
+        summaryPage.drawText(shortName, { x: rowX + 8, y: summaryY - 8, size: 8, font });
+        rowX += 160;
+        
+        // Student ID
+        summaryPage.drawText(student.studentId, { x: rowX + 8, y: summaryY - 8, size: 8, font });
+        rowX += 85;
+        
+        // Marks
+        drawMark(week4Mark, rowX + 12);
+        rowX += 35;
+        drawMark(week8Mark, rowX + 12);
+        rowX += 35;
+        drawMark(eotMark, rowX + 12);
+        rowX += 35;
+        
+        // Average percentage
+        summaryPage.drawText(avgPercentDisplay, { x: rowX + 12, y: summaryY - 8, size: 8, font: fontBold });
+        rowX += 50;
+        
+        // Grade with color
+        const [r, g, b] = getGradeColor(avgGrade);
+        summaryPage.drawText(avgGradeText, {
+          x: rowX + 16,
+          y: summaryY - 8,
+          size: 9,
+          font: fontBold,
+          color: rgb(r, g, b),
+        });
+        
+        summaryY -= 16;
       }
-    }
-
-    // Footer on all pages
-    for (let i = 0; i < pdfDoc.getPageCount(); i++) {
-      const page = pdfDoc.getPage(i);
       
-      // Generation info
-      page.drawText(`Generated on ${new Date().toLocaleString()}`, {
+      // Summary page footer
+      const summaryFooterY = margin - 10;
+      summaryPage.drawText(`Generated on ${new Date().toLocaleString()}`, {
         x: margin,
-        y: margin - 15,
+        y: summaryFooterY,
         size: 7,
-        font: helveticaFont,
-        color: rgb(0.6, 0.6, 0.6),
-      });
-
-      // Teacher signature line
-      page.drawText('Teacher\'s Signature: _________________________', {
-        x: pageWidth - margin - 200,
-        y: margin - 15,
-        size: 8,
-        font: helveticaFont,
+        font: font,
+        color: colors.textLight,
       });
     }
-
-    // Save PDF
+    
+    // ==================== SAVE AND DOWNLOAD ====================
     const pdfBytes = await pdfDoc.save();
-    
-    console.log('✅ PDF generated successfully, size:', pdfBytes.length, 'bytes');
-    
-    // Create blob and download
-    const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-    
+    const blob = new Blob([new Uint8Array(pdfBytes).buffer], { type: 'application/pdf' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     
-    // Generate filename with actual data
     const status = isNotConducted ? '_NOT_CONDUCTED' : '';
     const fileName = `${schoolName.replace(/\s+/g, '_')}_${className.replace(/\s+/g, '_')}_${subject.replace(/\s+/g, '_')}_${examType}${status}_${term.replace(/\s+/g, '_')}_${year}.pdf`;
     
@@ -844,7 +809,9 @@ export const generateMarkSchedulePDF = async ({
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
-
+    
+    console.log('✅ PDF generated successfully');
+    
   } catch (error) {
     console.error('❌ Error generating PDF:', error);
     throw error;

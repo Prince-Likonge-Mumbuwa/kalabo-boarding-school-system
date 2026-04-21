@@ -1,4 +1,4 @@
-// @/pages/admin/ReportCards.tsx - UPDATED WITH MULTI-PAGE PDF SUPPORT
+// @/pages/admin/ReportCards.tsx - FULLY FIXED WITHOUT SMS
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -28,15 +28,11 @@ import {
   Loader2,
   Calendar,
   Trash2,
-  AlertCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
 } from 'lucide-react';
 
 // Import ConfirmationModal
 import { ConfirmationModal } from '@/components/ConfirmationModal';
-
-// Import types from service
-import type { StudentResult, ReportCardData as ServiceReportCardData, StudentProgress as ServiceStudentProgress } from '@/services/resultsService';
 
 // ==================== LOCAL TYPES ====================
 interface SubjectProgress {
@@ -389,7 +385,7 @@ const ReportModal = ({
     try {
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
       const pdfBytes = await generateReportCardPDF(report);
-      const blob = new Blob([pdfBytes.buffer], { type: 'application/pdf' });
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -547,7 +543,7 @@ const ReportModal = ({
           </div>
         </div>
 
-        {/* Delete Confirmation Modal - Using ConfirmationModal component */}
+        {/* Delete Confirmation Modal */}
         <ConfirmationModal
           isOpen={showDeleteConfirm}
           onClose={() => setShowDeleteConfirm(false)}
@@ -800,7 +796,7 @@ const ReportModal = ({
         </div>
       </div>
 
-      {/* Delete Confirmation Modal - Using ConfirmationModal component */}
+      {/* Delete Confirmation Modal */}
       <ConfirmationModal
         isOpen={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
@@ -1192,15 +1188,12 @@ export default function ReportCards() {
   const handleDeleteReport = useCallback(async (studentId: string) => {
     setIsDeletingReport(true);
     try {
-      // Here you would call an API to delete the report/results
-      // For now, we'll just remove it from the cache
       setReportCache(prev => {
         const newMap = new Map(prev);
         newMap.delete(studentId);
         return newMap;
       });
       
-      // You might also want to refresh the student progress data
       await refetch();
       
       alert('Report card deleted successfully');
@@ -1212,7 +1205,7 @@ export default function ReportCards() {
     }
   }, [refetch]);
 
-  // ==================== DOWNLOAD ALL REPORT CARDS (MULTI-PAGE PDF) ====================
+  // ==================== DOWNLOAD ALL REPORT CARDS ====================
   const handleDownloadAllReportCards = useCallback(async () => {
     if (!selectedClass || students.length === 0) {
       alert('No students to generate reports for');
@@ -1227,7 +1220,6 @@ export default function ReportCards() {
     setIsDownloadingAll(true);
     
     try {
-      // Generate all report cards using the bulk operation
       const result = await generateClassReportCards({
         classId: selectedClass,
         term: selectedTerm,
@@ -1244,10 +1236,8 @@ export default function ReportCards() {
         return;
       }
 
-      // Import the PDF generator
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
 
-      // Convert all reports to the local format
       const reportsToGenerate = result.reportCards.map(report => {
         const localReport: ReportCardData = {
           id: report.id,
@@ -1288,18 +1278,14 @@ export default function ReportCards() {
         return localReport;
       });
 
-      // Generate a single PDF with multiple pages
       const pdfBytes = await generateReportCardPDF(reportsToGenerate);
       
-      // Create filename
-      const className = reportsToGenerate[0]?.className.replace(/\s+/g, '_') || 'class';
-      const fileName = `report-cards-${className}-${selectedTerm.replace(/\s+/g, '_')}-${selectedYear}.pdf`;
-      
-      // Download the multi-page PDF
-      const blob = new Blob([pdfBytes.buffer], { type: 'application/pdf' });
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
+      const className = reportsToGenerate[0]?.className.replace(/\s+/g, '_') || 'class';
+      const fileName = `report-cards-${className}-${selectedTerm.replace(/\s+/g, '_')}-${selectedYear}.pdf`;
       link.download = fileName;
       document.body.appendChild(link);
       link.click();
@@ -1331,7 +1317,6 @@ export default function ReportCards() {
     setIsDownloadingMatrix(true);
 
     try {
-      // Get all unique subjects from all students
       const allSubjects = new Set<string>();
       transformedStudents.forEach(student => {
         student.subjects.forEach(subject => {
@@ -1340,7 +1325,6 @@ export default function ReportCards() {
       });
       const subjectsList = Array.from(allSubjects).sort();
 
-      // Build the matrix data
       const matrixData: ClassResultsMatrix = {
         className: transformedStudents[0]?.className || 'Unknown Class',
         term: selectedTerm,
@@ -1383,18 +1367,15 @@ export default function ReportCards() {
         configuredExamTypes
       };
 
-      // Generate PDF matrix
       const { generateClassResultsMatrixPDF } = await import('@/services/pdf/classResultsMatrixPDFLib');
       
-      // Generate the PDF
       const pdfBytes = await generateClassResultsMatrixPDF(matrixData);
       
-      const blob = new Blob([pdfBytes.buffer], { type: 'application/pdf' });
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       
-      // Create filename
       const fileName = `class-matrix-${matrixData.className.replace(/\s+/g, '_')}-${selectedTerm.replace(/\s+/g, '_')}-${selectedYear}.pdf`;
       link.download = fileName;
       
@@ -1517,13 +1498,13 @@ export default function ReportCards() {
               </p>
             </div>
             
-            <div className="flex items-center gap-2">
-              {/* Download All Report Cards Button - Now generates single multi-page PDF */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Download All Report Cards Button */}
               {selectedClass && students.length > 0 && configuredExamTypes.length > 0 && (
                 <button
                   onClick={handleDownloadAllReportCards}
                   disabled={isDownloadingAll}
-                  className="flex items-center gap-1 sm:gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 text-xs sm:text-sm"
+                  className="flex items-center gap-1 sm:gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 text-xs sm:text-sm"
                   title="Download all report cards as a single PDF"
                 >
                   {isDownloadingAll ? (
