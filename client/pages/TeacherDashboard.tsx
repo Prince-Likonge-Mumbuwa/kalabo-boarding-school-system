@@ -1,4 +1,4 @@
-// @/pages/teacher/TeacherDashboard.tsx - FIXED VERSION
+// @/pages/teacher/TeacherDashboard.tsx - FULLY UPDATED WITH RESULTS WARNING
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
@@ -7,6 +7,7 @@ import { useResultsAnalytics } from '@/hooks/useResults';
 import { attendanceService, AttendanceRecord } from '@/services/attendanceService';
 import { useAttendanceAnalytics } from '@/hooks/useAttendanceAnalytics';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { TeacherResultsWarning } from '@/components/results/TeacherResultsWarning';
 import { 
   BookOpen, Users, TrendingUp, AlertCircle, Loader2, 
   Calendar, ChevronRight, FileText, ClipboardCheck, 
@@ -14,10 +15,9 @@ import {
   TrendingDown, Minus, AlertTriangle
 } from 'lucide-react';
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 // ==================== TYPES ====================
-// Use the type that comes from useSchoolClasses
 interface ClassFromHook {
   id: string;
   name: string;
@@ -494,6 +494,7 @@ const ClassCard = ({ classItem, isFormTeacher, userId, attendanceRate }: ClassCa
 // ==================== MAIN COMPONENT ====================
 export default function TeacherDashboard() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isMobile = useMediaQuery('(max-width: 640px)');
   const [selectedTerm] = useState<string>('Term 1');
   const [selectedYear] = useState<number>(new Date().getFullYear());
@@ -516,7 +517,7 @@ export default function TeacherDashboard() {
   const [loadingAttendance, setLoadingAttendance] = useState(false);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   
-  // Fetch all active classes - FIXED: useSchoolClasses returns { classes, isLoading, etc }
+  // Fetch all active classes
   const { 
     classes = [], 
     isLoading: classesLoading 
@@ -536,7 +537,7 @@ export default function TeacherDashboard() {
   // Initialize analytics for attendance records
   const analyticsAttendance = useAttendanceAnalytics(attendanceRecords);
 
-  // Find classes assigned to this teacher - Now classes is already an array
+  // Find classes assigned to this teacher
   const assignedClasses = useMemo(() => {
     if (!user?.uid || !classes.length) return [];
     
@@ -551,6 +552,22 @@ export default function TeacherDashboard() {
     return classes.find((cls: ClassFromHook) => cls.formTeacherId === user?.uid);
   }, [classes, user?.uid]);
 
+  // Navigation handler for results entry
+  const handleNavigateToResults = useCallback((entry: any) => {
+    navigate('/dashboard/teacher/results-entry', {
+      state: {
+        classId: entry.classId,
+        className: entry.className,
+        subjectId: entry.subjectId,
+        subjectName: entry.subjectName,
+        examType: entry.examType,
+        examName: entry.examName,
+        term: selectedTerm,
+        year: selectedYear,
+      }
+    });
+  }, [navigate, selectedTerm, selectedYear]);
+
   // Fetch comprehensive attendance data
   const fetchAttendanceData = useCallback(async () => {
     if (assignedClasses.length === 0) return;
@@ -561,10 +578,6 @@ export default function TeacherDashboard() {
       const weekAgo = new Date();
       weekAgo.setDate(weekAgo.getDate() - 7);
       const weekAgoStr = weekAgo.toISOString().split('T')[0];
-      
-      const monthAgo = new Date();
-      monthAgo.setDate(monthAgo.getDate() - 30);
-      const monthAgoStr = monthAgo.toISOString().split('T')[0];
       
       let totalTodayPresent = 0;
       let totalTodayStudents = 0;
@@ -577,13 +590,10 @@ export default function TeacherDashboard() {
       let allTodayRecords: AttendanceRecord[] = [];
       let allWeekRecords: AttendanceRecord[] = [];
       
-      // For each class, fetch attendance data
       for (const cls of assignedClasses) {
-        // Get today's attendance
         const todayRecords = await attendanceService.getByClassAndDate(cls.id, today);
         allTodayRecords = [...allTodayRecords, ...todayRecords];
         
-        // Get weekly records for trend
         const weekRecords = await attendanceService.getByDateRange(weekAgoStr, today);
         allWeekRecords = [...allWeekRecords, ...weekRecords];
         
@@ -598,7 +608,6 @@ export default function TeacherDashboard() {
           const absent = todayRecords.filter(r => r.status === 'absent').length;
           const excused = todayRecords.filter(r => r.status === 'excused').length;
           
-          // Detect ditching (present in daily, absent in periodic)
           const dailyRecords = todayRecords.filter(r => r.attendanceType === 'daily');
           const periodicRecords = todayRecords.filter(r => r.attendanceType === 'periodic');
           
@@ -630,12 +639,10 @@ export default function TeacherDashboard() {
       
       setAttendanceRecords(allTodayRecords);
       
-      // Calculate today's rate
       const todayRate = totalTodayStudents > 0 
         ? Math.round((totalTodayPresent / totalTodayStudents) * 100) 
         : 0;
       
-      // Calculate weekly average
       const dailyGroups: Record<string, AttendanceRecord[]> = {};
       allWeekRecords.forEach(record => {
         if (!dailyGroups[record.date]) {
@@ -658,7 +665,6 @@ export default function TeacherDashboard() {
       
       const weeklyRate = weeklyDays > 0 ? Math.round(weeklyTotal / weeklyDays) : 0;
       
-      // Calculate trend
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const yesterdayStr = yesterday.toISOString().split('T')[0];
@@ -675,7 +681,7 @@ export default function TeacherDashboard() {
       setAttendanceStats({
         todayRate,
         weeklyRate,
-        monthlyRate: weeklyRate, // Simplified for now
+        monthlyRate: weeklyRate,
         totalPresent: totalTodayPresent,
         totalStudents: totalTodayStudents,
         lateToday: totalLateToday,
@@ -693,19 +699,14 @@ export default function TeacherDashboard() {
     }
   }, [assignedClasses]);
 
-  // Fetch attendance data on mount and when assignedClasses changes
   useEffect(() => {
     fetchAttendanceData();
-    
-    // Set up periodic refresh every 5 minutes
     const interval = setInterval(fetchAttendanceData, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [fetchAttendanceData]);
 
-  // Calculate stats
   const stats = useMemo(() => {
     const totalStudents = assignedClasses.reduce((sum, cls) => sum + (cls.students || 0), 0);
-    
     const passRate = analytics?.passRate || 0;
     const averagePercentage = analytics?.averagePercentage || 0;
     
@@ -720,7 +721,6 @@ export default function TeacherDashboard() {
     };
   }, [assignedClasses, user?.subjects, formTeacherClass, analytics]);
 
-  // Loading state
   if (classesLoading) {
     return (
       <DashboardLayout activeTab="dashboard">
@@ -764,10 +764,18 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        {/* ===== EMPTY STATE ===== */}
-        {assignedClasses.length === 0 && (
-          <EmptyState />
+        {/* ===== RESULTS ENTRY WARNING - NEW SECTION ===== */}
+        {assignedClasses.length > 0 && (
+          <TeacherResultsWarning 
+            term={selectedTerm} 
+            year={selectedYear} 
+            compact={false}
+            onNavigateToResults={handleNavigateToResults}
+          />
         )}
+
+        {/* ===== EMPTY STATE ===== */}
+        {assignedClasses.length === 0 && <EmptyState />}
 
         {/* ===== SUBJECT TAGS ===== */}
         {stats.subjects.length > 0 && assignedClasses.length > 0 && (
@@ -796,7 +804,6 @@ export default function TeacherDashboard() {
               Performance Overview
             </h2>
             <div className="grid grid-cols-2 gap-4">
-              {/* Card 1: Classes Assigned */}
               <MetricCard
                 label="Classes"
                 value={stats.classesHandled}
@@ -805,7 +812,6 @@ export default function TeacherDashboard() {
                 color="blue"
               />
               
-              {/* Card 2: Total Students */}
               <MetricCard
                 label="Students"
                 value={stats.totalStudents}
@@ -814,7 +820,6 @@ export default function TeacherDashboard() {
                 color="purple"
               />
               
-              {/* Card 3: Pass Rate */}
               <MetricCard
                 label="Pass Rate"
                 value={stats.passRate > 0 ? `${stats.passRate}%` : '—'}
@@ -825,7 +830,6 @@ export default function TeacherDashboard() {
                 subtext={stats.averagePercentage > 0 ? `${stats.averagePercentage}% avg` : undefined}
               />
               
-              {/* Card 4: Today's Attendance */}
               <MetricCard
                 label="Today's Attendance"
                 value={attendanceStats.todayRate > 0 ? `${attendanceStats.todayRate}%` : '—'}

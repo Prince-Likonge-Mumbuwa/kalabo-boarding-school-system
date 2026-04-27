@@ -20,9 +20,12 @@ import {
   CheckCircle,
   XCircle,
   ChevronDown,
-  Filter
+  Filter,
+  Monitor,
+  ChevronUp
 } from 'lucide-react';
 import { useExamConfig } from '@/hooks/useExamConfig';
+import { AdminResultsMonitor } from '@/components/admin/AdminResultsMonitor';
 
 // Exam types
 const EXAM_TYPES = [
@@ -72,6 +75,7 @@ export default function ExamManagement() {
   const [copyFromYear, setCopyFromYear] = useState<number | ''>('');
   const [copyFromTerm, setCopyFromTerm] = useState<string>('');
   const [showCopyModal, setShowCopyModal] = useState(false);
+  const [showMonitor, setShowMonitor] = useState(true); // State to toggle monitor visibility
   
   // Form state
   const [formData, setFormData] = useState({
@@ -88,7 +92,6 @@ export default function ExamManagement() {
     endOfTermTotalMarks: 100
   });
 
-  // Mock hook - replace with actual implementation
   const {
     configs,
     isLoading,
@@ -353,6 +356,53 @@ export default function ExamManagement() {
                 {!isMobile && 'New Configuration'}
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* ==================== RESULTS MONITOR SECTION ==================== */}
+        <div className="mb-8">
+          {/* Monitor Toggle Header */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Monitor size={20} className="text-blue-600" />
+              <h2 className="text-lg font-semibold text-gray-900">Results Entry Monitor</h2>
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Live</span>
+            </div>
+            <button
+              onClick={() => setShowMonitor(!showMonitor)}
+              className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+            >
+              {showMonitor ? (
+                <>
+                  <ChevronUp size={16} />
+                  <span>Hide</span>
+                </>
+              ) : (
+                <>
+                  <ChevronDown size={16} />
+                  <span>Show</span>
+                </>
+              )}
+            </button>
+          </div>
+          
+          {/* Monitor Content */}
+          {showMonitor && (
+            <div className="animate-in slide-in-from-top-2 duration-300">
+              <AdminResultsMonitor term={selectedTerm} year={selectedYear} />
+            </div>
+          )}
+        </div>
+
+        {/* Separator Line */}
+        <div className="relative mb-8">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-200"></div>
+          </div>
+          <div className="relative flex justify-center">
+            <span className="bg-gray-50/80 px-3 py-1 text-xs text-gray-400 rounded-full">
+              Exam Configuration
+            </span>
           </div>
         </div>
 
