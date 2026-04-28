@@ -16,6 +16,8 @@ export interface MissingEntry {
   examName: string;
   totalMarks?: number;
   configuredDate?: string;
+  missingStudentCount: number; // NEW: Track how many students missing marks
+  totalStudentCount: number;   // NEW: Track total students
 }
 
 export interface SubjectProgress {
@@ -28,18 +30,25 @@ export interface SubjectProgress {
   week8StudentCount: number;
   endOfTermStudentCount: number;
   totalStudents: number;
-  completionPercentage: number;
+  completionPercentage: number; // Now calculated based on actual marks entered
   expectedExams: ExamType[];
   completedExams: ExamType[];
   missingExams: ExamType[];
+  // NEW: Detailed per-exam progress
+  examProgress: {
+    examType: ExamType;
+    enteredCount: number;
+    totalCount: number;
+    percentage: number;
+  }[];
 }
 
 export interface ClassProgress {
   classId: string;
   className: string;
-  totalRequired: number;
-  completedCount: number;
-  missingCount: number;
+  totalRequired: number;  // Total possible marks entries (students × expected exams)
+  completedCount: number; // Total marks entries actually entered
+  missingCount: number;   // Total marks entries missing
   completionPercentage: number;
   subjects: SubjectProgress[];
 }
@@ -48,13 +57,15 @@ export interface TeacherProgress {
   teacherId: string;
   teacherName: string;
   teacherEmail?: string;
-  missingCount: number;
-  totalRequired: number;
-  completedCount: number;
+  missingCount: number;      // Total marks entries missing
+  totalRequired: number;     // Total possible marks entries (students × expected exams across all classes)
+  completedCount: number;    // Total marks entries actually entered
   completionPercentage: number;
   status: 'complete' | 'on-track' | 'behind' | 'critical';
   missingEntries: MissingEntry[];
   classProgress: ClassProgress[];
+  formTeacherClasses: string[];
+  teachingAssignments: Array<{ classId: string; className: string; subjectId: string; subjectName: string }>;
 }
 
 interface UseResultsEntryMonitorOptions {
@@ -69,7 +80,6 @@ const EXAM_NAMES: Record<ExamType, string> = {
   endOfTerm: 'End of Term Exam'
 };
 
-// Order matters for display
 const EXAM_ORDER: ExamType[] = ['week4', 'week8', 'endOfTerm'];
 
 export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) => {
@@ -77,18 +87,12 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
   const [completionCache, setCompletionCache] = useState<Map<string, any>>(new Map());
   const [isLoadingCompletions, setIsLoadingCompletions] = useState(true);
   
-  // Get exam configurations - THIS IS CRITICAL for knowing what's expected
   const { configs, isLoading: configsLoading } = useExamConfig({ year });
-  
-  // Get all teachers
   const { allTeachers, isLoading: teachersLoading } = useSchoolTeachers();
-  
-  // Get all active classes with teacher assignments
   const { classes, isLoading: classesLoading } = useSchoolClasses({ year, isActive: true });
   
   const isLoading = configsLoading || teachersLoading || classesLoading || isLoadingCompletions;
   
-  // CRITICAL: Get the active exam types for this specific term from the CONFIG
   const activeExamTypes = useMemo((): ExamType[] => {
     if (!configs || configs.length === 0) {
       console.warn('No exam configs found - returning empty array');
@@ -103,7 +107,6 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
     
     const active: ExamType[] = [];
     
-    // Only include exams that are explicitly configured for this term
     if (termConfig.examTypes?.week4 === true && termConfig.week4TotalMarks > 0) {
       active.push('week4');
     }
@@ -118,13 +121,13 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
     return active;
   }, [configs, term, year]);
   
-  // Build teacher assignments map from classes
   const allTeacherAssignmentsMap = useMemo(() => {
     const map = new Map<string, {
       teacherId: string;
       teacherName: string;
       teacherEmail?: string;
-      assignments: Array<{
+      formTeacherClasses: Set<string>;
+      teachingAssignments: Array<{
         classId: string;
         className: string;
         subjectId: string;
@@ -136,9 +139,28 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
       const teacherAssignments = (cls as any).teacherAssignments;
       if (!teacherAssignments || !Array.isArray(teacherAssignments)) continue;
       
+      let classFormTeacherId: string | null = null;
+      
+      for (const assignment of teacherAssignments) {
+        if (assignment.isFormTeacher === true) {
+          classFormTeacherId = assignment.teacherId;
+          break;
+        }
+      }
+      
       for (const assignment of teacherAssignments) {
         const teacherIdKey = assignment.teacherId;
         if (!teacherIdKey) continue;
+        
+        const subjectName = assignment.subject || assignment.subjectName || '';
+        const isFormTeacherOnly = assignment.isFormTeacher === true && !subjectName;
+        const isSubjectTeaching = !isFormTeacherOnly && subjectName && subjectName !== 'Form Teacher';
+        
+        if (!isSubjectTeaching) {
+          continue;
+        }
+        
+        const normalizedSubjectId = assignment.subjectId || subjectName.toLowerCase().replace(/\s+/g, '_');
         
         if (!map.has(teacherIdKey)) {
           const teacher = allTeachers.find(t => t.id === teacherIdKey);
@@ -146,15 +168,22 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
             teacherId: teacherIdKey,
             teacherName: teacher?.name || teacher?.id || assignment.teacherName || 'Unknown',
             teacherEmail: teacher?.email,
-            assignments: [],
+            formTeacherClasses: new Set<string>(),
+            teachingAssignments: [],
           });
         }
         
-        map.get(teacherIdKey)!.assignments.push({
+        const teacherData = map.get(teacherIdKey)!;
+        
+        if (classFormTeacherId === teacherIdKey) {
+          teacherData.formTeacherClasses.add(cls.id);
+        }
+        
+        teacherData.teachingAssignments.push({
           classId: cls.id,
           className: cls.name,
-          subjectId: assignment.subjectId || assignment.subject,
-          subjectName: assignment.subject,
+          subjectId: normalizedSubjectId,
+          subjectName: subjectName,
         });
       }
     }
@@ -162,7 +191,6 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
     return map;
   }, [classes, allTeachers]);
   
-  // Fetch completion status for ALL classes and cache
   useEffect(() => {
     const fetchAllCompletionStatuses = async () => {
       if (!classes.length || !activeExamTypes.length) {
@@ -174,7 +202,6 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
       const cache = new Map<string, any>();
       
       try {
-        // Fetch completion status for each class in parallel
         const completionPromises = classes.map(async (cls) => {
           try {
             const statuses = await resultsService.getSubjectCompletionStatus(
@@ -211,22 +238,20 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
     }
   }, [classes, term, year, activeExamTypes, classesLoading]);
   
-  // Helper to get completion status for a specific class and subject
   const getCompletionStatus = useCallback((classId: string, subjectId: string) => {
     const key = `${classId}_${subjectId}`;
     return completionCache.get(key);
   }, [completionCache]);
   
-  // Build teacher progress data - ACCURATE based on configured exams
   const teacherProgress = useMemo((): TeacherProgress[] => {
     if (isLoading || activeExamTypes.length === 0) return [];
     
-    // Determine which teachers to process
     let targetTeachers: Array<{
       teacherId: string;
       teacherName: string;
       teacherEmail?: string;
-      assignments: Array<{
+      formTeacherClasses: Set<string>;
+      teachingAssignments: Array<{
         classId: string;
         className: string;
         subjectId: string;
@@ -247,72 +272,84 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
     const termConfig = configs?.find((c: any) => c.term === term);
     
     for (const teacher of targetTeachers) {
+      if (teacher.teachingAssignments.length === 0) {
+        continue;
+      }
+      
       const classProgressMap = new Map<string, ClassProgress>();
       const allMissingEntries: MissingEntry[] = [];
-      let totalRequired = 0;
-      let totalCompleted = 0;
+      let totalRequired = 0;   // Total possible marks entries
+      let totalCompleted = 0;  // Total marks entries actually entered
       
-      for (const assignment of teacher.assignments) {
+      for (const assignment of teacher.teachingAssignments) {
         const completion = getCompletionStatus(assignment.classId, assignment.subjectId);
         
-        // Determine which exams are COMPLETE based on actual Firestore data
-        // An exam is considered COMPLETE only if ALL students have marks entered
-        // OR if the exam is marked as "not conducted" for ALL students
-        let week4Complete = false;
-        let week8Complete = false;
-        let endOfTermComplete = false;
-        let week4StudentCount = 0;
-        let week8StudentCount = 0;
-        let endOfTermStudentCount = 0;
         let totalStudents = 0;
+        const examProgress: SubjectProgress['examProgress'] = [];
         
-        if (completion) {
-          week4Complete = completion.week4Complete === true;
-          week8Complete = completion.week8Complete === true;
-          endOfTermComplete = completion.endOfTermComplete === true;
-          week4StudentCount = completion.enteredStudents?.week4 || 0;
-          week8StudentCount = completion.enteredStudents?.week8 || 0;
-          endOfTermStudentCount = completion.enteredStudents?.endOfTerm || 0;
-          totalStudents = completion.totalStudents || 0;
-        } else {
-          // If no completion data, we need to get student count from elsewhere
-          // For now, we'll assume 0 - this will be fixed when data is fetched
-          totalStudents = 0;
+        // Build per-exam progress based on ACTUAL STUDENT COUNTS
+        for (const examType of activeExamTypes) {
+          let enteredCount = 0;
+          
+          if (completion) {
+            if (examType === 'week4') {
+              enteredCount = completion.enteredStudents?.week4 || 0;
+            } else if (examType === 'week8') {
+              enteredCount = completion.enteredStudents?.week8 || 0;
+            } else if (examType === 'endOfTerm') {
+              enteredCount = completion.enteredStudents?.endOfTerm || 0;
+            }
+            totalStudents = completion.totalStudents || 0;
+          }
+          
+          const examPercentage = totalStudents > 0 
+            ? Math.round((enteredCount / totalStudents) * 100)
+            : 0;
+          
+          examProgress.push({
+            examType,
+            enteredCount,
+            totalCount: totalStudents,
+            percentage: examPercentage,
+          });
         }
         
-        // Track which exams are expected vs completed
+        // Calculate subject completion based on TOTAL MARKS ENTRIES
+        // Each student × each expected exam = 1 marks entry
+        const subjectExpectedEntries = totalStudents * activeExamTypes.length;
+        const subjectCompletedEntries = examProgress.reduce((sum, exam) => sum + exam.enteredCount, 0);
+        const subjectMissingEntries = subjectExpectedEntries - subjectCompletedEntries;
+        const subjectCompletionPercentage = subjectExpectedEntries > 0
+          ? Math.round((subjectCompletedEntries / subjectExpectedEntries) * 100)
+          : 100;
+        
+        // Determine which exams are "complete" (100% of students have marks)
+        const week4Complete = examProgress.find(e => e.examType === 'week4')?.percentage === 100;
+        const week8Complete = examProgress.find(e => e.examType === 'week8')?.percentage === 100;
+        const endOfTermComplete = examProgress.find(e => e.examType === 'endOfTerm')?.percentage === 100;
+        
+        const week4StudentCount = examProgress.find(e => e.examType === 'week4')?.enteredCount || 0;
+        const week8StudentCount = examProgress.find(e => e.examType === 'week8')?.enteredCount || 0;
+        const endOfTermStudentCount = examProgress.find(e => e.examType === 'endOfTerm')?.enteredCount || 0;
+        
         const expectedExams: ExamType[] = [...activeExamTypes];
         const completedExams: ExamType[] = [];
         const missingExams: ExamType[] = [];
         
-        if (week4Complete && activeExamTypes.includes('week4')) {
-          completedExams.push('week4');
-        } else if (activeExamTypes.includes('week4')) {
-          missingExams.push('week4');
-        }
+        if (week4Complete) completedExams.push('week4');
+        else if (activeExamTypes.includes('week4')) missingExams.push('week4');
         
-        if (week8Complete && activeExamTypes.includes('week8')) {
-          completedExams.push('week8');
-        } else if (activeExamTypes.includes('week8')) {
-          missingExams.push('week8');
-        }
+        if (week8Complete) completedExams.push('week8');
+        else if (activeExamTypes.includes('week8')) missingExams.push('week8');
         
-        if (endOfTermComplete && activeExamTypes.includes('endOfTerm')) {
-          completedExams.push('endOfTerm');
-        } else if (activeExamTypes.includes('endOfTerm')) {
-          missingExams.push('endOfTerm');
-        }
+        if (endOfTermComplete) completedExams.push('endOfTerm');
+        else if (activeExamTypes.includes('endOfTerm')) missingExams.push('endOfTerm');
         
-        const subjectCompletedCount = completedExams.length;
-        const subjectExpectedCount = expectedExams.length;
-        const subjectCompletionPercentage = subjectExpectedCount > 0
-          ? Math.round((subjectCompletedCount / subjectExpectedCount) * 100)
-          : 100;
-        
-        // Build missing entries for THIS SUBJECT based on expected exams
-        const subjectMissingEntries: MissingEntry[] = [];
-        
+        // Build missing entries with student counts
         for (const examType of missingExams) {
+          const exam = examProgress.find(e => e.examType === examType);
+          const missingStudentCount = (exam?.totalCount || 0) - (exam?.enteredCount || 0);
+          
           let totalMarks: number | undefined;
           let configuredDate: string | undefined;
           
@@ -329,17 +366,6 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
             }
           }
           
-          subjectMissingEntries.push({
-            classId: assignment.classId,
-            className: assignment.className,
-            subjectId: assignment.subjectId,
-            subjectName: assignment.subjectName,
-            examType,
-            examName: EXAM_NAMES[examType],
-            totalMarks,
-            configuredDate: configuredDate ? new Date(configuredDate).toISOString() : undefined,
-          });
-          
           allMissingEntries.push({
             classId: assignment.classId,
             className: assignment.className,
@@ -349,6 +375,8 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
             examName: EXAM_NAMES[examType],
             totalMarks,
             configuredDate: configuredDate ? new Date(configuredDate).toISOString() : undefined,
+            missingStudentCount,
+            totalStudentCount: exam?.totalCount || 0,
           });
         }
         
@@ -380,17 +408,18 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
           expectedExams,
           completedExams,
           missingExams,
+          examProgress,
         });
         
-        classProgress.totalRequired += subjectExpectedCount;
-        classProgress.completedCount += subjectCompletedCount;
-        classProgress.missingCount = classProgress.totalRequired - classProgress.completedCount;
+        classProgress.totalRequired += subjectExpectedEntries;
+        classProgress.completedCount += subjectCompletedEntries;
+        classProgress.missingCount += subjectMissingEntries;
         classProgress.completionPercentage = classProgress.totalRequired > 0
           ? Math.round((classProgress.completedCount / classProgress.totalRequired) * 100)
           : 100;
         
-        totalRequired += subjectExpectedCount;
-        totalCompleted += subjectCompletedCount;
+        totalRequired += subjectExpectedEntries;
+        totalCompleted += subjectCompletedEntries;
       }
       
       const missingCount = totalRequired - totalCompleted;
@@ -398,7 +427,6 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
         ? Math.round((totalCompleted / totalRequired) * 100)
         : 100;
       
-      // Determine status based on completion percentage
       let status: 'complete' | 'on-track' | 'behind' | 'critical';
       if (completionPercentage === 100) {
         status = 'complete';
@@ -421,20 +449,19 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
         status,
         missingEntries: allMissingEntries,
         classProgress: Array.from(classProgressMap.values()),
+        formTeacherClasses: Array.from(teacher.formTeacherClasses),
+        teachingAssignments: teacher.teachingAssignments,
       });
     }
     
-    // Sort by completion percentage (worst first for admins)
     return results.sort((a, b) => a.completionPercentage - b.completionPercentage);
   }, [isLoading, allTeacherAssignmentsMap, activeExamTypes, configs, term, teacherId, getCompletionStatus]);
   
-  // Get single teacher data (for teacher view)
   const myProgress = useMemo(() => {
     if (!teacherId) return null;
     return teacherProgress.find(t => t.teacherId === teacherId) || null;
   }, [teacherProgress, teacherId]);
   
-  // Summary statistics for admin
   const summary = useMemo(() => {
     const totalTeachers = teacherProgress.length;
     const totalMissingEntries = teacherProgress.reduce((sum, t) => sum + t.missingCount, 0);
@@ -462,7 +489,6 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
     };
   }, [teacherProgress]);
   
-  // Get missing entries by exam type
   const missingByExamType = useMemo(() => {
     const map: Record<ExamType, MissingEntry[]> = {
       week4: [],
@@ -481,6 +507,12 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
     return map;
   }, [teacherProgress, activeExamTypes]);
   
+  const isOnlyFormTeacher = useCallback((teacherIdToCheck: string): boolean => {
+    const teacherData = allTeacherAssignmentsMap.get(teacherIdToCheck);
+    if (!teacherData) return false;
+    return teacherData.teachingAssignments.length === 0 && teacherData.formTeacherClasses.size > 0;
+  }, [allTeacherAssignmentsMap]);
+  
   return {
     teacherProgress,
     myProgress,
@@ -488,6 +520,7 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
     summary,
     missingByExamType,
     isLoading,
+    isOnlyFormTeacher,
     getExamName: (examType: ExamType) => EXAM_NAMES[examType],
     refetch: () => {
       setIsLoadingCompletions(true);

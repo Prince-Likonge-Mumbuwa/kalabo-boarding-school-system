@@ -195,9 +195,6 @@ export default function Landing() {
                 <div className="flex items-center gap-6 pt-4 animate-fadeIn animation-delay-400">
                   <div className="flex items-center gap-2">
                     <div className="flex -space-x-2">
-                      <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center text-xs font-bold text-blue-600">👩</div>
-                      <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center text-xs font-bold text-blue-600">👨</div>
-                      <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center text-xs font-bold text-blue-600">👩</div>
                     </div>
                   </div>
                 </div>

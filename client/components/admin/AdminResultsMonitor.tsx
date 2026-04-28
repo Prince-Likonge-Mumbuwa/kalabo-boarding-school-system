@@ -22,7 +22,7 @@ type FilterBy = 'all' | 'complete' | 'on-track' | 'behind' | 'critical';
 const StatCard = ({ title, value, description, icon, color, trend }: any) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
   
-  const colorClasses = {
+  const colorClasses: Record<string, string> = {
     blue: 'bg-blue-50 border-blue-200 text-blue-700',
     red: 'bg-red-50 border-red-200 text-red-700',
     amber: 'bg-amber-50 border-amber-200 text-amber-700',
@@ -30,6 +30,7 @@ const StatCard = ({ title, value, description, icon, color, trend }: any) => {
     gray: 'bg-gray-50 border-gray-200 text-gray-700',
     green: 'bg-green-50 border-green-200 text-green-700',
     purple: 'bg-purple-50 border-purple-200 text-purple-700',
+    emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700',
   };
   
   return (
@@ -83,6 +84,14 @@ const SubjectProgressRow = ({ subject, selectedExamType }: any) => {
     return <XCircle size={isMobile ? 12 : 14} className="text-red-500" />;
   };
   
+  const getBarColor = (percentage: number) => {
+    if (percentage === 100) return 'bg-green-500';
+    if (percentage >= 75) return 'bg-blue-500';
+    if (percentage >= 50) return 'bg-amber-500';
+    if (percentage >= 25) return 'bg-orange-500';
+    return 'bg-red-500';
+  };
+  
   return (
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between py-2 border-b border-gray-100 last:border-0 gap-2">
       <div className="flex-1">
@@ -91,24 +100,34 @@ const SubjectProgressRow = ({ subject, selectedExamType }: any) => {
           <p className="text-xs text-gray-400">{subject.totalStudents} students</p>
         )}
       </div>
-      <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4">
-        <div className="flex items-center gap-2 sm:gap-4">
+      <div className="flex flex-wrap items-center justify-between sm:justify-end gap-3 sm:gap-4">
+        {/* Per-exam status with student counts */}
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           {examTypes.map(exam => shouldShowExam(exam.key) && (
-            <div key={exam.key} className="flex items-center gap-1" title={`${exam.name}: ${subject[`${exam.key}Complete`] ? 'Complete' : 'Missing'}`}>
+            <div key={exam.key} className="flex items-center gap-1" title={`${exam.name}: ${subject[`${exam.key}StudentCount`]}/${subject.totalStudents} students`}>
               {getExamIcon(subject[`${exam.key}Complete`])}
               <span className="text-xs text-gray-500">{exam.label}</span>
-              {subject[`${exam.key}StudentCount`] > 0 && !isMobile && (
-                <span className="text-xs text-gray-400 ml-0.5">
+              {subject[`${exam.key}StudentCount`] > 0 && (
+                <span className="text-xs text-gray-400">
                   ({subject[`${exam.key}StudentCount`]}/{subject.totalStudents})
                 </span>
               )}
             </div>
           ))}
         </div>
-        <div className="w-12 text-right">
-          <span className={`text-xs font-medium ${
+        {/* Subject progress bar */}
+        <div className="flex items-center gap-2 min-w-[100px]">
+          <div className="w-16 sm:w-20 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div 
+              className={`h-full rounded-full ${getBarColor(subject.completionPercentage)} transition-all duration-300`}
+              style={{ width: `${subject.completionPercentage}%` }}
+            />
+          </div>
+          <span className={`text-xs font-medium min-w-[40px] text-right ${
             subject.completionPercentage === 100 ? 'text-green-600' :
-            subject.completionPercentage >= 75 ? 'text-amber-600' : 'text-red-600'
+            subject.completionPercentage >= 75 ? 'text-blue-600' :
+            subject.completionPercentage >= 50 ? 'text-amber-600' :
+            subject.completionPercentage >= 25 ? 'text-orange-600' : 'text-red-600'
           }`}>
             {subject.completionPercentage}%
           </span>
@@ -128,23 +147,26 @@ const ClassProgressCard = ({ classProgress, selectedExamType }: any) => {
   
   const getClassStatusColor = (percentage: number) => {
     if (percentage === 100) return 'border-green-200 bg-green-50';
-    if (percentage >= 75) return 'border-amber-200 bg-amber-50';
-    if (percentage >= 50) return 'border-red-200 bg-red-50';
-    return 'border-red-300 bg-red-100';
+    if (percentage >= 75) return 'border-blue-200 bg-blue-50';
+    if (percentage >= 50) return 'border-amber-200 bg-amber-50';
+    if (percentage >= 25) return 'border-orange-200 bg-orange-50';
+    return 'border-red-200 bg-red-50';
   };
   
   const getClassStatusText = (percentage: number) => {
     if (percentage === 100) return 'text-green-700';
-    if (percentage >= 75) return 'text-amber-700';
-    if (percentage >= 50) return 'text-red-700';
+    if (percentage >= 75) return 'text-blue-700';
+    if (percentage >= 50) return 'text-amber-700';
+    if (percentage >= 25) return 'text-orange-700';
     return 'text-red-800';
   };
   
   const getBarColor = (percentage: number) => {
     if (percentage === 100) return 'bg-green-500';
-    if (percentage >= 75) return 'bg-amber-500';
-    if (percentage >= 50) return 'bg-red-500';
-    return 'bg-red-700';
+    if (percentage >= 75) return 'bg-blue-500';
+    if (percentage >= 50) return 'bg-amber-500';
+    if (percentage >= 25) return 'bg-orange-500';
+    return 'bg-red-500';
   };
   
   return (
@@ -167,7 +189,7 @@ const ClassProgressCard = ({ classProgress, selectedExamType }: any) => {
           <div className="w-16 sm:w-24">
             <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
               <div 
-                className={`h-full rounded-full ${getBarColor(classProgress.completionPercentage)}`}
+                className={`h-full rounded-full ${getBarColor(classProgress.completionPercentage)} transition-all duration-300`}
                 style={{ width: `${classProgress.completionPercentage}%` }}
               />
             </div>
@@ -215,29 +237,29 @@ const TeacherRow = ({ teacher, isExpanded, onToggle, selectedExamType, onSendRem
         };
       case 'on-track':
         return {
+          bg: 'bg-blue-100',
+          text: 'text-blue-700',
+          border: 'border-blue-200',
+          barColor: 'bg-blue-500',
+          icon: <TrendingUp size={12} className="text-blue-600" />,
+          label: 'On Track'
+        };
+      case 'behind':
+        return {
           bg: 'bg-amber-100',
           text: 'text-amber-700',
           border: 'border-amber-200',
           barColor: 'bg-amber-500',
           icon: <AlertTriangle size={12} className="text-amber-600" />,
-          label: 'On Track'
+          label: 'Behind'
         };
-      case 'behind':
+      case 'critical':
         return {
           bg: 'bg-red-100',
           text: 'text-red-700',
           border: 'border-red-200',
           barColor: 'bg-red-500',
           icon: <AlertCircle size={12} className="text-red-600" />,
-          label: 'Behind'
-        };
-      case 'critical':
-        return {
-          bg: 'bg-red-200',
-          text: 'text-red-800',
-          border: 'border-red-300',
-          barColor: 'bg-red-700',
-          icon: <AlertCircle size={12} className="text-red-700" />,
           label: 'Critical'
         };
       default:
@@ -254,12 +276,20 @@ const TeacherRow = ({ teacher, isExpanded, onToggle, selectedExamType, onSendRem
   
   const statusConfig = getStatusConfig(teacher.status);
   
+  const getBarColor = (percentage: number) => {
+    if (percentage === 100) return 'bg-green-500';
+    if (percentage >= 75) return 'bg-blue-500';
+    if (percentage >= 50) return 'bg-amber-500';
+    if (percentage >= 25) return 'bg-orange-500';
+    return 'bg-red-500';
+  };
+  
   return (
     <>
-      <tr className="hover:bg-gray-50 cursor-pointer" onClick={onToggle}>
+      <tr className="hover:bg-gray-50 cursor-pointer transition-colors" onClick={onToggle}>
         <td className="px-3 sm:px-4 py-3">
           <div className="flex items-center gap-2">
-            {!isMobile && (isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
+            {!isMobile && (isExpanded ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />)}
             <div className="min-w-0">
               <p className="font-medium text-gray-900 text-sm sm:text-base truncate">{teacher.teacherName}</p>
               <p className="text-xs text-gray-500">
@@ -271,13 +301,13 @@ const TeacherRow = ({ teacher, isExpanded, onToggle, selectedExamType, onSendRem
               )}
             </div>
           </div>
-        </td>
+         </td>
         <td className="px-3 sm:px-4 py-3">
           <div className="flex items-center justify-center">
             <div className="w-12 sm:w-16">
               <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div 
-                  className={`h-full rounded-full transition-all ${statusConfig.barColor}`}
+                  className={`h-full rounded-full transition-all duration-300 ${getBarColor(teacher.completionPercentage)}`}
                   style={{ width: `${teacher.completionPercentage}%` }}
                 />
               </div>
@@ -286,14 +316,14 @@ const TeacherRow = ({ teacher, isExpanded, onToggle, selectedExamType, onSendRem
               </p>
             </div>
           </div>
-        </td>
+         </td>
         {!isMobile && (
           <>
-            <td className="px-4 py-3 text-center text-green-600 font-medium">
-              {teacher.completedCount}
+            <td className="px-4 py-3 text-center">
+              <span className="text-green-600 font-medium">{teacher.completedCount}</span>
             </td>
-            <td className="px-4 py-3 text-center text-red-600 font-medium">
-              {teacher.missingCount}
+            <td className="px-4 py-3 text-center">
+              <span className="text-red-600 font-medium">{teacher.missingCount}</span>
             </td>
           </>
         )}
@@ -305,7 +335,7 @@ const TeacherRow = ({ teacher, isExpanded, onToggle, selectedExamType, onSendRem
               {isMobile && teacher.completionPercentage + '%'}
             </span>
           </div>
-        </td>
+         </td>
         <td className="px-3 sm:px-4 py-3 text-right">
           <button
             onClick={(e) => {
@@ -317,13 +347,13 @@ const TeacherRow = ({ teacher, isExpanded, onToggle, selectedExamType, onSendRem
           >
             <Send size={16} />
           </button>
-        </td>
-      </tr>
+         </td>
+       </tr>
       
       {/* Expanded details */}
       {isExpanded && (
-        <tr>
-          <td colSpan={isMobile ? 3 : 6} className="px-3 sm:px-4 py-4 bg-gray-50">
+        <tr className="bg-gray-50">
+          <td colSpan={isMobile ? 5 : 6} className="px-3 sm:px-4 py-4">
             <div className="space-y-3 sm:space-y-4">
               {/* Info banner */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 sm:p-3">
@@ -334,6 +364,26 @@ const TeacherRow = ({ teacher, isExpanded, onToggle, selectedExamType, onSendRem
                   </p>
                 </div>
               </div>
+              
+              {/* Missing entries summary */}
+              {filteredMissing.length > 0 && (
+                <div className="bg-white rounded-lg border border-red-100 p-3">
+                  <p className="text-sm font-medium text-red-700 mb-2">
+                    Missing Entries ({filteredMissing.length})
+                  </p>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {filteredMissing.slice(0, 5).map((entry: any, idx: number) => (
+                      <div key={idx} className="text-xs text-gray-600 flex justify-between">
+                        <span>{entry.className} - {entry.subjectName}</span>
+                        <span className="text-red-500">{entry.examName}</span>
+                      </div>
+                    ))}
+                    {filteredMissing.length > 5 && (
+                      <p className="text-xs text-gray-400">+{filteredMissing.length - 5} more</p>
+                    )}
+                  </div>
+                </div>
+              )}
               
               {/* Class Progress Cards */}
               {teacher.classProgress && teacher.classProgress.length > 0 ? (
@@ -352,8 +402,8 @@ const TeacherRow = ({ teacher, isExpanded, onToggle, selectedExamType, onSendRem
                 </p>
               )}
             </div>
-          </td>
-        </tr>
+           </td>
+         </tr>
       )}
     </>
   );
@@ -481,8 +531,8 @@ export const AdminResultsMonitor = ({ term, year }: AdminResultsMonitorProps) =>
           title="On Track"
           value={summary.teachersOnTrack}
           description="75%+ complete"
-          icon={<AlertTriangle size={isMobile ? 16 : 20} />}
-          color="amber"
+          icon={<TrendingUp size={isMobile ? 16 : 20} />}
+          color="green"
         />
         {!isMobile && (
           <StatCard
@@ -621,7 +671,7 @@ export const AdminResultsMonitor = ({ term, year }: AdminResultsMonitorProps) =>
       {/* Teachers Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[500px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="text-left px-3 sm:px-4 py-3 text-xs sm:text-sm font-medium text-gray-600">Teacher</th>
