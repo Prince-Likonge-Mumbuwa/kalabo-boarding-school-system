@@ -1,5 +1,6 @@
 // @/pages/teacher/ResultsEntry.tsx - COMPLETE FIXED VERSION
 // Fixed: PDF generation and subject-specific completion for same teacher two subjects
+// Fixed: Progress bar now reflects total entries entered vs total expected
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -380,28 +381,39 @@ const SubjectProgress = ({
     enteredStudents: { week4: 0, week8: 0, endOfTerm: 0 }
   };
   
+  // Calculate total entries entered vs total expected ACROSS ALL EXAMS
+  let totalEnteredEntries = 0;
+  let totalExpectedEntries = 0;
+  
   const examTypes = availableExamTypes.map(type => {
-    const isComplete = safeCompletion[`${type.id}Complete` as keyof ExtendedSubjectCompletion] as boolean || false;
-    const count = safeCompletion.enteredStudents?.[type.id as keyof typeof safeCompletion.enteredStudents] || 0;
+    const enteredCount = safeCompletion.enteredStudents?.[type.id as keyof typeof safeCompletion.enteredStudents] || 0;
+    const totalStudents = safeCompletion.totalStudents || 0;
     const totalMarks = getTotalMarksForExamType(examConfig, type.id);
+    
+    // Add to totals
+    totalEnteredEntries += enteredCount;
+    totalExpectedEntries += totalStudents;
+    
+    // Consider exam "complete" if ALL students have marks (100%)
+    const isComplete = enteredCount === totalStudents && totalStudents > 0;
     
     return {
       id: type.id,
       label: type.shortLabel,
       fullLabel: type.label,
       isComplete,
-      count,
+      count: enteredCount,
       totalMarks,
-      totalStudents: safeCompletion.totalStudents || 0
+      totalStudents
     };
   });
 
-  const totalConfiguredExams = examTypes.length;
-  const completedExams = examTypes.filter(exam => exam.isComplete).length;
-  const progressPercentage = totalConfiguredExams > 0 
-    ? Math.round((completedExams / totalConfiguredExams) * 100) 
+  // Calculate overall progress percentage based on TOTAL ENTRIES
+  const overallProgressPercentage = totalExpectedEntries > 0
+    ? Math.round((totalEnteredEntries / totalExpectedEntries) * 100)
     : 0;
 
+  const completedExams = examTypes.filter(exam => exam.isComplete).length;
   const gridCols = examTypes.length === 3 ? 'grid-cols-3' : examTypes.length === 2 ? 'grid-cols-2' : 'grid-cols-1';
 
   return (
@@ -417,16 +429,39 @@ const SubjectProgress = ({
             </span>
           )}
         </div>
-        <span className="text-xs text-gray-500">{progressPercentage}% complete ({completedExams}/{totalConfiguredExams} exams)</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">
+            {totalEnteredEntries}/{totalExpectedEntries} entries
+          </span>
+          <span className="text-xs font-medium text-gray-700">
+            {overallProgressPercentage}% complete
+          </span>
+        </div>
       </div>
       
+      {/* PROGRESS BAR - Based on total entries entered vs total expected */}
       <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-4">
-        <div className="h-full bg-blue-500 rounded-full transition-all duration-500" style={{ width: `${progressPercentage}%` }} />
+        <div 
+          className="h-full bg-blue-500 rounded-full transition-all duration-500"
+          style={{ width: `${overallProgressPercentage}%` }}
+        />
+      </div>
+      
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs text-gray-500">
+          {completedExams}/{examTypes.length} exams complete
+        </span>
+        <span className="text-xs text-gray-400">
+          (100% = all students have marks)
+        </span>
       </div>
       
       <div className={`grid ${gridCols} gap-1.5 sm:gap-2`}>
         {examTypes.map((exam) => {
           const isSelected = selectedExamType === exam.id;
+          const examProgressPercentage = exam.totalStudents > 0 
+            ? Math.round((exam.count / exam.totalStudents) * 100)
+            : 0;
           
           return (
             <button
@@ -447,8 +482,23 @@ const SubjectProgress = ({
                 {exam.isComplete && !isSelected && <CheckCircle size={10} className="text-green-500 flex-shrink-0" />}
                 {exam.isComplete && isSelected && <CheckCircle size={10} className="text-white flex-shrink-0" />}
               </div>
-              <span className={`text-[10px] ${isSelected ? 'text-blue-100' : 'text-gray-500'}`}>{exam.count}/{exam.totalStudents}</span>
-              <span className={`text-[8px] mt-0.5 ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>{exam.totalMarks} marks</span>
+              
+              {/* Mini progress bar for each exam */}
+              <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden my-0.5">
+                <div 
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    examProgressPercentage === 100 ? 'bg-green-500' : 'bg-blue-500'
+                  }`}
+                  style={{ width: `${examProgressPercentage}%` }}
+                />
+              </div>
+              
+              <span className={`text-[10px] ${isSelected ? 'text-blue-100' : 'text-gray-500'}`}>
+                {exam.count}/{exam.totalStudents}
+              </span>
+              <span className={`text-[8px] mt-0.5 ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>
+                {exam.totalMarks} marks • {examProgressPercentage}%
+              </span>
               {isSelected && <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-6 h-1 bg-white rounded-full opacity-60" />}
             </button>
           );

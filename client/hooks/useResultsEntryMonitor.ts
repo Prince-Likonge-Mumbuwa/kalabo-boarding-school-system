@@ -16,8 +16,8 @@ export interface MissingEntry {
   examName: string;
   totalMarks?: number;
   configuredDate?: string;
-  missingStudentCount: number; // NEW: Track how many students missing marks
-  totalStudentCount: number;   // NEW: Track total students
+  missingStudentCount: number;
+  totalStudentCount: number;
 }
 
 export interface SubjectProgress {
@@ -30,11 +30,10 @@ export interface SubjectProgress {
   week8StudentCount: number;
   endOfTermStudentCount: number;
   totalStudents: number;
-  completionPercentage: number; // Now calculated based on actual marks entered
+  completionPercentage: number;
   expectedExams: ExamType[];
   completedExams: ExamType[];
   missingExams: ExamType[];
-  // NEW: Detailed per-exam progress
   examProgress: {
     examType: ExamType;
     enteredCount: number;
@@ -46,9 +45,9 @@ export interface SubjectProgress {
 export interface ClassProgress {
   classId: string;
   className: string;
-  totalRequired: number;  // Total possible marks entries (students × expected exams)
-  completedCount: number; // Total marks entries actually entered
-  missingCount: number;   // Total marks entries missing
+  totalRequired: number;
+  completedCount: number;
+  missingCount: number;
   completionPercentage: number;
   subjects: SubjectProgress[];
 }
@@ -57,9 +56,9 @@ export interface TeacherProgress {
   teacherId: string;
   teacherName: string;
   teacherEmail?: string;
-  missingCount: number;      // Total marks entries missing
-  totalRequired: number;     // Total possible marks entries (students × expected exams across all classes)
-  completedCount: number;    // Total marks entries actually entered
+  missingCount: number;
+  totalRequired: number;
+  completedCount: number;
   completionPercentage: number;
   status: 'complete' | 'on-track' | 'behind' | 'critical';
   missingEntries: MissingEntry[];
@@ -81,6 +80,28 @@ const EXAM_NAMES: Record<ExamType, string> = {
 };
 
 const EXAM_ORDER: ExamType[] = ['week4', 'week8', 'endOfTerm'];
+
+// NEW: Threshold for considering completion as "complete" (96-100%)
+const COMPLETE_THRESHOLD = 96;
+
+// Helper function to determine status based on completion percentage
+const getStatusFromPercentage = (percentage: number): 'complete' | 'on-track' | 'behind' | 'critical' => {
+  // Anyone between 96% and 100% is considered COMPLETE
+  if (percentage >= COMPLETE_THRESHOLD) {
+    return 'complete';
+  } else if (percentage >= 75) {
+    return 'on-track';
+  } else if (percentage >= 50) {
+    return 'behind';
+  } else {
+    return 'critical';
+  }
+};
+
+// Helper function to determine if an exam is "complete" (96-100% of students have marks)
+const isExamComplete = (percentage: number): boolean => {
+  return percentage >= COMPLETE_THRESHOLD;
+};
 
 export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) => {
   const { term, year, teacherId } = options;
@@ -278,8 +299,8 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
       
       const classProgressMap = new Map<string, ClassProgress>();
       const allMissingEntries: MissingEntry[] = [];
-      let totalRequired = 0;   // Total possible marks entries
-      let totalCompleted = 0;  // Total marks entries actually entered
+      let totalRequired = 0;
+      let totalCompleted = 0;
       
       for (const assignment of teacher.teachingAssignments) {
         const completion = getCompletionStatus(assignment.classId, assignment.subjectId);
@@ -315,7 +336,6 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
         }
         
         // Calculate subject completion based on TOTAL MARKS ENTRIES
-        // Each student × each expected exam = 1 marks entry
         const subjectExpectedEntries = totalStudents * activeExamTypes.length;
         const subjectCompletedEntries = examProgress.reduce((sum, exam) => sum + exam.enteredCount, 0);
         const subjectMissingEntries = subjectExpectedEntries - subjectCompletedEntries;
@@ -323,10 +343,10 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
           ? Math.round((subjectCompletedEntries / subjectExpectedEntries) * 100)
           : 100;
         
-        // Determine which exams are "complete" (100% of students have marks)
-        const week4Complete = examProgress.find(e => e.examType === 'week4')?.percentage === 100;
-        const week8Complete = examProgress.find(e => e.examType === 'week8')?.percentage === 100;
-        const endOfTermComplete = examProgress.find(e => e.examType === 'endOfTerm')?.percentage === 100;
+        // UPDATED: Determine which exams are "complete" using the 96% threshold
+        const week4Complete = isExamComplete(examProgress.find(e => e.examType === 'week4')?.percentage || 0);
+        const week8Complete = isExamComplete(examProgress.find(e => e.examType === 'week8')?.percentage || 0);
+        const endOfTermComplete = isExamComplete(examProgress.find(e => e.examType === 'endOfTerm')?.percentage || 0);
         
         const week4StudentCount = examProgress.find(e => e.examType === 'week4')?.enteredCount || 0;
         const week8StudentCount = examProgress.find(e => e.examType === 'week8')?.enteredCount || 0;
@@ -427,16 +447,8 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
         ? Math.round((totalCompleted / totalRequired) * 100)
         : 100;
       
-      let status: 'complete' | 'on-track' | 'behind' | 'critical';
-      if (completionPercentage === 100) {
-        status = 'complete';
-      } else if (completionPercentage >= 75) {
-        status = 'on-track';
-      } else if (completionPercentage >= 50) {
-        status = 'behind';
-      } else {
-        status = 'critical';
-      }
+      // UPDATED: Use the new status determination function with 96% threshold
+      const status = getStatusFromPercentage(completionPercentage);
       
       results.push({
         teacherId: teacher.teacherId,
@@ -467,10 +479,11 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions) =
     const totalMissingEntries = teacherProgress.reduce((sum, t) => sum + t.missingCount, 0);
     const totalRequiredEntries = teacherProgress.reduce((sum, t) => sum + t.totalRequired, 0);
     
-    const teachersComplete = teacherProgress.filter(t => t.status === 'complete').length;
-    const teachersOnTrack = teacherProgress.filter(t => t.status === 'on-track').length;
-    const teachersBehind = teacherProgress.filter(t => t.status === 'behind').length;
-    const teachersCritical = teacherProgress.filter(t => t.status === 'critical').length;
+    // UPDATED: Teachers with 96%+ are now counted as complete
+    const teachersComplete = teacherProgress.filter(t => t.completionPercentage >= COMPLETE_THRESHOLD).length;
+    const teachersOnTrack = teacherProgress.filter(t => t.completionPercentage >= 75 && t.completionPercentage < COMPLETE_THRESHOLD).length;
+    const teachersBehind = teacherProgress.filter(t => t.completionPercentage >= 50 && t.completionPercentage < 75).length;
+    const teachersCritical = teacherProgress.filter(t => t.completionPercentage < 50).length;
     
     const overallCompletion = totalRequiredEntries > 0
       ? Math.round(((totalRequiredEntries - totalMissingEntries) / totalRequiredEntries) * 100)
