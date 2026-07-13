@@ -1,4 +1,4 @@
-// @/pages/admin/ReportCards.tsx - FULLY FIXED WITHOUT SMS
+// @/pages/admin/ReportCards.tsx - FULLY UPDATED WITH SMS FUNCTIONALITY
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -29,10 +29,14 @@ import {
   Calendar,
   Trash2,
   FileSpreadsheet,
+  MessageCircle,
+  Send,
 } from 'lucide-react';
 
 // Import ConfirmationModal
 import { ConfirmationModal } from '@/components/ConfirmationModal';
+// Import SMS Service
+import { smsService } from '@/services/smsService';
 
 // ==================== LOCAL TYPES ====================
 interface SubjectProgress {
@@ -231,14 +235,22 @@ const CardSkeleton = () => (
   </div>
 );
 
-// ==================== STUDENT CARD COMPONENT ====================
+// ==================== STUDENT CARD COMPONENT WITH SMS ====================
 interface StudentCardProps {
   student: StudentProgress;
   onClick: () => void;
+  onSendSMS: (studentId: string, studentName: string) => void;
+  isSendingSMS: boolean;
+  smsResult: 'success' | 'error' | null;
 }
 
-const StudentCard = ({ student, onClick }: StudentCardProps) => {
+const StudentCard = ({ student, onClick, onSendSMS, isSendingSMS, smsResult }: StudentCardProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
+
+  const handleSMSClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onSendSMS(student.studentId, student.studentName);
+  };
 
   return (
     <button
@@ -255,8 +267,34 @@ const StudentCard = ({ student, onClick }: StudentCardProps) => {
             <p className="text-xs text-gray-500 truncate">{student.studentId}</p>
           </div>
         </div>
-        <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm ${getGradeColor(student.overallGrade)} flex-shrink-0`}>
-          {student.overallGrade > 0 ? getGradeDisplay(student.overallGrade) : '—'}
+        <div className="flex items-center gap-1">
+          {/* SMS Button */}
+          <button
+            onClick={handleSMSClick}
+            disabled={isSendingSMS}
+            className={`p-1.5 rounded-lg transition-all ${
+              smsResult === 'success' 
+                ? 'bg-green-100 text-green-600' 
+                : smsResult === 'error'
+                ? 'bg-red-100 text-red-600'
+                : 'text-gray-400 hover:text-green-600 hover:bg-green-50'
+            }`}
+            title="Send results via SMS"
+          >
+            {isSendingSMS ? (
+              <Loader2 size={isMobile ? 14 : 16} className="animate-spin" />
+            ) : smsResult === 'success' ? (
+              <CheckCircle size={isMobile ? 14 : 16} />
+            ) : smsResult === 'error' ? (
+              <XCircle size={isMobile ? 14 : 16} />
+            ) : (
+              <MessageCircle size={isMobile ? 14 : 16} />
+            )}
+          </button>
+          
+          <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm ${getGradeColor(student.overallGrade)} flex-shrink-0`}>
+            {student.overallGrade > 0 ? getGradeDisplay(student.overallGrade) : '—'}
+          </div>
         </div>
       </div>
       
@@ -828,7 +866,9 @@ const FilterBar = ({
   summary,
   isTeacher,
   isMobile,
-  configuredExamTypes
+  configuredExamTypes,
+  onBulkSend,
+  isBulkSending
 }: {
   selectedClass: string;
   setSelectedClass: (value: string) => void;
@@ -845,6 +885,8 @@ const FilterBar = ({
   isTeacher: boolean;
   isMobile: boolean;
   configuredExamTypes?: string[];
+  onBulkSend?: () => void;
+  isBulkSending?: boolean;
 }) => {
   const [showFilters, setShowFilters] = useState(false);
 
@@ -911,6 +953,25 @@ const FilterBar = ({
               <option key={year} value={year}>{year}</option>
             ))}
           </select>
+
+          {/* Bulk SMS Button */}
+          {onBulkSend && configuredExamTypes && configuredExamTypes.length > 0 && (
+            <button
+              onClick={onBulkSend}
+              disabled={isBulkSending}
+              className="flex items-center gap-1 sm:gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 text-xs sm:text-sm"
+              title="Send results to all guardians in this class"
+            >
+              {isBulkSending ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Send size={16} />
+              )}
+              <span className="hidden sm:inline">
+                {isBulkSending ? 'Sending...' : 'Bulk SMS'}
+              </span>
+            </button>
+          )}
         </div>
         
         {/* Exam Config Summary */}
@@ -965,6 +1026,11 @@ export default function ReportCards() {
   const [isDownloadingAll, setIsDownloadingAll] = useState(false);
   const [isDownloadingMatrix, setIsDownloadingMatrix] = useState(false);
   const [isDeletingReport, setIsDeletingReport] = useState(false);
+  
+  // SMS States
+  const [sendingSMS, setSendingSMS] = useState<string | null>(null);
+  const [smsResult, setSmsResult] = useState<{ [key: string]: 'success' | 'error' | null }>({});
+  const [isBulkSending, setIsBulkSending] = useState(false);
   
   // Get exam configuration for the selected term and year
   const { 
@@ -1021,6 +1087,87 @@ export default function ReportCards() {
       }
     }
   }, [classes, user, assignments, selectedClass]);
+
+  // ==================== SMS HANDLERS ====================
+  
+  const handleSendSMS = async (studentId: string, studentName: string) => {
+    if (!selectedTerm || !selectedYear) {
+      alert('Please select a term and year first');
+      return;
+    }
+    
+    setSendingSMS(studentId);
+    try {
+      const result = await smsService.sendStudentResults(studentId, selectedTerm, selectedYear);
+      
+      if (result.success) {
+        setSmsResult(prev => ({ ...prev, [studentId]: 'success' }));
+        alert(`✅ Results sent successfully to ${studentName}'s guardian!\n\n${result.preview || 'Message sent'}`);
+        
+        // Clear success indicator after 3 seconds
+        setTimeout(() => {
+          setSmsResult(prev => ({ ...prev, [studentId]: null }));
+        }, 3000);
+      } else {
+        throw new Error('Send failed');
+      }
+    } catch (error: any) {
+      setSmsResult(prev => ({ ...prev, [studentId]: 'error' }));
+      alert(`❌ Failed to send: ${error.message || 'Unknown error'}`);
+      
+      setTimeout(() => {
+        setSmsResult(prev => ({ ...prev, [studentId]: null }));
+      }, 3000);
+    } finally {
+      setSendingSMS(null);
+    }
+  };
+
+  const handleBulkSend = async () => {
+    if (!selectedClass || !selectedTerm || !selectedYear) {
+      alert('Please select a class, term, and year first');
+      return;
+    }
+    
+    if (configuredExamTypes.length === 0) {
+      alert('No exams configured for this term. Please configure exams first.');
+      return;
+    }
+    
+    const studentCount = filteredStudents.length;
+    if (!confirm(`Send results via SMS to ALL ${studentCount} guardians in this class?\n\nThis may take a few moments.`)) {
+      return;
+    }
+    
+    setIsBulkSending(true);
+    try {
+      const result = await smsService.bulkSendClass(selectedClass, selectedTerm, selectedYear);
+      
+      let message = `✅ Bulk send complete!\n\n`;
+      message += `Sent: ${result.sent}\n`;
+      message += `Failed: ${result.failed}\n`;
+      message += `Total: ${result.total}\n`;
+      
+      if (result.failedList && result.failedList.length > 0) {
+        message += `\nFailed students:\n`;
+        result.failedList.slice(0, 5).forEach(f => {
+          message += `- ${f.studentId}: ${f.reason}\n`;
+        });
+        if (result.failedList.length > 5) {
+          message += `... and ${result.failedList.length - 5} more\n`;
+        }
+      }
+      
+      alert(message);
+      
+      // Refresh to show logs
+      refetch();
+    } catch (error: any) {
+      alert(`❌ Bulk send failed: ${error.message}`);
+    } finally {
+      setIsBulkSending(false);
+    }
+  };
 
   // ==================== TRANSFORMATION WITH EXAM CONFIG ====================
   const transformedStudents = useMemo((): StudentProgress[] => {
@@ -1606,6 +1753,8 @@ export default function ReportCards() {
                 isTeacher={user?.userType === 'teacher'}
                 isMobile={isMobile}
                 configuredExamTypes={configuredExamTypes}
+                onBulkSend={handleBulkSend}
+                isBulkSending={isBulkSending}
               />
 
               {filteredStudents.length > 0 ? (
@@ -1615,6 +1764,9 @@ export default function ReportCards() {
                       key={student.studentId}
                       student={student}
                       onClick={() => handleViewReport(student.studentId)}
+                      onSendSMS={handleSendSMS}
+                      isSendingSMS={sendingSMS === student.studentId}
+                      smsResult={smsResult[student.studentId] || null}
                     />
                   ))}
                 </div>

@@ -1,8 +1,4 @@
-// @/pages/admin/AdminResultsAnalysis.tsx - UPDATED WITH LOGO SUPPORT
-// Quality: Grades 1-2 only (Distinction)
-// Quantity: Grades 3-7 (Merit through Satisfactory)
-// Fail: Grades 8-9 (Satisfactory Low and Unsatisfactory)
-// Uses AVERAGES of all CONFIGURED exams (week4, week8, endOfTerm) per student per subject
+// @/pages/admin/AdminResultsAnalysis.tsx 
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo, useEffect, useCallback } from 'react';
