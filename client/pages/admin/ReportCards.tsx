@@ -1,6 +1,9 @@
-// @/pages/admin/ReportCards.tsx - UPDATED WITH SMS + TOAST NOTIFICATIONS
+// @/pages/admin/ReportCards.tsx
+// Version 3.0.2 - Per-subject average score now surfaced on report cards
+//                  (mobile card, desktop table, and PDF via ReportCardSubject.average)
+
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useStudentProgress, useResults } from '@/hooks/useResults';
 import { useExamConfig } from '@/hooks/useExamConfig';
@@ -71,6 +74,7 @@ interface ReportCardSubject {
   week4: number;
   week8: number;
   endOfTerm: number;
+  average: number;
   grade: number;
   gradeDescription: string;
 }
@@ -152,7 +156,7 @@ const getGradeColor = (grade: number): string => GRADE_SYSTEM[grade === -1 ? 'X'
 
 const getConfiguredExamTypes = (examConfig: any): string[] => {
   if (!examConfig?.examTypes) return [];
-  const types = [];
+  const types: string[] = [];
   if (examConfig.examTypes.week4) types.push('week4');
   if (examConfig.examTypes.week8) types.push('week8');
   if (examConfig.examTypes.endOfTerm) types.push('endOfTerm');
@@ -166,6 +170,191 @@ const getExamDisplayName = (examType: string): string => {
     case 'endOfTerm': return 'End of Term';
     default: return examType;
   }
+};
+
+// Client-side grade calculation matching the service
+const calculateGrade = (percentage: number): number => {
+  if (percentage < 0) return -1;
+  if (percentage >= 75) return 1;
+  if (percentage >= 70) return 2;
+  if (percentage >= 65) return 3;
+  if (percentage >= 60) return 4;
+  if (percentage >= 55) return 5;
+  if (percentage >= 50) return 6;
+  if (percentage >= 45) return 7;
+  if (percentage >= 40) return 8;
+  return 9;
+};
+
+// ==================== REPORT POST-PROCESSOR ====================
+// The service ignores `configuredExamTypes`. We recompute everything that depends
+// on which exams are actually configured so reports reflect reality.
+interface StudentConfigStats {
+  completionPercentage: number;
+  isComplete: boolean;
+  missingSubjects: number;
+  totalSubjects: number;
+  overallPercentage: number;
+  overallGrade: number;
+  status: 'pass' | 'fail' | 'pending';
+}
+
+// The service's `subjectProgress` field always divides by 3 (week4 + week8 +
+// endOfTerm), regardless of which exams are actually configured for the term.
+// A school running only "endOfTerm" would see every subject stuck at 33% even
+// when it's fully entered. Recompute it here against configuredExamTypes only,
+// the same way computeStudentConfigStats does for the student-level number.
+const computeSubjectProgress = (subject: any, configuredExamTypes: string[]): number => {
+  if (configuredExamTypes.length === 0) return 0;
+  let present = 0;
+  configuredExamTypes.forEach(examType => {
+    const examData = subject[examType];
+    if (examData && examData.status !== 'missing') present++;
+  });
+  return Math.round((present / configuredExamTypes.length) * 100);
+};
+
+const computeStudentConfigStats = (
+  student: any,
+  configuredExamTypes: string[]
+): StudentConfigStats => {
+  const subjects: any[] = Array.isArray(student.subjects) ? student.subjects : [];
+  const totalSubjects = subjects.length;
+
+  if (totalSubjects === 0 || configuredExamTypes.length === 0) {
+    return {
+      completionPercentage: 0,
+      isComplete: false,
+      missingSubjects: totalSubjects,
+      totalSubjects,
+      overallPercentage: 0,
+      overallGrade: -1,
+      status: 'pending',
+    };
+  }
+
+  let completeSubjects = 0;
+  const subjectAverages: number[] = [];
+
+  subjects.forEach(subject => {
+    let allPresent = true;
+    const scores: number[] = [];
+
+    configuredExamTypes.forEach(examType => {
+      const examData = subject[examType];
+      if (!examData || examData.status === 'missing') {
+        allPresent = false;
+        return;
+      }
+      // 'complete', 'absent', 'not_conducted' all count as "present"
+      // Only real positive scores contribute to the average
+      if (typeof examData.marks === 'number' && examData.marks >= 0) {
+        scores.push(examData.marks);
+      }
+    });
+
+    if (allPresent) completeSubjects++;
+
+    if (scores.length > 0) {
+      subjectAverages.push(Math.round(scores.reduce((a, b) => a + b, 0) / scores.length));
+    }
+  });
+
+  const completionPercentage = Math.round((completeSubjects / totalSubjects) * 100);
+  const missingSubjects = totalSubjects - completeSubjects;
+  const isComplete = completeSubjects === totalSubjects;
+
+  const overallPercentage = subjectAverages.length > 0
+    ? Math.round(subjectAverages.reduce((a, b) => a + b, 0) / subjectAverages.length)
+    : 0;
+
+  const overallGrade = overallPercentage > 0 ? calculateGrade(overallPercentage) : -1;
+  const status: 'pass' | 'fail' | 'pending' =
+    overallPercentage >= 50 ? 'pass' : overallPercentage > 0 ? 'fail' : 'pending';
+
+  return {
+    completionPercentage,
+    isComplete,
+    missingSubjects,
+    totalSubjects,
+    overallPercentage,
+    overallGrade,
+    status,
+  };
+};
+
+const processReportForConfig = (
+  rawReport: any,
+  configuredExamTypes: string[],
+  studentStats: StudentConfigStats
+): ReportCardData => {
+  const subjects: ReportCardSubject[] = [];
+  const subjectAverages: number[] = [];
+
+  (rawReport.subjects || []).forEach((s: any) => {
+    const scores: number[] = [];
+
+    configuredExamTypes.forEach(examType => {
+      const marks = s[examType];
+      if (typeof marks === 'number' && marks >= 0) {
+        scores.push(marks);
+      }
+    });
+
+    const subjectAvg = scores.length > 0
+      ? Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length)
+      : -1;
+
+    const grade = subjectAvg >= 0 ? calculateGrade(subjectAvg) : -1;
+
+    if (subjectAvg >= 0) subjectAverages.push(subjectAvg);
+
+    subjects.push({
+      subjectId: s.subjectId,
+      subjectName: s.subjectName,
+      week4: s.week4,
+      week8: s.week8,
+      endOfTerm: s.endOfTerm,
+      average: subjectAvg,
+      grade,
+      gradeDescription: getGradeDescription(grade),
+    });
+  });
+
+  const overallPercentage = subjectAverages.length > 0
+    ? Math.round(subjectAverages.reduce((a, b) => a + b, 0) / subjectAverages.length)
+    : 0;
+
+  const overallGrade = overallPercentage > 0 ? calculateGrade(overallPercentage) : -1;
+
+  return {
+    id: rawReport.id,
+    studentId: rawReport.studentId,
+    studentName: rawReport.studentName,
+    className: rawReport.className,
+    classId: rawReport.classId,
+    form: rawReport.form,
+    grade: overallGrade,
+    position: rawReport.position,
+    gender: rawReport.gender,
+    totalMarks: rawReport.totalMarks,
+    percentage: overallPercentage,
+    status: overallPercentage >= 50 ? 'pass' : 'fail',
+    improvement: rawReport.improvement,
+    subjects,
+    attendance: rawReport.attendance,
+    teachersComment: rawReport.teachersComment,
+    parentsEmail: rawReport.parentsEmail,
+    parentsPhone: rawReport.parentsPhone,
+    generatedDate: rawReport.generatedDate,
+    term: rawReport.term,
+    year: rawReport.year,
+    isComplete: studentStats.isComplete,
+    completionPercentage: studentStats.completionPercentage,
+    examConfigSummary: configuredExamTypes.length
+      ? `Based on: ${configuredExamTypes.map(getExamDisplayName).join(' + ')}`
+      : undefined,
+  };
 };
 
 // ==================== TOAST COMPONENT ====================
@@ -258,7 +447,7 @@ const CardSkeleton = () => (
   </div>
 );
 
-// ==================== STUDENT CARD WITH SMS ====================
+// ==================== STUDENT CARD ====================
 interface StudentCardProps {
   student: StudentProgress;
   onClick: () => void;
@@ -292,7 +481,6 @@ const StudentCard = ({ student, onClick, onSendSMS, isSendingSMS, smsState }: St
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {/* SMS Button */}
           <button
             onClick={handleSMSClick}
             disabled={isSendingSMS}
@@ -406,7 +594,11 @@ const MobileSubjectCard = ({ subject, configuredExamTypes }: { subject: ReportCa
         </div>
       </div>
       <div className="grid grid-cols-3 gap-2">{examColumns}</div>
-      <div className="mt-2 text-center">
+      <div className="mt-2 flex items-center justify-between px-1 pt-2 border-t border-gray-100">
+        <span className="text-[10px] text-gray-500 uppercase tracking-wide">Average</span>
+        <span className="text-sm font-bold text-gray-900">
+          {subject.average >= 0 ? `${subject.average}%` : '—'}
+        </span>
         <span className="text-xs font-medium text-gray-700">{getGradeDescription(subject.grade)}</span>
       </div>
     </div>
@@ -433,7 +625,9 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading, configured
     if (!report) return;
     try {
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
-      const pdfBytes = await generateReportCardPDF(report);
+      // Pass configuredExamTypes through so the PDF's W4/W8/EOT columns match
+      // what's actually configured for this term, instead of always showing all three.
+      const pdfBytes = await generateReportCardPDF(report, configuredExamTypes);
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -574,6 +768,7 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading, configured
                         {configuredExamTypes.includes('week4') && <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300">W4</th>}
                         {configuredExamTypes.includes('week8') && <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300">W8</th>}
                         {configuredExamTypes.includes('endOfTerm') && <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300 bg-blue-50">EOT</th>}
+                        <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300 bg-gray-200">Avg</th>
                         <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700 border border-gray-300">Grade</th>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 border border-gray-300">Description</th>
                       </tr>
@@ -597,6 +792,11 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading, configured
                               {subject.endOfTerm >= 0 ? <span className="font-bold text-blue-700">{subject.endOfTerm}%</span> : subject.endOfTerm === -1 ? <span className="text-gray-500 italic">ABS</span> : subject.endOfTerm === -2 ? <span className="text-gray-400 italic">NC</span> : <span className="text-gray-400">—</span>}
                             </td>
                           )}
+                          <td className="px-3 py-2 text-center text-xs border border-gray-300 bg-gray-50">
+                            {subject.average >= 0
+                              ? <span className="font-bold text-gray-900">{subject.average}%</span>
+                              : <span className="text-gray-400">—</span>}
+                          </td>
                           <td className="px-3 py-2 text-center border border-gray-300">
                             {subject.grade > 0 ? <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${getGradeColor(subject.grade)}`}>{getGradeDisplay(subject.grade)}</span> : subject.grade === -1 ? <span className="text-gray-500 font-medium">X</span> : <span className="text-gray-400">—</span>}
                           </td>
@@ -606,11 +806,11 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading, configured
                     </tbody>
                     <tfoot>
                       <tr className="bg-gray-50">
-                        <td colSpan={configuredExamTypes.length} className="px-3 py-2 text-right text-xs font-semibold text-gray-700 border border-gray-300">Overall Average:</td>
+                        <td colSpan={configuredExamTypes.length + 2} className="px-3 py-2 text-right text-xs font-semibold text-gray-700 border border-gray-300">Overall Average:</td>
                         <td colSpan={2} className="px-3 py-2 text-left text-xs font-bold text-blue-600 border border-gray-300">{report.percentage}%</td>
                       </tr>
                       <tr className="bg-gray-50">
-                        <td colSpan={configuredExamTypes.length} className="px-3 py-2 text-right text-xs font-semibold text-gray-700 border border-gray-300">Overall Grade:</td>
+                        <td colSpan={configuredExamTypes.length + 2} className="px-3 py-2 text-right text-xs font-semibold text-gray-700 border border-gray-300">Overall Grade:</td>
                         <td colSpan={2} className="px-3 py-2 text-left text-xs font-bold border border-gray-300">
                           <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${getGradeColor(report.grade)}`}>{getGradeDisplay(report.grade)}</span>
                           <span className="ml-2 text-gray-700">{getGradeDescription(report.grade)}</span>
@@ -739,34 +939,86 @@ export default function ReportCards() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const addToast = (type: ToastMessage['type'], title: string, message: string) => {
-    const id = Date.now().toString();
+    const id = `${Date.now()}-${Math.random()}`;
     setToasts(prev => [...prev, { id, type, title, message }]);
   };
   const removeToast = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
 
-  const { configs: examConfigs, isLoading: loadingExamConfig } = useExamConfig({ year: selectedYear, term: selectedTerm });
-  const currentExamConfig = examConfigs?.[0];
-  const configuredExamTypes = useMemo(() => getConfiguredExamTypes(currentExamConfig), [currentExamConfig]);
+  // ---------- Exam Config ----------
+  const { configs: examConfigs, isLoading: loadingExamConfig } = useExamConfig({
+    year: selectedYear,
+    term: selectedTerm,
+  });
 
-  const [reportCache, setReportCache] = useState<Map<string, ReportCardData>>(new Map());
-  const [loadingReports, setLoadingReports] = useState<Set<string>>(new Set());
+  // Prefer the active config; fall back to the first one.
+  // HARDENED: Don't just trust that useExamConfig already filtered correctly —
+  // explicitly verify each candidate matches the currently selected term/year
+  // before using it. If the hook ever returns a stale/broader list (e.g. during
+  // a refetch, or a caching quirk), this stops us from silently picking up a
+  // different term's exam configuration and mis-computing every completion
+  // percentage and progress bar downstream.
+  const currentExamConfig = useMemo(() => {
+    if (!examConfigs?.length) return null;
 
-  const studentGenderMap = useMemo(() => {
-    const map = new Map<string, string>();
-    learners.forEach(learner => {
-      if (learner.id) map.set(learner.id, learner.gender || 'Not specified');
-      if (learner.studentId) map.set(learner.studentId, learner.gender || 'Not specified');
-    });
-    return map;
-  }, [learners]);
+    const matchingConfigs = examConfigs.filter(
+      (c: any) => c.term === selectedTerm && c.year === selectedYear
+    );
 
-  const { students = [], summary, isLoading: loadingProgress, isFetching, refetch } = useStudentProgress({
-    classId: selectedClass, term: selectedTerm, year: selectedYear,
+    if (matchingConfigs.length === 0) {
+      console.warn(
+        `⚠️ useExamConfig returned ${examConfigs.length} config(s) but none match ${selectedTerm} ${selectedYear}. ` +
+        `Treating as "no exam config" rather than falling back to a mismatched term/year.`
+      );
+      return null;
+    }
+
+    const active = matchingConfigs.find((c: any) => c.isActive !== false);
+    return active || matchingConfigs[0];
+  }, [examConfigs, selectedTerm, selectedYear]);
+
+  const configuredExamTypes = useMemo(
+    () => getConfiguredExamTypes(currentExamConfig),
+    [currentExamConfig]
+  );
+
+  // ---------- Data Fetch (query keyed by class/term/year so it refetches) ----------
+  const {
+    students = [],
+    summary,
+    isLoading: loadingProgress,
+    isFetching,
+    refetch,
+  } = useStudentProgress({
+    classId: selectedClass,
+    term: selectedTerm,
+    year: selectedYear,
   });
 
   const { generateReportCard, generateClassReportCards } = useResults();
   const debouncedSearch = useDebounce(searchTerm, 300);
 
+  // ---------- Report Cache (keyed by classId+term+year+studentId) ----------
+  const [reportCache, setReportCache] = useState<Map<string, ReportCardData>>(new Map());
+  const [loadingReports, setLoadingReports] = useState<Set<string>>(new Set());
+  const inFlightRef = useRef<Set<string>>(new Set());
+
+  // Composite key so switching filters cannot serve stale reports
+  const cacheKeyFor = useCallback(
+    (studentId: string) => `${selectedClass}|${selectedTerm}|${selectedYear}|${studentId}`,
+    [selectedClass, selectedTerm, selectedYear]
+  );
+
+  // Clear cache + in-flight set when the filter context changes
+  useEffect(() => {
+    setReportCache(new Map());
+    setLoadingReports(new Set());
+    inFlightRef.current = new Set();
+    // Modal state also refers to the old context
+    setSelectedStudentId(null);
+    setShowReportModal(false);
+  }, [selectedClass, selectedTerm, selectedYear]);
+
+  // ---------- Teacher default class ----------
   useEffect(() => {
     if (user?.userType === 'teacher' && classes.length > 0 && !selectedClass) {
       if (assignments && assignments.length > 0) {
@@ -777,7 +1029,155 @@ export default function ReportCards() {
     }
   }, [classes, user, assignments, selectedClass]);
 
-  // ==================== SMS HANDLERS ====================
+  // ---------- Gender lookup ----------
+  const studentGenderMap = useMemo(() => {
+    const map = new Map<string, string>();
+    learners.forEach(learner => {
+      if (learner.id) map.set(learner.id, learner.gender || 'Not specified');
+      if (learner.studentId) map.set(learner.studentId, learner.gender || 'Not specified');
+    });
+    return map;
+  }, [learners]);
+
+  // ---------- Transform students using configured exams ----------
+  // This is the source of truth for the UI. Every stat is recomputed against
+  // the currently configured exam types so switching a config immediately
+  // updates completion/overall/status.
+  const transformedStudents = useMemo((): StudentProgress[] => {
+    if (!students?.length) return [];
+    return students.map((student: any) => {
+      const stats = computeStudentConfigStats(student, configuredExamTypes);
+      return {
+        studentId: student.studentId || '',
+        studentName: student.studentName || '',
+        className: student.className || '',
+        classId: student.classId || '',
+        form: student.form || '',
+        overallPercentage: stats.overallPercentage,
+        overallGrade: stats.overallGrade,
+        status: stats.status,
+        isComplete: stats.isComplete,
+        completionPercentage: stats.completionPercentage,
+        subjects: Array.isArray(student.subjects)
+          ? student.subjects.map((s: any) => ({
+              subjectId: s.subjectId || '',
+              subjectName: s.subjectName || '',
+              teacherName: s.teacherName || '',
+              week4: { status: s.week4?.status || 'missing', marks: s.week4?.marks },
+              week8: { status: s.week8?.status || 'missing', marks: s.week8?.marks },
+              endOfTerm: { status: s.endOfTerm?.status || 'missing', marks: s.endOfTerm?.marks },
+              subjectProgress: computeSubjectProgress(s, configuredExamTypes),
+              grade: s.grade,
+            }))
+          : [],
+        missingSubjects: stats.missingSubjects,
+        totalSubjects: stats.totalSubjects,
+        gender: studentGenderMap.get(student.studentId) || 'Not specified',
+      };
+    });
+  }, [students, studentGenderMap, configuredExamTypes]);
+
+  // Summary derived from the *transformed* students (respects config)
+  const configSummary = useMemo(() => {
+    if (!transformedStudents.length) return null;
+    const total = transformedStudents.length;
+    const complete = transformedStudents.filter(s => s.isComplete).length;
+    const incomplete = total - complete;
+    const avg = Math.round(
+      transformedStudents.reduce((sum, s) => sum + s.completionPercentage, 0) / total
+    );
+    return { total, complete, incomplete, averageCompletion: avg };
+  }, [transformedStudents]);
+
+  // ---------- Report Generation (config-aware, filter-aware) ----------
+  useEffect(() => {
+    let cancelled = false;
+
+    const generate = async () => {
+      if (!students.length || !selectedTerm || !selectedYear) return;
+
+      // Only attempt students we have not cached yet and are not already generating
+      const toGen = transformedStudents.filter(s => {
+        const key = cacheKeyFor(s.studentId);
+        return !reportCache.has(key) && !inFlightRef.current.has(key);
+      });
+      if (!toGen.length) return;
+
+      toGen.forEach(s => inFlightRef.current.add(cacheKeyFor(s.studentId)));
+      setLoadingReports(new Set(inFlightRef.current));
+
+      // Process in batches of 5
+      for (let i = 0; i < toGen.length; i += 5) {
+        if (cancelled) break;
+        const batch = toGen.slice(i, i + 5);
+
+        await Promise.all(
+          batch.map(async student => {
+            const key = cacheKeyFor(student.studentId);
+            try {
+              const raw = await generateReportCard({
+                studentId: student.studentId,
+                term: selectedTerm,
+                year: selectedYear,
+                options: {
+                  includeIncomplete: true,
+                  markMissing: true,
+                  configuredExamTypes,
+                },
+              });
+
+              if (cancelled || !raw) return;
+
+              const stats = computeStudentConfigStats(student, configuredExamTypes);
+              const processed = processReportForConfig(raw, configuredExamTypes, stats);
+
+              // Ensure gender comes through even if service didn't provide it
+              processed.gender = processed.gender || studentGenderMap.get(student.studentId) || 'Not specified';
+
+              setReportCache(prev => {
+                const next = new Map(prev);
+                next.set(key, processed);
+                return next;
+              });
+            } catch (err) {
+              console.error(`Report failed for ${student.studentName}:`, err);
+            } finally {
+              inFlightRef.current.delete(key);
+            }
+          })
+        );
+      }
+
+      if (!cancelled) {
+        setLoadingReports(new Set(inFlightRef.current));
+      }
+    };
+
+    generate();
+    return () => { cancelled = true; };
+    // Intentionally NOT including reportCache/loadingReports to avoid re-trigger loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transformedStudents, selectedTerm, selectedYear, configuredExamTypes, cacheKeyFor, generateReportCard, studentGenderMap]);
+
+  // ---------- Delete report (local cache only, matches original UX) ----------
+  const handleDeleteReport = useCallback(async (studentId: string) => {
+    setIsDeletingReport(true);
+    try {
+      setReportCache(prev => {
+        const next = new Map(prev);
+        next.delete(cacheKeyFor(studentId));
+        return next;
+      });
+      await refetch();
+      addToast('success', 'Deleted', 'Report card removed from view');
+    } catch {
+      addToast('error', 'Error', 'Failed to delete');
+    } finally {
+      setIsDeletingReport(false);
+    }
+  }, [refetch, cacheKeyFor]);
+
+  // ---------- SMS handlers ----------
   const handleSendSMS = async (studentId: string, studentName: string) => {
     if (!selectedTerm || !selectedYear) {
       addToast('warning', 'Missing Info', 'Please select a term and year first');
@@ -828,155 +1228,134 @@ export default function ReportCards() {
     finally { setIsBulkSending(false); }
   };
 
-  // ==================== TRANSFORMATION ====================
-  const transformedStudents = useMemo((): StudentProgress[] => {
-    if (!students?.length) return [];
-    return students.map((student: any) => {
-      const missingSubjects = student.subjects?.filter((s: any) => {
-        let inc = false;
-        if (configuredExamTypes.includes('week4') && s.week4?.status === 'missing') inc = true;
-        if (configuredExamTypes.includes('week8') && s.week8?.status === 'missing') inc = true;
-        if (configuredExamTypes.includes('endOfTerm') && s.endOfTerm?.status === 'missing') inc = true;
-        return inc;
-      }).length || 0;
-      return {
-        studentId: student.studentId || '', studentName: student.studentName || '',
-        className: student.className || '', classId: student.classId || '', form: student.form || '',
-        overallPercentage: student.overallPercentage || 0, overallGrade: student.overallGrade || 0,
-        status: student.status || 'pending', isComplete: student.isComplete || false,
-        completionPercentage: student.completionPercentage || 0,
-        subjects: Array.isArray(student.subjects) ? student.subjects.map((s: any) => ({
-          subjectId: s.subjectId || '', subjectName: s.subjectName || '', teacherName: s.teacherName || '',
-          week4: { status: s.week4?.status || 'missing', marks: s.week4?.marks },
-          week8: { status: s.week8?.status || 'missing', marks: s.week8?.marks },
-          endOfTerm: { status: s.endOfTerm?.status || 'missing', marks: s.endOfTerm?.marks },
-          subjectProgress: s.subjectProgress || 0, grade: s.grade
-        })) : [],
-        missingSubjects, totalSubjects: student.totalSubjects || 0,
-        gender: studentGenderMap.get(student.studentId) || 'Not specified'
-      };
-    });
-  }, [students, studentGenderMap, configuredExamTypes]);
-
-  // Generate reports
-  useEffect(() => {
-    const generate = async () => {
-      if (!students.length || !selectedTerm || !selectedYear) return;
-      const toGen = students.filter((s: any) => !reportCache.has(s.studentId) && !loadingReports.has(s.studentId));
-      if (!toGen.length) return;
-      setLoadingReports(prev => { const n = new Set(prev); toGen.forEach((s: any) => n.add(s.studentId)); return n; });
-      for (let i = 0; i < toGen.length; i += 5) {
-        await Promise.all(toGen.slice(i, i + 5).map(async (student: any) => {
-          try {
-            const report = await generateReportCard({ studentId: student.studentId, term: selectedTerm, year: selectedYear, options: { includeIncomplete: true, markMissing: true, configuredExamTypes } });
-            if (report) {
-              setReportCache(prev => { const n = new Map(prev); n.set(student.studentId, {
-                id: report.id, studentId: report.studentId, studentName: report.studentName,
-                className: report.className, classId: report.classId, form: report.form,
-                grade: report.overallGrade, position: report.position,
-                gender: report.gender || studentGenderMap.get(student.studentId) || 'Not specified',
-                totalMarks: report.totalMarks, percentage: report.percentage, status: report.status,
-                improvement: report.improvement,
-                subjects: report.subjects.map(s => ({ subjectId: s.subjectId, subjectName: s.subjectName, week4: s.week4, week8: s.week8, endOfTerm: s.endOfTerm, grade: s.grade, gradeDescription: s.gradeDescription || getGradeDescription(s.grade) })),
-                attendance: report.attendance, teachersComment: report.teachersComment,
-                parentsEmail: report.parentsEmail, parentsPhone: report.parentsPhone,
-                generatedDate: report.generatedDate || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-                term: report.term, year: report.year, isComplete: report.isComplete,
-                completionPercentage: report.completionPercentage,
-                examConfigSummary: configuredExamTypes.length ? `Based on: ${configuredExamTypes.map(getExamDisplayName).join(' + ')}` : undefined
-              }); return n; });
-            }
-          } catch (err) { console.error(`Report failed for ${student.studentName}:`, err); }
-          finally { setLoadingReports(prev => { const n = new Set(prev); n.delete(student.studentId); return n; }); }
-        }));
-      }
-    };
-    generate();
-  }, [students, selectedTerm, selectedYear, generateReportCard, reportCache, loadingReports, studentGenderMap, configuredExamTypes]);
-
-  const handleDeleteReport = useCallback(async (studentId: string) => {
-    setIsDeletingReport(true);
-    try {
-      setReportCache(prev => { const n = new Map(prev); n.delete(studentId); return n; });
-      await refetch();
-      addToast('success', 'Deleted', 'Report card deleted');
-    } catch { addToast('error', 'Error', 'Failed to delete'); }
-    finally { setIsDeletingReport(false); }
-  }, [refetch]);
-
+  // ---------- Download all report cards ----------
   const handleDownloadAllReportCards = useCallback(async () => {
     if (!selectedClass || !students.length) { addToast('warning', 'No Data', 'No students'); return; }
     if (!configuredExamTypes.length) { addToast('warning', 'No Exams', 'Configure exams first'); return; }
     setIsDownloadingAll(true);
     try {
-      const result = await generateClassReportCards({ classId: selectedClass, term: selectedTerm, year: selectedYear, options: { includeIncomplete: true, markMissing: true, configuredExamTypes } });
+      const result = await generateClassReportCards({
+        classId: selectedClass,
+        term: selectedTerm,
+        year: selectedYear,
+        options: { includeIncomplete: true, markMissing: true, configuredExamTypes },
+      });
       if (!result.reportCards.length) { addToast('warning', 'Empty', 'No reports generated'); return; }
+
+      // Post-process each report using its matching student so completion/percentages
+      // reflect the configured exams.
+      const studentByCustomId = new Map(transformedStudents.map(s => [s.studentId, s]));
+      const reports = result.reportCards.map(r => {
+        const student = studentByCustomId.get(r.studentId);
+        const stats = student
+          ? computeStudentConfigStats(student, configuredExamTypes)
+          : {
+              completionPercentage: 0,
+              isComplete: false,
+              missingSubjects: 0,
+              totalSubjects: 0,
+              overallPercentage: 0,
+              overallGrade: -1,
+              status: 'pending' as const,
+            };
+        const processed = processReportForConfig(r, configuredExamTypes, stats);
+        processed.gender = processed.gender || studentGenderMap.get(r.studentId) || 'Not specified';
+        return processed;
+      });
+
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
-      const reports = result.reportCards.map(r => ({
-        id: r.id, studentId: r.studentId, studentName: r.studentName, className: r.className, classId: r.classId, form: r.form,
-        grade: r.overallGrade, position: r.position, gender: r.gender || 'Not specified', totalMarks: r.totalMarks, percentage: r.percentage, status: r.status, improvement: r.improvement,
-        subjects: r.subjects.map(s => ({ subjectId: s.subjectId, subjectName: s.subjectName, week4: s.week4, week8: s.week8, endOfTerm: s.endOfTerm, grade: s.grade, gradeDescription: s.gradeDescription || getGradeDescription(s.grade) })),
-        attendance: r.attendance, teachersComment: r.teachersComment, parentsEmail: r.parentsEmail, parentsPhone: r.parentsPhone,
-        generatedDate: r.generatedDate, term: r.term, year: r.year, isComplete: r.isComplete, completionPercentage: r.completionPercentage,
-        examConfigSummary: configuredExamTypes.length ? `Based on: ${configuredExamTypes.map(getExamDisplayName).join(' + ')}` : undefined
-      }));
-      const pdfBytes = await generateReportCardPDF(reports);
+      // Pass configuredExamTypes through so batch-exported PDFs show only the
+      // W4/W8/EOT columns that are actually configured for this term.
+      const pdfBytes = await generateReportCardPDF(reports, configuredExamTypes);
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url;
+      const a = document.createElement('a');
+      a.href = url;
       a.download = `report-cards-${(reports[0]?.className || 'class').replace(/\s+/g, '_')}-${selectedTerm.replace(/\s+/g, '_')}-${selectedYear}.pdf`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
       addToast('success', 'Downloaded', `${reports.length} report cards`);
-    } catch { addToast('error', 'Error', 'Download failed'); }
-    finally { setIsDownloadingAll(false); }
-  }, [selectedClass, students, selectedTerm, selectedYear, generateClassReportCards, configuredExamTypes]);
+    } catch (e) {
+      console.error(e);
+      addToast('error', 'Error', 'Download failed');
+    } finally {
+      setIsDownloadingAll(false);
+    }
+  }, [selectedClass, students, selectedTerm, selectedYear, generateClassReportCards, configuredExamTypes, transformedStudents, studentGenderMap]);
 
+  // ---------- Class matrix ----------
   const handleDownloadClassMatrix = useCallback(async () => {
     if (!selectedClass || !students.length) { addToast('warning', 'No Data', 'No data'); return; }
     if (!configuredExamTypes.length) { addToast('warning', 'No Exams', 'Configure exams first'); return; }
     setIsDownloadingMatrix(true);
     try {
-      const allSubj = new Set<string>(); transformedStudents.forEach(s => s.subjects.forEach(x => allSubj.add(x.subjectName)));
+      const allSubj = new Set<string>();
+      transformedStudents.forEach(s => s.subjects.forEach(x => allSubj.add(x.subjectName)));
       const subjList = Array.from(allSubj).sort();
+
       const calcAvg = (sub: SubjectProgress) => {
-        const sc = [];
+        const sc: number[] = [];
         if (configuredExamTypes.includes('week4') && sub.week4?.marks !== undefined && sub.week4.marks >= 0) sc.push(sub.week4.marks);
         if (configuredExamTypes.includes('week8') && sub.week8?.marks !== undefined && sub.week8.marks >= 0) sc.push(sub.week8.marks);
         if (configuredExamTypes.includes('endOfTerm') && sub.endOfTerm?.marks !== undefined && sub.endOfTerm.marks >= 0) sc.push(sub.endOfTerm.marks);
         if (!sc.length) return -1;
-        const a = sc.reduce((a,b) => a + b, 0) / sc.length;
+        const a = sc.reduce((a, b) => a + b, 0) / sc.length;
         if (a >= 75) return 1; if (a >= 70) return 2; if (a >= 65) return 3; if (a >= 60) return 4;
         if (a >= 55) return 5; if (a >= 50) return 6; if (a >= 45) return 7; if (a >= 40) return 8; return 9;
       };
+
       const matrix: ClassResultsMatrix = {
-        className: transformedStudents[0]?.className || 'Unknown', term: selectedTerm, year: selectedYear,
+        className: transformedStudents[0]?.className || 'Unknown',
+        term: selectedTerm,
+        year: selectedYear,
         students: transformedStudents.map(s => ({
-          studentId: s.studentId, studentName: s.studentName, gender: s.gender || 'Not specified',
-          subjects: subjList.map(n => { const sub = s.subjects.find(x => x.subjectName === n); return { subjectName: n, week4: { marks: sub?.week4?.marks ?? -3, status: sub?.week4?.status || 'missing' }, week8: { marks: sub?.week8?.marks ?? -3, status: sub?.week8?.status || 'missing' }, endOfTerm: { marks: sub?.endOfTerm?.marks ?? -3, status: sub?.endOfTerm?.status || 'missing', grade: sub?.grade || -1 }, average: sub?.grade ? calcAvg(sub) : -1 }; }),
-          overallAverage: s.overallPercentage, overallGrade: s.overallGrade
+          studentId: s.studentId,
+          studentName: s.studentName,
+          gender: s.gender || 'Not specified',
+          subjects: subjList.map(n => {
+            const sub = s.subjects.find(x => x.subjectName === n);
+            return {
+              subjectName: n,
+              week4: { marks: sub?.week4?.marks ?? -3, status: sub?.week4?.status || 'missing' },
+              week8: { marks: sub?.week8?.marks ?? -3, status: sub?.week8?.status || 'missing' },
+              endOfTerm: { marks: sub?.endOfTerm?.marks ?? -3, status: sub?.endOfTerm?.status || 'missing', grade: sub?.grade || -1 },
+              average: sub ? calcAvg(sub) : -1,
+            };
+          }),
+          overallAverage: s.overallPercentage,
+          overallGrade: s.overallGrade,
         })),
         subjects: subjList,
         generatedDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-        configuredExamTypes
+        configuredExamTypes,
       };
+
       const { generateClassResultsMatrixPDF } = await import('@/services/pdf/classResultsMatrixPDFLib');
       const pdfBytes = await generateClassResultsMatrixPDF(matrix);
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url;
+      const a = document.createElement('a');
+      a.href = url;
       a.download = `class-matrix-${matrix.className.replace(/\s+/g, '_')}-${selectedTerm.replace(/\s+/g, '_')}-${selectedYear}.pdf`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
       addToast('success', 'Downloaded', 'Class matrix ready!');
-    } catch (e) { addToast('error', 'Error', `Failed: ${e instanceof Error ? e.message : 'Unknown'}`); }
-    finally { setIsDownloadingMatrix(false); }
-  }, [selectedClass, transformedStudents, selectedTerm, selectedYear, configuredExamTypes]);
+    } catch (e) {
+      addToast('error', 'Error', `Failed: ${e instanceof Error ? e.message : 'Unknown'}`);
+    } finally {
+      setIsDownloadingMatrix(false);
+    }
+  }, [selectedClass, transformedStudents, selectedTerm, selectedYear, configuredExamTypes, students.length]);
 
+  // ---------- Filtered list ----------
   const filteredStudents = useMemo(() => {
     if (!transformedStudents.length) return [];
     if (!debouncedSearch) return transformedStudents;
-    return transformedStudents.filter(s => s.studentName?.toLowerCase().includes(debouncedSearch.toLowerCase()) || s.studentId?.toLowerCase().includes(debouncedSearch.toLowerCase()));
+    const q = debouncedSearch.toLowerCase();
+    return transformedStudents.filter(
+      s => s.studentName?.toLowerCase().includes(q) || s.studentId?.toLowerCase().includes(q)
+    );
   }, [transformedStudents, debouncedSearch]);
 
+  // ---------- Class options ----------
   const classOptions = useMemo(() => {
     if (user?.userType === 'teacher' && assignments) {
       const ids = [...new Set(assignments.map(a => a.classId))];
@@ -985,10 +1364,12 @@ export default function ReportCards() {
     return classes.map(c => ({ id: c.id, name: c.name }));
   }, [classes, user, assignments]);
 
+  // ---------- Modal state ----------
   const handleViewReport = (id: string) => { setSelectedStudentId(id); setShowReportModal(true); };
   const selectedStudent = transformedStudents.find(s => s.studentId === selectedStudentId);
-  const selectedReport = selectedStudentId ? reportCache.get(selectedStudentId) : null;
-  const isLoadingReport = selectedStudentId ? loadingReports.has(selectedStudentId) : false;
+  const selectedReport = selectedStudentId ? reportCache.get(cacheKeyFor(selectedStudentId)) : null;
+  const isLoadingReport = selectedStudentId ? loadingReports.has(cacheKeyFor(selectedStudentId)) : false;
+
   const terms = ['Term 1', 'Term 2', 'Term 3'];
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i);
   const isLoadingAll = loadingProgress || loadingClasses || loadingAssignments || loadingExamConfig;
@@ -998,13 +1379,13 @@ export default function ReportCards() {
       <DashboardLayout activeTab="reports">
         <div className="min-h-screen bg-gray-50 p-3 sm:p-4 lg:p-6">
           <div className="animate-pulse mb-4"><div className="h-7 bg-gray-200 rounded w-40 mb-1"></div><div className="h-4 bg-gray-100 rounded w-48"></div></div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">{[1,2,3,4].map(i => <CardSkeleton key={i} />)}</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">{[1, 2, 3, 4].map(i => <CardSkeleton key={i} />)}</div>
         </div>
       </DashboardLayout>
     );
   }
 
-  const noExams = selectedClass && !configuredExamTypes.length;
+  const noExams = !!selectedClass && !configuredExamTypes.length;
 
   return (
     <>
@@ -1012,7 +1393,15 @@ export default function ReportCards() {
       <DashboardLayout activeTab="reports">
         <div className="min-h-screen bg-gray-50 p-3 sm:p-4 lg:p-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
-            <div><h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">Report Cards</h1><p className="text-xs sm:text-sm text-gray-600">{selectedTerm}, {selectedYear}</p></div>
+            <div>
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">Report Cards</h1>
+              <p className="text-xs sm:text-sm text-gray-600">
+                {selectedTerm}, {selectedYear}
+                {configuredExamTypes.length > 0 && (
+                  <> • {configuredExamTypes.map(getExamDisplayName).join(' + ')}</>
+                )}
+              </p>
+            </div>
             <div className="flex items-center gap-2 flex-wrap">
               {selectedClass && students.length > 0 && configuredExamTypes.length > 0 && (
                 <>
@@ -1042,28 +1431,43 @@ export default function ReportCards() {
             <div className="bg-white rounded-xl border border-yellow-200 p-6 sm:p-8 text-center">
               <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-yellow-100 rounded-full mb-3"><Calendar className="text-yellow-600" size={isMobile ? 24 : 32} /></div>
               <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1">No Exams Configured</h3>
-              <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto mb-4">No exams configured for {selectedTerm} {selectedYear}.</p>
+              <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto mb-4">
+                No exams configured for {selectedTerm} {selectedYear}. Configure the exam types before generating report cards.
+              </p>
               <button onClick={() => window.location.href = '/dashboard/admin/exams'} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">Go to Exam Management</button>
             </div>
           ) : (
             <>
-              <FilterBar selectedClass={selectedClass} setSelectedClass={setSelectedClass} classOptions={classOptions}
-                searchTerm={searchTerm} setSearchTerm={setSearchTerm} selectedTerm={selectedTerm} setSelectedTerm={setSelectedTerm}
-                selectedYear={selectedYear} setSelectedYear={setSelectedYear} terms={terms} years={years} summary={summary}
-                isTeacher={user?.userType === 'teacher'} isMobile={isMobile} configuredExamTypes={configuredExamTypes}
-                onBulkSend={handleBulkSend} isBulkSending={isBulkSending} />
+              <FilterBar
+                selectedClass={selectedClass} setSelectedClass={setSelectedClass} classOptions={classOptions}
+                searchTerm={searchTerm} setSearchTerm={setSearchTerm}
+                selectedTerm={selectedTerm} setSelectedTerm={setSelectedTerm}
+                selectedYear={selectedYear} setSelectedYear={setSelectedYear}
+                terms={terms} years={years} summary={configSummary}
+                isTeacher={user?.userType === 'teacher'} isMobile={isMobile}
+                configuredExamTypes={configuredExamTypes}
+                onBulkSend={handleBulkSend} isBulkSending={isBulkSending}
+              />
               {filteredStudents.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                   {filteredStudents.map(student => (
-                    <StudentCard key={student.studentId} student={student} onClick={() => handleViewReport(student.studentId)}
-                      onSendSMS={handleSendSMS} isSendingSMS={sendingSMS === student.studentId} smsState={smsResults[student.studentId]} />
+                    <StudentCard
+                      key={student.studentId}
+                      student={student}
+                      onClick={() => handleViewReport(student.studentId)}
+                      onSendSMS={handleSendSMS}
+                      isSendingSMS={sendingSMS === student.studentId}
+                      smsState={smsResults[student.studentId]}
+                    />
                   ))}
                 </div>
               ) : (
                 <div className="text-center py-12 bg-white rounded-2xl border border-gray-200">
                   <FileText size={isMobile ? 24 : 32} className="mx-auto text-gray-400 mb-3" />
                   <h3 className="text-base font-semibold text-gray-900 mb-1">No students found</h3>
-                  <p className="text-sm text-gray-600">{searchTerm ? 'No students match your search' : 'No progress data available'}</p>
+                  <p className="text-sm text-gray-600">
+                    {searchTerm ? 'No students match your search' : `No progress data available for ${selectedTerm} ${selectedYear}`}
+                  </p>
                   {searchTerm && <button onClick={() => setSearchTerm('')} className="mt-3 text-xs text-blue-600 hover:text-blue-800 font-medium">Clear search</button>}
                 </div>
               )}
@@ -1072,9 +1476,16 @@ export default function ReportCards() {
         </div>
       </DashboardLayout>
 
-      <ReportModal isOpen={showReportModal} onClose={() => { setShowReportModal(false); setSelectedStudentId(null); }}
-        report={selectedReport} studentName={selectedStudent?.studentName || ''} loading={isLoadingReport}
-        configuredExamTypes={configuredExamTypes} onDelete={handleDeleteReport} isDeleting={isDeletingReport} />
+      <ReportModal
+        isOpen={showReportModal}
+        onClose={() => { setShowReportModal(false); setSelectedStudentId(null); }}
+        report={selectedReport}
+        studentName={selectedStudent?.studentName || ''}
+        loading={isLoadingReport}
+        configuredExamTypes={configuredExamTypes}
+        onDelete={handleDeleteReport}
+        isDeleting={isDeletingReport}
+      />
 
       {toasts.length > 0 && (
         <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2">

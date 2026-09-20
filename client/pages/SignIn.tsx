@@ -86,7 +86,7 @@ export default function SignIn() {
   // const [showResendVerification, setShowResendVerification] = useState(false);
   // const [unverifiedEmail, setUnverifiedEmail] = useState('');
   // const [resendLoading, setResendLoading] = useState(false);
-  
+
   const [dialog, setDialog] = useState<{
     isOpen: boolean;
     type: 'error' | 'info' | 'success';
@@ -108,7 +108,7 @@ export default function SignIn() {
     if (isAuthenticated && user) {
       console.log('✅ User authenticated, redirecting based on role:', user.userType);
       setLoading(false);
-      
+
       if (user.userType === 'admin') {
         navigate('/dashboard/admin', { replace: true });
       } else {
@@ -154,7 +154,7 @@ export default function SignIn() {
       // EMAIL VERIFICATION DISABLED - Original verification error handling removed
       // Now shows generic error for all login failures
       // ==============================================
-      
+
       /* EMAIL VERIFICATION DISABLED - Original code kept for future reference
       // Check if error is about email verification
       if (err.message.includes('verify your email')) {
@@ -175,7 +175,7 @@ export default function SignIn() {
         });
       }
       */
-      
+
       // EMAIL VERIFICATION DISABLED: Simplified error handling
       setDialog({
         isOpen: true,
@@ -260,19 +260,19 @@ export default function SignIn() {
     .animate-fadeInUp {
       animation: fadeInUp 0.6s ease-out forwards;
     }
-    
+
     .animate-fadeIn {
       animation: fadeIn 0.3s ease-out forwards;
     }
-    
+
     .animate-scaleIn {
       animation: scaleIn 0.3s ease-out forwards;
     }
-    
+
     .animation-delay-100 {
       animation-delay: 0.1s;
     }
-    
+
     .animation-delay-200 {
       animation-delay: 0.2s;
     }
@@ -281,7 +281,7 @@ export default function SignIn() {
   return (
     <>
       <style>{animationStyles}</style>
-      
+
       <DialogModal
         isOpen={dialog.isOpen}
         type={dialog.type}
@@ -289,20 +289,20 @@ export default function SignIn() {
         message={dialog.message}
         onClose={handleDialogClose}
       />
-      
+
       <Layout className="relative min-h-screen overflow-hidden">
         {/* Background Image with Overlay */}
-        <div 
+        <div
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
           style={{
             backgroundImage: 'url("/images/signin-bg.jpg")',
             backgroundAttachment: 'fixed'
           }}
         />
-        
+
         {/* Dark Gradient Overlay - Better contrast for glass morphism */}
         <div className="absolute inset-0 bg-gradient-to-br from-black/60 via-black/50 to-black/60 backdrop-blur-[1px]" />
-        
+
         {/* Content */}
         <div className="relative z-10 flex items-center justify-center min-h-screen py-8 px-4">
           <div className="w-full max-w-md mx-auto">
@@ -310,9 +310,9 @@ export default function SignIn() {
             <div className="text-center mb-8 animate-fadeInUp">
               <div className="inline-block mb-4">
                 <div className="w-32 h-32 mx-auto bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl flex items-center justify-center p-3 border border-white/30">
-                  <img 
-                    src="/images/school-logo.png" 
-                    alt="KalaboBoarding School Logo" 
+                  <img
+                    src="/images/school-logo.png"
+                    alt="KalaboBoarding School Logo"
                     className="w-full h-full object-contain"
                   />
                 </div>
@@ -417,7 +417,7 @@ export default function SignIn() {
                 {/* ============================================== */}
                 {/* EMAIL VERIFICATION DISABLED - Resend Verification Section removed */}
                 {/* ============================================== */}
-                {/* 
+                {/*
                 {showResendVerification && (
                   <div className="p-4 bg-yellow-500/20 backdrop-blur-md rounded-xl border border-yellow-500/40">
                     <p className="text-sm text-yellow-200 mb-3">
@@ -462,16 +462,18 @@ export default function SignIn() {
                 </button>
               </form>
 
-              {/* Sign Up Link */}
+              {/* ============================================== */}
+              {/* Parent Portal Link - Replaces Sign Up link */}
+              {/* ============================================== */}
               <div className="mt-6 pt-6 border-t border-white/20">
                 <div className="text-center">
                   <p className="text-gray-200 text-sm">
-                    Don't have an account?{' '}
-                    <Link 
-                      to="/signup" 
+                    Parent or guardian?{' '}
+                    <Link
+                      to="/parent-portal"
                       className="text-blue-300 font-semibold hover:text-blue-200 transition-colors inline-flex items-center gap-1 group"
                     >
-                      <span>Create one</span>
+                      <span>Access Parent Portal</span>
                       <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
                     </Link>
                   </p>
