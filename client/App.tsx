@@ -23,6 +23,7 @@ import TeacherManagement from "./pages/admin/TeacherManagement";
 import ExamManagement from "./pages/admin/ExamManagement";
 import ReportCards from "./pages/admin/ReportCards";
 import AdminResultsAnalysis from "./pages/admin/AdminResultsAnalysis";
+import SbaSchoolOverview from "./pages/admin/SbaSchoolOverview";   // ← NEW
 
 // Teacher Pages
 import TeacherDashboard from "./pages/TeacherDashboard";
@@ -30,6 +31,7 @@ import AttendanceTracking from "./pages/teacher/AttendanceTracking";
 import ResultsEntry from "./pages/teacher/ResultsEntry";
 import TeacherResultsAnalysis from "./pages/teacher/TeacherResultsAnalysis";
 import MyClass from "@/pages/teacher/MyClass";
+import SbaEntry from "./pages/teacher/SbaEntry";   // ← NEW
 
 // Settings Page (works for both admin and teacher)
 import Settings from "./pages/Settings";
@@ -97,6 +99,13 @@ const App = () => (
               </ProtectedRoute>
             } />
 
+            {/* Admin SBA Overview — school-wide tracking */}
+            <Route path="/dashboard/admin/sba-overview" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <SbaSchoolOverview />
+              </ProtectedRoute>
+            } />
+
             {/* Admin Settings */}
             <Route path="/dashboard/admin/settings" element={
               <ProtectedRoute allowedRoles={['admin']}>
@@ -133,6 +142,13 @@ const App = () => (
             <Route path="/dashboard/teacher/results-analysis" element={
               <ProtectedRoute allowedRoles={['teacher']}>
                 <TeacherResultsAnalysis />
+              </ProtectedRoute>
+            } />
+
+            {/* Teacher SBA Entry — mark entry for assigned SBA subjects */}
+            <Route path="/dashboard/teacher/sba-entry" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <SbaEntry />
               </ProtectedRoute>
             } />
 

@@ -16,11 +16,28 @@ import {
   CalendarCheck,
   Calendar,
   GraduationCap,
+  ClipboardCheck,
 } from 'lucide-react';
+
+// Union of all navigable tab ids — keeps activeTab type-safe across pages.
+// Add new tab ids here when you add new routes.
+type ActiveTab =
+  | 'dashboard'
+  | 'classes'
+  | 'teachers'
+  | 'attendance'
+  | 'exams'
+  | 'results'
+  | 'reports'
+  | 'my-class'
+  | 'analysis'
+  | 'sba'
+  | 'sba-overview'
+  | (string & {}); // allow any string for forward-compatibility without losing hints
 
 interface DashboardLayoutProps {
   children: ReactNode;
-  activeTab?: string;
+  activeTab?: ActiveTab;
 }
 
 export function DashboardLayout({ children, activeTab = 'dashboard' }: DashboardLayoutProps) {
@@ -43,14 +60,16 @@ export function DashboardLayout({ children, activeTab = 'dashboard' }: Dashboard
     { id: 'exams', label: 'Exam Management', icon: Calendar, path: '/dashboard/admin/exams' },
     { id: 'results', label: 'Results Analysis', icon: BarChart3, path: '/dashboard/admin/results-analysis' },
     { id: 'reports', label: 'Report Cards', icon: FileText, path: '/dashboard/admin/report-cards' },
+    { id: 'sba-overview', label: 'SBA Overview', icon: ClipboardCheck, path: '/dashboard/admin/sba-overview' },
   ];
 
   const teacherMenuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard/teacher' },
-    { id: 'my-class', label: 'My Class', icon: GraduationCap, path: '/dashboard/teacher/my-class' }, // Added My Class
+    { id: 'my-class', label: 'My Class', icon: GraduationCap, path: '/dashboard/teacher/my-class' },
     { id: 'attendance', label: 'Attendance Tracking', icon: Clock, path: '/dashboard/teacher/attendance' },
     { id: 'results', label: 'Results Entry', icon: PenTool, path: '/dashboard/teacher/results-entry' },
     { id: 'analysis', label: 'Results Analysis', icon: BarChart3, path: '/dashboard/teacher/results-analysis' },
+    { id: 'sba', label: 'SBA Entry', icon: ClipboardCheck, path: '/dashboard/teacher/sba-entry' },
   ];
 
   const menuItems = isAdmin ? adminMenuItems : teacherMenuItems;
