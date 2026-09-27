@@ -1,6 +1,10 @@
 // @/pages/admin/ReportCards.tsx
-// Version 3.0.2 - Per-subject average score now surfaced on report cards
-//                  (mobile card, desktop table, and PDF via ReportCardSubject.average)
+// Version 3.1.0 - SMS cost preview integrated:
+//                  - Single send: cost shown in success toast
+//                  - Bulk send: preflight confirm dialog shows
+//                    ready count, avg length, encoding, segments, ZMW cost
+//                  - Post-send toast shows actual cost from costEstimate
+//                  - Uses CBC-aligned subject codes via smsService v3.0.0
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -172,7 +176,6 @@ const getExamDisplayName = (examType: string): string => {
   }
 };
 
-// Client-side grade calculation matching the service
 const calculateGrade = (percentage: number): number => {
   if (percentage < 0) return -1;
   if (percentage >= 75) return 1;
@@ -187,8 +190,6 @@ const calculateGrade = (percentage: number): number => {
 };
 
 // ==================== REPORT POST-PROCESSOR ====================
-// The service ignores `configuredExamTypes`. We recompute everything that depends
-// on which exams are actually configured so reports reflect reality.
 interface StudentConfigStats {
   completionPercentage: number;
   isComplete: boolean;
@@ -199,11 +200,6 @@ interface StudentConfigStats {
   status: 'pass' | 'fail' | 'pending';
 }
 
-// The service's `subjectProgress` field always divides by 3 (week4 + week8 +
-// endOfTerm), regardless of which exams are actually configured for the term.
-// A school running only "endOfTerm" would see every subject stuck at 33% even
-// when it's fully entered. Recompute it here against configuredExamTypes only,
-// the same way computeStudentConfigStats does for the student-level number.
 const computeSubjectProgress = (subject: any, configuredExamTypes: string[]): number => {
   if (configuredExamTypes.length === 0) return 0;
   let present = 0;
@@ -246,8 +242,6 @@ const computeStudentConfigStats = (
         allPresent = false;
         return;
       }
-      // 'complete', 'absent', 'not_conducted' all count as "present"
-      // Only real positive scores contribute to the average
       if (typeof examData.marks === 'number' && examData.marks >= 0) {
         scores.push(examData.marks);
       }
@@ -368,7 +362,7 @@ const Toast = ({ toast, onClose }: { toast: ToastMessage; onClose: () => void })
   const { bg, icon: Icon } = config[toast.type];
 
   useEffect(() => {
-    const timer = setTimeout(onClose, 5000);
+    const timer = setTimeout(onClose, 8000);
     return () => clearTimeout(timer);
   }, [onClose]);
 
@@ -625,8 +619,6 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading, configured
     if (!report) return;
     try {
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
-      // Pass configuredExamTypes through so the PDF's W4/W8/EOT columns match
-      // what's actually configured for this term, instead of always showing all three.
       const pdfBytes = await generateReportCardPDF(report, configuredExamTypes);
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
@@ -950,13 +942,6 @@ export default function ReportCards() {
     term: selectedTerm,
   });
 
-  // Prefer the active config; fall back to the first one.
-  // HARDENED: Don't just trust that useExamConfig already filtered correctly —
-  // explicitly verify each candidate matches the currently selected term/year
-  // before using it. If the hook ever returns a stale/broader list (e.g. during
-  // a refetch, or a caching quirk), this stops us from silently picking up a
-  // different term's exam configuration and mis-computing every completion
-  // percentage and progress bar downstream.
   const currentExamConfig = useMemo(() => {
     if (!examConfigs?.length) return null;
 
@@ -981,7 +966,7 @@ export default function ReportCards() {
     [currentExamConfig]
   );
 
-  // ---------- Data Fetch (query keyed by class/term/year so it refetches) ----------
+  // ---------- Data Fetch ----------
   const {
     students = [],
     summary,
@@ -997,23 +982,20 @@ export default function ReportCards() {
   const { generateReportCard, generateClassReportCards } = useResults();
   const debouncedSearch = useDebounce(searchTerm, 300);
 
-  // ---------- Report Cache (keyed by classId+term+year+studentId) ----------
+  // ---------- Report Cache ----------
   const [reportCache, setReportCache] = useState<Map<string, ReportCardData>>(new Map());
   const [loadingReports, setLoadingReports] = useState<Set<string>>(new Set());
   const inFlightRef = useRef<Set<string>>(new Set());
 
-  // Composite key so switching filters cannot serve stale reports
   const cacheKeyFor = useCallback(
     (studentId: string) => `${selectedClass}|${selectedTerm}|${selectedYear}|${studentId}`,
     [selectedClass, selectedTerm, selectedYear]
   );
 
-  // Clear cache + in-flight set when the filter context changes
   useEffect(() => {
     setReportCache(new Map());
     setLoadingReports(new Set());
     inFlightRef.current = new Set();
-    // Modal state also refers to the old context
     setSelectedStudentId(null);
     setShowReportModal(false);
   }, [selectedClass, selectedTerm, selectedYear]);
@@ -1040,9 +1022,6 @@ export default function ReportCards() {
   }, [learners]);
 
   // ---------- Transform students using configured exams ----------
-  // This is the source of truth for the UI. Every stat is recomputed against
-  // the currently configured exam types so switching a config immediately
-  // updates completion/overall/status.
   const transformedStudents = useMemo((): StudentProgress[] => {
     if (!students?.length) return [];
     return students.map((student: any) => {
@@ -1077,7 +1056,6 @@ export default function ReportCards() {
     });
   }, [students, studentGenderMap, configuredExamTypes]);
 
-  // Summary derived from the *transformed* students (respects config)
   const configSummary = useMemo(() => {
     if (!transformedStudents.length) return null;
     const total = transformedStudents.length;
@@ -1089,14 +1067,13 @@ export default function ReportCards() {
     return { total, complete, incomplete, averageCompletion: avg };
   }, [transformedStudents]);
 
-  // ---------- Report Generation (config-aware, filter-aware) ----------
+  // ---------- Report Generation ----------
   useEffect(() => {
     let cancelled = false;
 
     const generate = async () => {
       if (!students.length || !selectedTerm || !selectedYear) return;
 
-      // Only attempt students we have not cached yet and are not already generating
       const toGen = transformedStudents.filter(s => {
         const key = cacheKeyFor(s.studentId);
         return !reportCache.has(key) && !inFlightRef.current.has(key);
@@ -1106,7 +1083,6 @@ export default function ReportCards() {
       toGen.forEach(s => inFlightRef.current.add(cacheKeyFor(s.studentId)));
       setLoadingReports(new Set(inFlightRef.current));
 
-      // Process in batches of 5
       for (let i = 0; i < toGen.length; i += 5) {
         if (cancelled) break;
         const batch = toGen.slice(i, i + 5);
@@ -1131,7 +1107,6 @@ export default function ReportCards() {
               const stats = computeStudentConfigStats(student, configuredExamTypes);
               const processed = processReportForConfig(raw, configuredExamTypes, stats);
 
-              // Ensure gender comes through even if service didn't provide it
               processed.gender = processed.gender || studentGenderMap.get(student.studentId) || 'Not specified';
 
               setReportCache(prev => {
@@ -1155,11 +1130,10 @@ export default function ReportCards() {
 
     generate();
     return () => { cancelled = true; };
-    // Intentionally NOT including reportCache/loadingReports to avoid re-trigger loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transformedStudents, selectedTerm, selectedYear, configuredExamTypes, cacheKeyFor, generateReportCard, studentGenderMap]);
 
-  // ---------- Delete report (local cache only, matches original UX) ----------
+  // ---------- Delete report ----------
   const handleDeleteReport = useCallback(async (studentId: string) => {
     setIsDeletingReport(true);
     try {
@@ -1178,6 +1152,7 @@ export default function ReportCards() {
   }, [refetch, cacheKeyFor]);
 
   // ---------- SMS handlers ----------
+  // Single-student send: builds preview client-side, sends, then reports cost.
   const handleSendSMS = async (studentId: string, studentName: string) => {
     if (!selectedTerm || !selectedYear) {
       addToast('warning', 'Missing Info', 'Please select a term and year first');
@@ -1192,10 +1167,30 @@ export default function ReportCards() {
     }
     setSendingSMS(studentId);
     try {
+      // Build preview first (client-side, no network) so we can log cost
+      const preview = await smsService.previewStudentSMS(studentId, selectedTerm, selectedYear);
+      if (preview.success) {
+        console.log(
+          `📏 Preview for ${studentName}: ${preview.segments.length} chars, ` +
+          `${preview.segments.encoding}, ${preview.segments.segments} SMS — ` +
+          `ZMW ${(preview.estimatedCostZmw ?? 0).toFixed(2)}`
+        );
+      }
+
       const result = await smsService.sendStudentResults(studentId, selectedTerm, selectedYear);
       if (result.success) {
         setSmsResults(prev => ({ ...prev, [studentId]: { status: 'success', message: 'SMS sent!' } }));
-        addToast('success', 'SMS Sent!', `Results sent to ${studentName}'s guardian${result.carrier ? ` (${result.carrier})` : ''}`);
+
+        const costLine = result.segments
+          ? `\n${result.segments.length} chars · ${result.segments.encoding} · ` +
+            `${result.segments.segments} SMS · ZMW ${(result.segments.segments * 0.48).toFixed(2)}`
+          : '';
+
+        addToast(
+          'success',
+          'SMS Sent!',
+          `Results sent to ${studentName}'s guardian${result.carrier ? ` (${result.carrier})` : ''}${costLine}`
+        );
       }
     } catch (error: any) {
       const msg = smsService.formatError(error.message);
@@ -1207,25 +1202,81 @@ export default function ReportCards() {
     }
   };
 
+  // Bulk send: preflight preview → confirm with exact cost → send → report actuals.
   const handleBulkSend = async () => {
-    if (!selectedClass || !selectedTerm || !selectedYear) { addToast('warning', 'Missing Info', 'Select class, term, and year'); return; }
-    if (configuredExamTypes.length === 0) { addToast('warning', 'No Exams', 'No exams configured'); return; }
-    const withResults = filteredStudents.filter(s => s.overallPercentage > 0).length;
-    if (withResults === 0) { addToast('warning', 'No Results', 'No students have results'); return; }
-    if (!confirm(`Send results via SMS to guardians?\n\nStudents with results: ${withResults}\n\nThis may take a few moments.`)) return;
+    if (!selectedClass || !selectedTerm || !selectedYear) {
+      addToast('warning', 'Missing Info', 'Select class, term, and year');
+      return;
+    }
+    if (configuredExamTypes.length === 0) {
+      addToast('warning', 'No Exams', 'No exams configured');
+      return;
+    }
+
+    // ---- Preflight preview (no network send) ----
+    let preview;
+    try {
+      preview = await smsService.previewClassSMS(selectedClass, selectedTerm, selectedYear);
+    } catch (error: any) {
+      addToast('error', 'Preview Failed', smsService.formatError(error.message));
+      return;
+    }
+
+    if (!preview.success || preview.readyCount === 0) {
+      addToast('warning', 'No Results', 'No students have results to send');
+      return;
+    }
+
+    const confirmMsg =
+      `Send results via SMS to ${preview.readyCount} guardian(s)?\n\n` +
+      `Skipped (no results): ${preview.skippedNoResults}\n` +
+      `Avg length: ${preview.averageCharsPerMessage} chars (${preview.encoding})\n` +
+      `Total segments: ${preview.totalSegments}\n` +
+      `Estimated cost: ZMW ${preview.totalCostZmw.toFixed(2)}\n\n` +
+      `Continue?`;
+
+    if (!confirm(confirmMsg)) return;
+
     setIsBulkSending(true);
-    addToast('info', 'Sending...', 'Sending results to class guardians...');
+    addToast('info', 'Sending...', `Sending to ${preview.readyCount} guardians...`);
+
     try {
       const result = await smsService.bulkSendClass(selectedClass, selectedTerm, selectedYear);
-      let title = '✅ Bulk SMS Complete'; let type: ToastMessage['type'] = 'success';
-      if (result.failed > 0 && result.sent === 0) { title = '❌ Bulk Failed'; type = 'error'; }
-      else if (result.failed > 0) { title = '⚠️ Partial Success'; type = 'warning'; }
+
+      let title = '✅ Bulk SMS Complete';
+      let type: ToastMessage['type'] = 'success';
+      if (result.failed > 0 && result.sent === 0) {
+        title = '❌ Bulk Failed';
+        type = 'error';
+      } else if (result.failed > 0) {
+        title = '⚠️ Partial Success';
+        type = 'warning';
+      }
+
       let msg = `Sent: ${result.sent} | Failed: ${result.failed} | Total: ${result.total}`;
-      if (result.failedList?.length) { msg += '\n\nFailed:'; result.failedList.slice(0, 3).forEach(f => msg += `\n• ${f.studentId}: ${f.reason}`); }
+
+      // Surface actual cost from the response
+      if (result.costEstimate) {
+        msg +=
+          `\nCost: ZMW ${result.costEstimate.totalCostZmw.toFixed(2)} ` +
+          `(${result.costEstimate.totalSegments} SMS, ` +
+          `avg ${result.costEstimate.averagePerMessage} chars, ${result.costEstimate.encoding})`;
+      }
+
+      if (result.failedList?.length) {
+        msg += '\n\nFailed:';
+        result.failedList.slice(0, 3).forEach(f => {
+          msg += `\n• ${f.studentId}: ${f.reason}`;
+        });
+      }
+
       addToast(type, title, msg);
       refetch();
-    } catch (error: any) { addToast('error', 'Bulk Failed', error.message); }
-    finally { setIsBulkSending(false); }
+    } catch (error: any) {
+      addToast('error', 'Bulk Failed', smsService.formatError(error.message));
+    } finally {
+      setIsBulkSending(false);
+    }
   };
 
   // ---------- Download all report cards ----------
@@ -1242,8 +1293,6 @@ export default function ReportCards() {
       });
       if (!result.reportCards.length) { addToast('warning', 'Empty', 'No reports generated'); return; }
 
-      // Post-process each report using its matching student so completion/percentages
-      // reflect the configured exams.
       const studentByCustomId = new Map(transformedStudents.map(s => [s.studentId, s]));
       const reports = result.reportCards.map(r => {
         const student = studentByCustomId.get(r.studentId);
@@ -1264,8 +1313,6 @@ export default function ReportCards() {
       });
 
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
-      // Pass configuredExamTypes through so batch-exported PDFs show only the
-      // W4/W8/EOT columns that are actually configured for this term.
       const pdfBytes = await generateReportCardPDF(reports, configuredExamTypes);
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
