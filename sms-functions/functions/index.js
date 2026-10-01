@@ -17,3 +17,4 @@ exports.atDeliveryReportWebhook = require('./src/http/deliveryReportWebhook').at
 
 // Scheduled retry worker
 exports.retryFailedSMSWorker = require('./src/scheduled/retryWorker').retryFailedSMSWorker;
+exports.sendAnnouncement = require('./src/http/sendAnnouncement').sendAnnouncement;

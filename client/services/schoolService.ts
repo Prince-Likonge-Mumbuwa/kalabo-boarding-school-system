@@ -1,4 +1,14 @@
-// @/services/schoolService.ts - COMPREHENSIVE UPDATE WITH TEACHER MANAGEMENT METHODS
+// @/services/schoolService.ts
+//
+// Class, learner, teacher and results services.
+//
+// Teacher ↔ class ↔ subject responsibility is owned by ./assignmentEngine:
+//   - class_slots/{classId}__{subject}  : one Primary Owner + at most one delegate
+//   - teacher_assignments               : append-only tenure history (never deleted)
+//   - assignment_events                 : audit trail
+// The teacherService mutation methods below are thin, signature-compatible
+// wrappers around the engine.
+
 import {
   collection,
   query,
@@ -20,6 +30,7 @@ import {
   serverTimestamp,
   setDoc,
 } from 'firebase/firestore';
+import type { WriteBatch, DocumentSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import {
   Class,
@@ -34,11 +45,15 @@ import {
   GenderUpdate,
   GradeDistribution,
   ClassPerformance,
-  SubjectPerformance
+  SubjectPerformance,
+  AssignmentRoleType,
+  AssignmentStatus,
+  AssignmentEndReason,
 } from '@/types/school';
 
 // ==================== IMPORT NORMALIZATION UTILITY ====================
 import { normalizeSubjectName } from './resultsService';
+import * as assignmentEngine from './assignmentEngine';
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -58,9 +73,155 @@ const toDate = (timestamp: any): Date | undefined => {
 };
 
 /**
+ * Format a Date as "YYYY-MM-DD" using LOCAL calendar fields.
+ * (toISOString() uses UTC and shifts dates back a day in UTC+ timezones
+ * such as Zambia's CAT.)
+ */
+const formatLocalYMD = (d: Date): string => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+/** Build a "YYYY-MM-DD" string only if y/m/d is a real calendar date. */
+const buildValidYMD = (y: number, m: number, d: number): string | null => {
+  const date = new Date(y, m - 1, d);
+  if (
+    isNaN(date.getTime()) ||
+    date.getFullYear() !== y ||
+    date.getMonth() !== m - 1 ||
+    date.getDate() !== d
+  ) {
+    return null;
+  }
+  return formatLocalYMD(date);
+};
+
+/**
+ * Parse the value of an <input type="date"> ("YYYY-MM-DD") as LOCAL time.
+ * `new Date('2026-11-30')` is UTC midnight, which is the wrong instant
+ * outside UTC. Use this in the UI before passing dates to the service.
+ */
+const parseLocalDateInput = (
+  value: string | null | undefined,
+  endOfDay = false
+): Date | null => {
+  if (!value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!m) {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const [, y, mo, d] = m;
+  return endOfDay
+    ? new Date(Number(y), Number(mo) - 1, Number(d), 23, 59, 59, 999)
+    : new Date(Number(y), Number(mo) - 1, Number(d), 0, 0, 0, 0);
+};
+
+/** Same calendar day (local), 23:59:59.999. */
+const toEndOfDay = (date: Date): Date => {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
+};
+
+// ==================== DATE OF BIRTH HELPERS ====================
+
+/**
+ * Normalize any date-of-birth-ish value into an ISO date string "YYYY-MM-DD".
+ */
+const normalizeDateOfBirth = (value: unknown): string | null => {
+  if (value === null || value === undefined || value === '') return null;
+
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return formatLocalYMD(value);
+  }
+
+  if (typeof value === 'object' && value !== null && 'toDate' in value) {
+    try {
+      const d = (value as any).toDate();
+      if (d instanceof Date && !isNaN(d.getTime())) {
+        return formatLocalYMD(d);
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const y = Math.trunc(value);
+    if (y >= 1900 && y <= 2200) return `${y}-01-01`;
+    return null;
+  }
+
+  const str = String(value).trim();
+
+  const iso = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    return buildValidYMD(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+  }
+
+  const dmy = str.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+  if (dmy) {
+    const [, dd, mm, yyyy] = dmy;
+    return buildValidYMD(Number(yyyy), Number(mm), Number(dd));
+  }
+
+  const ymd = str.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+  if (ymd) {
+    const [, yyyy, mm, dd] = ymd;
+    return buildValidYMD(Number(yyyy), Number(mm), Number(dd));
+  }
+
+  if (/^\d{4}$/.test(str)) {
+    return `${str}-01-01`;
+  }
+
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return formatLocalYMD(parsed);
+  }
+
+  return null;
+};
+
+/**
+ * Derive { birthYear, age } from a dateOfBirth string.
+ */
+const deriveBirthYearAndAge = (
+  dateOfBirth: string | null | undefined
+): { birthYear: number; age: number } => {
+  if (!dateOfBirth) return { birthYear: 0, age: 0 };
+
+  const dob = new Date(dateOfBirth + (dateOfBirth.length === 10 ? 'T00:00:00' : ''));
+  if (isNaN(dob.getTime())) return { birthYear: 0, age: 0 };
+
+  const birthYear = dob.getFullYear();
+  const today = new Date();
+  let age = today.getFullYear() - birthYear;
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+    age--;
+  }
+  if (age < 0) age = 0;
+  return { birthYear, age };
+};
+
+/**
+ * Calculate age from birthYear OR dateOfBirth.
+ */
+const calculateAge = (birthYear: number, dateOfBirth?: string): number => {
+  if (dateOfBirth) {
+    const derived = deriveBirthYearAndAge(dateOfBirth);
+    if (derived.age > 0) return derived.age;
+  }
+  if (!birthYear) return 0;
+  return Math.max(0, new Date().getFullYear() - birthYear);
+};
+
+/**
  * Parse class name into type, level, and section
- * Examples: "Grade 8A" → {type: 'grade', level: 8, section: 'A'}
- *           "Form 3B" → {type: 'form', level: 3, section: 'B'}
  */
 const parseClassName = (name: string): { type: 'grade' | 'form'; level: number; section: string } => {
   const match = name.match(/(Grade|Form)\s*(\d+)([A-Za-z]*)/i);
@@ -85,20 +246,16 @@ const parseClassName = (name: string): { type: 'grade' | 'form'; level: number; 
 
 /**
  * Generate class prefix based on class type and level
- * Grade 10B → G10B
- * Form 3A → F3A
  */
-export const generateClassPrefix = (classType: 'grade' | 'form', level: number, section: string): string => {
+const generateClassPrefix = (classType: 'grade' | 'form', level: number, section: string): string => {
   const typePrefix = classType === 'grade' ? 'G' : 'F';
   return `${typePrefix}${level}${section}`.toUpperCase();
 };
 
 /**
  * Generate sequential student ID for a class
- * Format: [PREFIX]_[3-DIGIT SEQUENTIAL]
- * Example: G10B_001, G10B_002
  */
-export const generateSequentialStudentId = async (
+const generateSequentialStudentId = async (
   classId: string,
   classType: 'grade' | 'form',
   level: number,
@@ -138,7 +295,7 @@ export const generateSequentialStudentId = async (
 };
 
 /**
- * Legacy generate unique student ID (kept for backward compatibility)
+ * Legacy generate unique student ID
  */
 const generateStudentId = (): string => {
   const timestamp = Date.now().toString().slice(-6);
@@ -166,19 +323,136 @@ const calculateGenderStats = (learners: Learner[]): GenderStats => {
 };
 
 /**
- * Calculate age from birth year
+ * Shared mapper: Firestore learner doc → typed Learner.
  */
-const calculateAge = (birthYear: number): number => {
-  const currentYear = new Date().getFullYear();
-  return currentYear - birthYear;
+const mapLearnerDoc = (id: string, data: DocumentData): Learner => {
+  let resolvedDob = normalizeDateOfBirth(data.dateOfBirth);
+  if (!resolvedDob && data.birthYear) {
+    resolvedDob = normalizeDateOfBirth(data.birthYear);
+  }
+
+  const derived = deriveBirthYearAndAge(resolvedDob);
+  const birthYear = data.birthYear || derived.birthYear || 0;
+  const age =
+    typeof data.age === 'number' && data.age > 0
+      ? data.age
+      : derived.age || calculateAge(birthYear, resolvedDob || undefined);
+
+  return {
+    id,
+    studentId: data.studentId || '',
+    studentIndex: data.studentIndex || 0,
+    classPrefix: data.classPrefix || '',
+    fullName: data.fullName || data.name || '',
+    preferredName: data.preferredName ?? undefined,
+
+    dateOfBirth: resolvedDob || '',
+    birthYear,
+    age,
+
+    gender: data.gender,
+    address: data.address || '',
+    guardian: data.guardian || '',
+    guardianPhone: data.guardianPhone || data.parentPhone || '',
+    alternativeGuardian: data.alternativeGuardian,
+    alternativeGuardianPhone: data.alternativeGuardianPhone,
+    sponsor: data.sponsor || '',
+    classId: data.classId || '',
+    className: data.className || '',
+    classType: data.classType,
+    classLevel: data.classLevel,
+    classSection: data.classSection,
+    dateOfFirstEntry: data.dateOfFirstEntry || '',
+    enrollmentDate: toDate(data.enrollmentDate) || new Date(),
+    previousSchool: data.previousSchool,
+    previousGrade: data.previousGrade,
+    medicalNotes: data.medicalNotes,
+    allergies: data.allergies || [],
+    status: data.status || 'active',
+    createdBy: data.createdBy,
+    createdAt: toDate(data.createdAt),
+    updatedAt: toDate(data.updatedAt),
+    graduationYear: data.graduationYear,
+    transferredAt: toDate(data.transferredAt),
+    transferredToClass: data.transferredToClass,
+    archivedAt: toDate(data.archivedAt),
+
+    name: data.fullName || data.name || '',
+    parentPhone: data.guardianPhone || data.parentPhone || '',
+  } as Learner;
+};
+
+// ==================== ASSIGNMENT CONSTANTS & SMALL HELPERS ====================
+
+const FORM_TEACHER_SUBJECT = 'Form Teacher';
+const FORM_TEACHER_SLOT = 'form-teacher';
+const OPEN_STATUSES: AssignmentStatus[] = ['active', 'suspended'] as AssignmentStatus[];
+
+const ROLE_LABEL: Record<string, string> = {
+  substantive: 'Substantive',
+  tp: 'Teaching Practice',
+  'leave-cover': 'Leave Cover',
+};
+
+const isCoverRole = (role: unknown): boolean => role === 'tp' || role === 'leave-cover';
+
+const roleOf = (data: DocumentData): AssignmentRoleType =>
+  ((data.roleType as AssignmentRoleType) || 'substantive');
+
+const toNormalizedSubject = (subject: string): string =>
+  subject === FORM_TEACHER_SUBJECT ? FORM_TEACHER_SLOT : normalizeSubjectName(subject);
+
+/** Normalized slot id of a raw row — tolerates legacy rows without `normalizedSubject`. */
+const rowNormalizedSubject = (data: DocumentData): string =>
+  data.normalizedSubject || toNormalizedSubject(data.subject || '');
+
+const isFormTeacherRowData = (data: DocumentData): boolean =>
+  data.subject === FORM_TEACHER_SUBJECT || data.normalizedSubject === FORM_TEACHER_SLOT;
+
+/**
+ * Shared mapper: Firestore teacher_assignments doc → typed TeacherAssignment.
+ * Exported so hooks can import it instead of keeping a duplicate copy.
+ */
+const mapAssignmentDoc = (id: string, data: DocumentData): TeacherAssignment => {
+  const subject = data.subject || '';
+  const normalizedSubjectId = rowNormalizedSubject(data);
+
+  const startDate =
+    toDate(data.startDate) ||
+    toDate(data.assignedAt) ||
+    toDate(data.createdAt);
+
+  return {
+    id,
+    teacherId: data.teacherId,
+    teacherName: data.teacherName || '',
+    teacherEmail: data.teacherEmail,
+
+    classId: data.classId,
+    className: data.className || '',
+    subject,
+    normalizedSubjectId,
+
+    // Only "Form Teacher" rows can carry the flag (ignores legacy bad data).
+    isFormTeacher: data.isFormTeacher === true && isFormTeacherRowData(data),
+
+    roleType: roleOf(data),
+    status: (data.status as AssignmentStatus) || 'active',
+    startDate,
+    endDate: toDate(data.endDate) ?? null,
+    coversTeacherId: data.coversTeacherId ?? null,
+    coversAssignmentId: data.coversAssignmentId ?? null,
+    endReason: (data.endReason as AssignmentEndReason) ?? null,
+
+    assignedAt: toDate(data.assignedAt),
+    createdAt: toDate(data.createdAt),
+    updatedAt: toDate(data.updatedAt),
+  };
 };
 
 // ==================== CLASS SERVICE ====================
 
 const classService = {
-  /**
-   * Get all classes with optional filters
-   */
   getClasses: async (filters?: {
     year?: number;
     isActive?: boolean;
@@ -372,7 +646,7 @@ const classService = {
             updatedAt: serverTimestamp()
           });
           success++;
-        } catch (error) {
+        } catch (error: any) {
           errors.push(`Row ${index + 2}: ${error.message}`);
           failed++;
         }
@@ -422,37 +696,33 @@ const classService = {
     }
   },
 
+  /**
+   * Permanently delete an EMPTY class that has never had teachers.
+   * Classes with any assignment history must be archived instead, so that
+   * historical tenure records stay intact.
+   */
   deleteClass: async (classId: string): Promise<void> => {
     try {
       const learners = await learnerService.getLearnersByClass(classId);
-
       if (learners.length > 0) {
         throw new Error(`Cannot delete class with ${learners.length} learners. Please delete or transfer all learners first.`);
       }
 
-      const assignments = await classService.getTeacherAssignmentsByClass(classId);
-
-      if (assignments.length > 0) {
-        const batch = writeBatch(db);
-
-        for (const assignment of assignments) {
-          const assignmentRef = doc(db, 'teacher_assignments', assignment.id);
-          batch.delete(assignmentRef);
-        }
-
-        for (const assignment of assignments) {
-          const teacherRef = doc(db, 'users', assignment.teacherId);
-          batch.update(teacherRef, {
-            assignedClasses: arrayRemove(classId),
-            updatedAt: serverTimestamp()
-          });
-        }
-
-        await batch.commit();
+      const history = await getDocs(
+        query(collection(db, 'teacher_assignments'), where('classId', '==', classId), limit(1))
+      );
+      if (!history.empty) {
+        throw new Error(
+          'This class has teacher assignment history. Archive it instead of deleting, ' +
+          'so historical records are preserved.'
+        );
       }
 
-      const classRef = doc(db, 'classes', classId);
-      await deleteDoc(classRef);
+      const slots = await getDocs(query(collection(db, 'class_slots'), where('classId', '==', classId)));
+      const batch = writeBatch(db);
+      slots.docs.forEach(d => batch.delete(d.ref));
+      batch.delete(doc(db, 'classes', classId));
+      await batch.commit();
 
       console.log(`✅ Class ${classId} permanently deleted`);
     } catch (error) {
@@ -524,26 +794,9 @@ const classService = {
       const q = query(assignmentsRef, where('classId', '==', classId));
 
       const snapshot = await getDocs(q);
-      const assignments = snapshot.docs.map(docSnapshot => {
-        const data = docSnapshot.data() as DocumentData;
-        const subject = data.subject || '';
-        const normalizedSubject = normalizeSubjectName(subject);
-
-        return {
-          id: docSnapshot.id,
-          teacherId: data.teacherId,
-          teacherName: data.teacherName || '',
-          teacherEmail: data.teacherEmail,
-          classId: data.classId,
-          className: data.className || '',
-          subject: subject,
-          normalizedSubjectId: normalizedSubject,
-          isFormTeacher: data.isFormTeacher || false,
-          assignedAt: toDate(data.assignedAt),
-          createdAt: toDate(data.createdAt),
-          updatedAt: toDate(data.updatedAt),
-        } as TeacherAssignment;
-      });
+      const assignments = snapshot.docs.map(docSnap =>
+        mapAssignmentDoc(docSnap.id, docSnap.data() as DocumentData)
+      );
 
       console.log(`📚 Found ${assignments.length} teacher assignments for class ${classId}`);
       return assignments;
@@ -564,12 +817,9 @@ const classService = {
   },
 };
 
-// ==================== LEARNER SERVICE WITH ENHANCED FIELDS ====================
+// ==================== LEARNER SERVICE ====================
 
 const learnerService = {
-  /**
-   * Get all learners for a specific class with enhanced fields
-   */
   getLearnersByClass: async (classId: string): Promise<Learner[]> => {
     try {
       const learnersRef = collection(db, 'learners');
@@ -581,40 +831,9 @@ const learnerService = {
       );
 
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(docSnapshot => {
-        const data = docSnapshot.data() as DocumentData;
-        return {
-          id: docSnapshot.id,
-          studentId: data.studentId || '',
-          studentIndex: data.studentIndex || 0,
-          classPrefix: data.classPrefix || '',
-          fullName: data.fullName || data.name || '',
-          birthYear: data.birthYear || 0,
-          age: data.age || calculateAge(data.birthYear || 0),
-          gender: data.gender,
-          address: data.address || '',
-          guardian: data.guardian || '',
-          guardianPhone: data.guardianPhone || data.parentPhone || '',
-          alternativeGuardian: data.alternativeGuardian,
-          alternativeGuardianPhone: data.alternativeGuardianPhone,
-          sponsor: data.sponsor || '',
-          classId: data.classId || '',
-          className: data.className || '',
-          classType: data.classType,
-          classLevel: data.classLevel,
-          classSection: data.classSection,
-          dateOfFirstEntry: data.dateOfFirstEntry || '',
-          enrollmentDate: toDate(data.enrollmentDate) || new Date(),
-          previousSchool: data.previousSchool,
-          medicalNotes: data.medicalNotes,
-          allergies: data.allergies || [],
-          status: data.status || 'active',
-          createdAt: toDate(data.createdAt),
-          updatedAt: toDate(data.updatedAt),
-          name: data.fullName || data.name || '',
-          parentPhone: data.guardianPhone || data.parentPhone || '',
-        } as Learner;
-      });
+      return snapshot.docs.map(docSnapshot =>
+        mapLearnerDoc(docSnapshot.id, docSnapshot.data() as DocumentData)
+      );
     } catch (error) {
       console.error('Error fetching learners:', error);
       throw error;
@@ -631,40 +850,9 @@ const learnerService = {
       );
 
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(docSnapshot => {
-        const data = docSnapshot.data() as DocumentData;
-        return {
-          id: docSnapshot.id,
-          studentId: data.studentId || '',
-          studentIndex: data.studentIndex || 0,
-          classPrefix: data.classPrefix || '',
-          fullName: data.fullName || data.name || '',
-          birthYear: data.birthYear || 0,
-          age: data.age || calculateAge(data.birthYear || 0),
-          gender: data.gender,
-          address: data.address || '',
-          guardian: data.guardian || '',
-          guardianPhone: data.guardianPhone || data.parentPhone || '',
-          alternativeGuardian: data.alternativeGuardian,
-          alternativeGuardianPhone: data.alternativeGuardianPhone,
-          sponsor: data.sponsor || '',
-          classId: data.classId || '',
-          className: data.className || '',
-          classType: data.classType,
-          classLevel: data.classLevel,
-          classSection: data.classSection,
-          dateOfFirstEntry: data.dateOfFirstEntry || '',
-          enrollmentDate: toDate(data.enrollmentDate) || new Date(),
-          previousSchool: data.previousSchool,
-          medicalNotes: data.medicalNotes,
-          allergies: data.allergies || [],
-          status: data.status || 'active',
-          createdAt: toDate(data.createdAt),
-          updatedAt: toDate(data.updatedAt),
-          name: data.fullName || data.name || '',
-          parentPhone: data.guardianPhone || data.parentPhone || '',
-        } as Learner;
-      });
+      return snapshot.docs.map(docSnapshot =>
+        mapLearnerDoc(docSnapshot.id, docSnapshot.data() as DocumentData)
+      );
     } catch (error) {
       console.error('Error fetching all learners:', error);
       throw error;
@@ -693,6 +881,8 @@ const learnerService = {
     searchTerm?: string;
     gender?: 'male' | 'female';
     sponsor?: string;
+    dateOfBirthFrom?: string;
+    dateOfBirthTo?: string;
     birthYearFrom?: number;
     birthYearTo?: number;
     status?: string;
@@ -709,9 +899,13 @@ const learnerService = {
       return learners.filter(learner => {
         if (filters.gender && learner.gender !== filters.gender) return false;
         if (filters.sponsor && !learner.sponsor.toLowerCase().includes(filters.sponsor.toLowerCase())) return false;
+        if (filters.status && learner.status !== filters.status) return false;
+
+        if (filters.dateOfBirthFrom && learner.dateOfBirth < filters.dateOfBirthFrom) return false;
+        if (filters.dateOfBirthTo && learner.dateOfBirth > filters.dateOfBirthTo) return false;
+
         if (filters.birthYearFrom && learner.birthYear < filters.birthYearFrom) return false;
         if (filters.birthYearTo && learner.birthYear > filters.birthYearTo) return false;
-        if (filters.status && learner.status !== filters.status) return false;
 
         if (filters.searchTerm) {
           const searchLower = filters.searchTerm.toLowerCase();
@@ -740,7 +934,8 @@ const learnerService = {
     guardian: string;
     sponsor: string;
     guardianPhone: string;
-    birthYear: number;
+    dateOfBirth?: string;
+    birthYear?: number;
     classId: string;
     preferredName?: string;
     alternativeGuardian?: string;
@@ -759,6 +954,21 @@ const learnerService = {
 
       const classData = classDoc.data() as DocumentData;
 
+      const normalizedDob =
+        normalizeDateOfBirth(data.dateOfBirth) ||
+        (data.birthYear ? normalizeDateOfBirth(data.birthYear) : null);
+
+      if (!normalizedDob) {
+        throw new Error('A valid date of birth (or birth year) is required');
+      }
+
+      const { birthYear, age } = deriveBirthYearAndAge(normalizedDob);
+
+      const currentYear = new Date().getFullYear();
+      if (birthYear < 1990 || birthYear > currentYear) {
+        throw new Error(`Date of birth year must be between 1990 and ${currentYear}`);
+      }
+
       const { studentId, nextIndex } = await generateSequentialStudentId(
         data.classId,
         classData.type,
@@ -766,16 +976,17 @@ const learnerService = {
         classData.section
       );
 
-      const age = calculateAge(data.birthYear);
-
       const learnerRef = doc(collection(db, 'learners'));
       batch.set(learnerRef, {
         studentId,
         studentIndex: nextIndex,
         classPrefix: generateClassPrefix(classData.type, classData.level, classData.section),
         fullName: data.fullName.trim(),
-        birthYear: data.birthYear,
+
+        dateOfBirth: normalizedDob,
+        birthYear,
         age,
+
         gender: data.gender,
         preferredName: data.preferredName || null,
         address: data.address.trim(),
@@ -797,6 +1008,7 @@ const learnerService = {
         status: 'active',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+
         name: data.fullName.trim(),
         parentPhone: data.guardianPhone,
       });
@@ -809,7 +1021,7 @@ const learnerService = {
 
       await batch.commit();
 
-      console.log(`✅ Added learner ${data.fullName} with ID ${studentId} to class ${classData.name}`);
+      console.log(`✅ Added learner ${data.fullName} (DOB ${normalizedDob}) with ID ${studentId}`);
 
       return {
         learnerId: learnerRef.id,
@@ -854,7 +1066,7 @@ const learnerService = {
       for (const [index, learner] of learnersData.entries()) {
         try {
           const requiredFields = [
-            'fullName', 'gender', 'birthYear', 'address',
+            'fullName', 'gender', 'address',
             'guardian', 'guardianPhone', 'sponsor', 'dateOfFirstEntry'
           ];
 
@@ -868,15 +1080,22 @@ const learnerService = {
             throw new Error(`Invalid gender "${learner.gender}". Must be "male" or "female"`);
           }
 
+          let normalizedDob = normalizeDateOfBirth(learner.dateOfBirth);
+          if (!normalizedDob && learner.birthYear) {
+            normalizedDob = normalizeDateOfBirth(learner.birthYear);
+          }
+          if (!normalizedDob) {
+            throw new Error('Missing or invalid date of birth');
+          }
+
+          const { birthYear, age } = deriveBirthYearAndAge(normalizedDob);
           const currentYear = new Date().getFullYear();
-          if (learner.birthYear < 1990 || learner.birthYear > currentYear) {
-            throw new Error(`Invalid birth year ${learner.birthYear}. Must be between 1990 and ${currentYear}`);
+          if (birthYear < 1990 || birthYear > currentYear) {
+            throw new Error(`Invalid date of birth. Year must be between 1990 and ${currentYear}`);
           }
 
           const studentId = `${classPrefix}_${nextIndex.toString().padStart(3, '0')}`;
           generatedStudentIds.push(studentId);
-
-          const age = calculateAge(learner.birthYear);
 
           const allergies = learner.allergies
             ? learner.allergies.split(',').map(a => a.trim()).filter(a => a)
@@ -888,8 +1107,11 @@ const learnerService = {
             studentIndex: nextIndex,
             classPrefix,
             fullName: learner.fullName.trim(),
-            birthYear: learner.birthYear,
+
+            dateOfBirth: normalizedDob,
+            birthYear,
             age,
+
             gender: learner.gender,
             preferredName: learner.preferredName || null,
             address: learner.address.trim(),
@@ -911,13 +1133,14 @@ const learnerService = {
             status: 'active',
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
+
             name: learner.fullName.trim(),
             parentPhone: learner.guardianPhone,
           });
 
           nextIndex++;
           success++;
-        } catch (error) {
+        } catch (error: any) {
           console.error(`Error processing learner at row ${index + 2}:`, learner, error);
           failed++;
           errors.push(`Row ${index + 2}: ${error.message}`);
@@ -1063,16 +1286,9 @@ const learnerService = {
       );
 
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(docSnapshot => {
-        const data = docSnapshot.data() as DocumentData;
-        return {
-          id: docSnapshot.id,
-          ...data,
-          createdAt: toDate(data.createdAt),
-          updatedAt: toDate(data.updatedAt),
-          enrollmentDate: toDate(data.enrollmentDate),
-        } as Learner;
-      });
+      return snapshot.docs.map(docSnapshot =>
+        mapLearnerDoc(docSnapshot.id, docSnapshot.data() as DocumentData)
+      );
     } catch (error) {
       console.error('Error fetching learners by sponsor:', error);
       throw error;
@@ -1106,18 +1322,34 @@ const learnerService = {
 
       cleanUpdates.updatedAt = serverTimestamp();
 
-      if (updates.birthYear) {
-        cleanUpdates.age = calculateAge(updates.birthYear);
+      if (updates.dateOfBirth) {
+        const normalizedDob = normalizeDateOfBirth(updates.dateOfBirth);
+        if (!normalizedDob) {
+          throw new Error('Invalid date of birth');
+        }
+        const { birthYear, age } = deriveBirthYearAndAge(normalizedDob);
+        cleanUpdates.dateOfBirth = normalizedDob;
+        cleanUpdates.birthYear = birthYear;
+        cleanUpdates.age = age;
+      } else if (updates.birthYear) {
+        const derivedDob = normalizeDateOfBirth(updates.birthYear);
+        if (derivedDob) {
+          const { birthYear, age } = deriveBirthYearAndAge(derivedDob);
+          cleanUpdates.dateOfBirth = derivedDob;
+          cleanUpdates.birthYear = birthYear;
+          cleanUpdates.age = age;
+        } else {
+          cleanUpdates.birthYear = updates.birthYear;
+          cleanUpdates.age = calculateAge(updates.birthYear);
+        }
       }
 
       if (updates.fullName) {
         cleanUpdates.name = updates.fullName;
       }
-
       if (updates.guardianPhone) {
         cleanUpdates.parentPhone = updates.guardianPhone;
       }
-
       if (updates.allergies) {
         cleanUpdates.allergies = updates.allergies;
       }
@@ -1177,13 +1409,9 @@ const learnerService = {
       }
 
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(docSnapshot => {
-        const data = docSnapshot.data() as DocumentData;
-        return {
-          id: docSnapshot.id,
-          ...data,
-        } as Learner;
-      });
+      return snapshot.docs.map(docSnapshot =>
+        mapLearnerDoc(docSnapshot.id, docSnapshot.data() as DocumentData)
+      );
     } catch (error) {
       console.error('Error fetching learners missing gender:', error);
       return [];
@@ -1205,27 +1433,13 @@ const learnerService = {
       }
 
       const docSnapshot = snapshot.docs[0];
-      const data = docSnapshot.data() as DocumentData;
-
-      return {
-        id: docSnapshot.id,
-        ...data,
-        createdAt: toDate(data.createdAt),
-        updatedAt: toDate(data.updatedAt),
-        enrollmentDate: toDate(data.enrollmentDate),
-      } as Learner;
+      return mapLearnerDoc(docSnapshot.id, docSnapshot.data() as DocumentData);
     } catch (error) {
       console.error('Error fetching learner by student ID:', error);
       throw error;
     }
   },
 
-  /**
-   * ==================== PARENT PORTAL ====================
-   * Find all learners linked to a guardian phone number.
-   * Matches on guardianPhone, legacy parentPhone, and alternativeGuardianPhone.
-   * Falls back to normalized-digit comparison (handles +260..., 097..., spaces, dashes).
-   */
   getLearnersByGuardianPhone: async (phoneNumber: string): Promise<Learner[]> => {
     try {
       const raw = (phoneNumber || '').trim();
@@ -1235,7 +1449,6 @@ const learnerService = {
 
       const learnersRef = collection(db, 'learners');
 
-      // 1) Exact match on guardianPhone
       let snapshot = await getDocs(
         query(
           learnersRef,
@@ -1244,7 +1457,6 @@ const learnerService = {
         )
       );
 
-      // 2) Exact match on legacy parentPhone
       if (snapshot.empty) {
         snapshot = await getDocs(
           query(
@@ -1255,7 +1467,6 @@ const learnerService = {
         );
       }
 
-      // 3) Fallback: scan active learners and match on normalized digits
       if (snapshot.empty) {
         const allSnapshot = await getDocs(
           query(learnersRef, where('status', '==', 'active'))
@@ -1281,65 +1492,103 @@ const learnerService = {
           });
         });
 
-        return matched.map(docSnap => {
-          const data = docSnap.data() as DocumentData;
-          return {
-            id: docSnap.id,
-            studentId: data.studentId || '',
-            studentIndex: data.studentIndex || 0,
-            classPrefix: data.classPrefix || '',
-            fullName: data.fullName || data.name || '',
-            name: data.fullName || data.name || '',
-            birthYear: data.birthYear || 0,
-            age: data.age || calculateAge(data.birthYear || 0),
-            gender: data.gender,
-            address: data.address || '',
-            guardian: data.guardian || '',
-            guardianPhone: data.guardianPhone || data.parentPhone || '',
-            parentPhone: data.guardianPhone || data.parentPhone || '',
-            sponsor: data.sponsor || '',
-            classId: data.classId || '',
-            className: data.className || '',
-            status: data.status || 'active',
-          } as Learner;
-        });
+        return matched.map(docSnap =>
+          mapLearnerDoc(docSnap.id, docSnap.data() as DocumentData)
+        );
       }
 
-      return snapshot.docs.map(docSnap => {
-        const data = docSnap.data() as DocumentData;
-        return {
-          id: docSnap.id,
-          studentId: data.studentId || '',
-          studentIndex: data.studentIndex || 0,
-          classPrefix: data.classPrefix || '',
-          fullName: data.fullName || data.name || '',
-          name: data.fullName || data.name || '',
-          birthYear: data.birthYear || 0,
-          age: data.age || calculateAge(data.birthYear || 0),
-          gender: data.gender,
-          address: data.address || '',
-          guardian: data.guardian || '',
-          guardianPhone: data.guardianPhone || data.parentPhone || '',
-          parentPhone: data.guardianPhone || data.parentPhone || '',
-          sponsor: data.sponsor || '',
-          classId: data.classId || '',
-          className: data.className || '',
-          status: data.status || 'active',
-        } as Learner;
-      });
+      return snapshot.docs.map(docSnap =>
+        mapLearnerDoc(docSnap.id, docSnap.data() as DocumentData)
+      );
     } catch (error) {
       console.error('Error fetching learners by guardian phone:', error);
       return [];
     }
   },
+
+  backfillDateOfBirth: async (): Promise<{ updated: number; skipped: number; total: number }> => {
+    try {
+      const learnersRef = collection(db, 'learners');
+      const snapshot = await getDocs(learnersRef);
+
+      let updated = 0;
+      let skipped = 0;
+
+      const CHUNK = 400;
+      let batch = writeBatch(db);
+      let opsInBatch = 0;
+      const flushBatch = async () => {
+        if (opsInBatch > 0) {
+          await batch.commit();
+          batch = writeBatch(db);
+          opsInBatch = 0;
+        }
+      };
+
+      for (const docSnap of snapshot.docs) {
+        const data = docSnap.data() as DocumentData;
+
+        if (data.dateOfBirth) {
+          skipped++;
+          continue;
+        }
+
+        const derivedDob =
+          data.birthYear ? normalizeDateOfBirth(data.birthYear) : null;
+
+        if (!derivedDob) {
+          skipped++;
+          continue;
+        }
+
+        const { birthYear, age } = deriveBirthYearAndAge(derivedDob);
+
+        batch.update(docSnap.ref, {
+          dateOfBirth: derivedDob,
+          birthYear,
+          age,
+          updatedAt: serverTimestamp(),
+        });
+        updated++;
+        opsInBatch++;
+
+        if (opsInBatch >= CHUNK) {
+          await flushBatch();
+        }
+      }
+
+      await flushBatch();
+
+      console.log(`✅ Backfill complete: ${updated} updated, ${skipped} skipped, ${snapshot.size} total`);
+      return { updated, skipped, total: snapshot.size };
+    } catch (error) {
+      console.error('Error backfilling date of birth:', error);
+      throw error;
+    }
+  },
 };
 
-// ==================== TEACHER SERVICE (UPDATED TO HANDLE BOTH OLD AND NEW FIELDS) ====================
+// ==================== TEACHER SERVICE ====================
+//
+// Reads are served from teacher_assignments (the history log) and users.
+// EVERY mutation of who-teaches-what goes through assignmentEngine, which
+// enforces the rules transactionally on class_slots. The method names and
+// signatures below are kept so existing hooks and pages keep working.
+
+/** Map legacy end reasons used by the UI onto engine reasons. */
+const toEngineReason = (
+  reason: AssignmentEndReason | string | null | undefined,
+  role: AssignmentRoleType
+): assignmentEngine.EngineEndReason => {
+  if (reason === 'handover') return role === 'tp' ? 'tp-completed' : 'returned-to-duty';
+  if (reason === 'expired') return 'expired';
+  if (reason === 'replaced') return 'replaced';
+  return (reason as assignmentEngine.EngineEndReason) || 'removed';
+};
 
 const teacherService = {
   getTeachers: async (): Promise<Teacher[]> => {
     try {
-      console.log('🔍 Fetching all teachers from users collection...');
       const usersRef = collection(db, 'users');
       const q = query(
         usersRef,
@@ -1348,9 +1597,8 @@ const teacherService = {
       );
 
       const snapshot = await getDocs(q);
-      console.log(`📊 Found ${snapshot.docs.length} teacher documents`);
 
-      const teachers = snapshot.docs.map((docSnapshot) => {
+      return snapshot.docs.map((docSnapshot) => {
         const data = docSnapshot.data() as DocumentData;
         return {
           id: docSnapshot.id,
@@ -1361,8 +1609,8 @@ const teacherService = {
           subjects: data.subjects || [],
           assignedClasses: data.assignedClasses || [],
           isFormTeacher: data.isFormTeacher || false,
-          assignedClassId: data.assignedClassId,
-          assignedClassName: data.assignedClassName,
+          assignedClassId: data.formClassId ?? data.assignedClassId,
+          assignedClassName: data.formClassName ?? data.assignedClassName,
           status: data.status || 'active',
           employmentDate: toDate(data.employmentDate) || toDate(data.createdAt) || new Date(),
           fullName: data.fullName,
@@ -1376,9 +1624,6 @@ const teacherService = {
           updatedAt: toDate(data.updatedAt),
         } as Teacher;
       });
-
-      console.log('✅ Teacher data processed:', teachers);
-      return teachers;
     } catch (error) {
       console.error('❌ Error fetching teachers:', error);
       throw error;
@@ -1387,15 +1632,12 @@ const teacherService = {
 
   getTeachersByClass: async (classId: string): Promise<Teacher[]> => {
     try {
-      console.log(`🔍 Fetching teachers for class ${classId}...`);
-      const usersRef = collection(db, 'users');
       const q = query(
-        usersRef,
+        collection(db, 'users'),
         where('userType', '==', 'teacher'),
         where('assignedClasses', 'array-contains', classId),
         orderBy('fullName', 'asc')
       );
-
       const snapshot = await getDocs(q);
 
       return snapshot.docs.map((docSnapshot) => {
@@ -1409,8 +1651,8 @@ const teacherService = {
           subjects: data.subjects || [],
           assignedClasses: data.assignedClasses || [],
           isFormTeacher: data.isFormTeacher || false,
-          assignedClassId: data.assignedClassId,
-          assignedClassName: data.assignedClassName,
+          assignedClassId: data.formClassId ?? data.assignedClassId,
+          assignedClassName: data.formClassName ?? data.assignedClassName,
           status: data.status || 'active',
         } as Teacher;
       });
@@ -1420,50 +1662,12 @@ const teacherService = {
     }
   },
 
+  /** Full history (owner + delegate tenures, including ended rows). */
   getTeacherAssignments: async (teacherId: string): Promise<TeacherAssignment[]> => {
     try {
-      console.log(`🔍 Fetching assignments for teacher ${teacherId}...`);
-      const assignmentsRef = collection(db, 'teacher_assignments');
-      const q = query(assignmentsRef, where('teacherId', '==', teacherId));
-
+      const q = query(collection(db, 'teacher_assignments'), where('teacherId', '==', teacherId));
       const snapshot = await getDocs(q);
-
-      const assignments = await Promise.all(snapshot.docs.map(async (docSnapshot) => {
-        const data = docSnapshot.data() as DocumentData;
-        const subject = data.subject || '';
-        const normalizedSubject = normalizeSubjectName(subject);
-
-        let className = data.className || '';
-        if (!className && data.classId) {
-          try {
-            const classDoc = await getDoc(doc(db, 'classes', data.classId));
-            if (classDoc.exists()) {
-              const classData = classDoc.data();
-              className = classData.name || '';
-            }
-          } catch (error) {
-            console.error('Error fetching class name:', error);
-          }
-        }
-
-        return {
-          id: docSnapshot.id,
-          teacherId: data.teacherId,
-          teacherName: data.teacherName || '',
-          teacherEmail: data.teacherEmail,
-          classId: data.classId,
-          className,
-          subject: subject,
-          normalizedSubjectId: normalizedSubject,
-          isFormTeacher: data.isFormTeacher || false,
-          assignedAt: toDate(data.assignedAt),
-          createdAt: toDate(data.createdAt),
-          updatedAt: toDate(data.updatedAt),
-        } as TeacherAssignment;
-      }));
-
-      console.log(`📚 Found ${assignments.length} assignments for teacher ${teacherId}`);
-      return assignments;
+      return snapshot.docs.map(docSnap => mapAssignmentDoc(docSnap.id, docSnap.data() as DocumentData));
     } catch (error) {
       console.error('Error fetching teacher assignments:', error);
       return [];
@@ -1472,29 +1676,8 @@ const teacherService = {
 
   getAllTeacherAssignments: async (): Promise<TeacherAssignment[]> => {
     try {
-      const assignmentsRef = collection(db, 'teacher_assignments');
-      const snapshot = await getDocs(assignmentsRef);
-
-      return snapshot.docs.map((docSnapshot) => {
-        const data = docSnapshot.data() as DocumentData;
-        const subject = data.subject || '';
-        const normalizedSubject = normalizeSubjectName(subject);
-
-        return {
-          id: docSnapshot.id,
-          teacherId: data.teacherId,
-          teacherName: data.teacherName || '',
-          teacherEmail: data.teacherEmail,
-          classId: data.classId,
-          className: data.className || '',
-          subject: subject,
-          normalizedSubjectId: normalizedSubject,
-          isFormTeacher: data.isFormTeacher || false,
-          assignedAt: toDate(data.assignedAt),
-          createdAt: toDate(data.createdAt),
-          updatedAt: toDate(data.updatedAt),
-        } as TeacherAssignment;
-      });
+      const snapshot = await getDocs(collection(db, 'teacher_assignments'));
+      return snapshot.docs.map(docSnap => mapAssignmentDoc(docSnap.id, docSnap.data() as DocumentData));
     } catch (error) {
       console.error('Error fetching all teacher assignments:', error);
       return [];
@@ -1505,211 +1688,140 @@ const teacherService = {
     return classService.getTeacherAssignmentsByClass(classId);
   },
 
+  // ── Mutations (delegated to the engine) ──────────────────────────
+
+  /**
+   * substantive → Primary Owner (auto-replaces the previous owner; RULE 2).
+   * tp / leave-cover → delegate with mandatory start + end dates (RULES 3 & 4).
+   * Form Teacher is the subject "Form Teacher"; `isFormTeacher` on any
+   * other subject is ignored.
+   */
   assignTeacherToClass: async (
     teacherId: string,
     classId: string,
     subject: string,
-    isFormTeacher: boolean = false
+    isFormTeacher: boolean = false,
+    options: {
+      roleType?: AssignmentRoleType;
+      startDate?: Date;
+      endDate?: Date | null;
+      coversTeacherId?: string | null;
+    } = {}
   ): Promise<void> => {
-    try {
-      console.log('Starting teacher assignment:', { teacherId, classId, subject, isFormTeacher });
-
-      const isFormTeacherAssignment = isFormTeacher && subject === 'Form Teacher';
-
-      if (!subject || subject.trim() === '') {
-        if (isFormTeacher) {
-          subject = 'Form Teacher';
-        } else {
-          throw new Error('Subject is required when assigning a teacher to a class');
-        }
-      }
-
-      const normalizedSubject = !isFormTeacherAssignment ? normalizeSubjectName(subject) : 'form-teacher';
-      console.log(`Normalized subject: ${subject} → ${normalizedSubject}`);
-
-      const teacherRef = doc(db, 'users', teacherId);
-      const teacherDoc = await getDoc(teacherRef);
-
-      if (!teacherDoc.exists()) {
-        throw new Error('Teacher not found');
-      }
-
-      const teacherData = teacherDoc.data() as DocumentData;
-
-      if (!isFormTeacherAssignment) {
-        const teacherSubjects = (teacherData.subjects || []).map((s: string) => s.toString());
-        const normalizedTeacherSubjects = teacherSubjects.map((s: string) => normalizeSubjectName(s));
-
-        if (!normalizedTeacherSubjects.includes(normalizedSubject)) {
-          console.warn(`Teacher does not have ${subject} in their subjects list:`, teacherSubjects);
-          console.warn('Proceeding with assignment anyway...');
-        }
-      }
-
-      const classRef = doc(db, 'classes', classId);
-      const classDoc = await getDoc(classRef);
-
-      if (!classDoc.exists()) {
-        throw new Error('Class not found');
-      }
-
-      const classData = classDoc.data() as DocumentData;
-
-      console.log('Teacher and class data retrieved successfully');
-
-      const existingAssignmentsRef = collection(db, 'teacher_assignments');
-
-      const sameSubjectQuery = query(
-        existingAssignmentsRef,
-        where('teacherId', '==', teacherId),
-        where('classId', '==', classId),
-        where('subject', '==', subject)
+    const roleType: AssignmentRoleType = options.roleType || 'substantive';
+    let subjectName = (subject || '').trim();
+    if (!subjectName && isFormTeacher) subjectName = FORM_TEACHER_SUBJECT;
+    if (isFormTeacher && subjectName !== FORM_TEACHER_SUBJECT) {
+      console.warn(
+        `isFormTeacher=true ignored for "${subjectName}". Assign "${FORM_TEACHER_SUBJECT}" separately.`
       );
-      const sameSubjectSnapshot = await getDocs(sameSubjectQuery);
-
-      if (!sameSubjectSnapshot.empty) {
-        const existingAssignment = sameSubjectSnapshot.docs[0];
-        const existingData = existingAssignment.data();
-
-        if (isFormTeacher !== existingData.isFormTeacher) {
-          const batch = writeBatch(db);
-
-          batch.update(existingAssignment.ref, {
-            isFormTeacher,
-            updatedAt: serverTimestamp(),
-          });
-
-          if (isFormTeacher) {
-            if (classData.formTeacherId && classData.formTeacherId !== teacherId) {
-              throw new Error(`Class already has a form teacher (${classData.formTeacherName || classData.formTeacherId}). A class can only have one form teacher.`);
-            }
-
-            batch.update(classRef, {
-              formTeacherId: teacherId,
-              formTeacherName: teacherData.fullName || teacherData.name,
-              updatedAt: serverTimestamp(),
-            });
-          } else if (existingData.isFormTeacher && !isFormTeacher) {
-            batch.update(classRef, {
-              formTeacherId: null,
-              formTeacherName: null,
-              updatedAt: serverTimestamp(),
-            });
-          }
-
-          if (isFormTeacher !== teacherData.isFormTeacher) {
-            batch.update(teacherRef, {
-              isFormTeacher,
-              updatedAt: serverTimestamp(),
-            });
-          }
-
-          await batch.commit();
-          console.log('Updated existing assignment form teacher status');
-        } else {
-          console.log('Assignment already exists with same subject');
-        }
-        return;
-      }
-
-      if (isFormTeacher) {
-        if (classData.formTeacherId && classData.formTeacherId !== teacherId) {
-          throw new Error(`Class already has a form teacher (${classData.formTeacherName || classData.formTeacherId}). A class can only have one form teacher.`);
-        }
-      }
-
-      const batch = writeBatch(db);
-
-      const assignmentRef = doc(collection(db, 'teacher_assignments'));
-      batch.set(assignmentRef, {
-        teacherId,
-        teacherName: teacherData.fullName || teacherData.name,
-        teacherEmail: teacherData.email,
-        classId,
-        className: classData.name,
-        subject,
-        normalizedSubject: isFormTeacherAssignment ? 'form-teacher' : normalizedSubject,
-        isFormTeacher,
-        assignedAt: serverTimestamp(),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-
-      console.log('Teacher assignment document queued with subject:', subject);
-
-      const teachersArray = classData.teachers || [];
-      if (!teachersArray.includes(teacherId)) {
-        batch.update(classRef, {
-          teachers: arrayUnion(teacherId),
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      if (isFormTeacher) {
-        batch.update(classRef, {
-          formTeacherId: teacherId,
-          formTeacherName: teacherData.fullName || teacherData.name,
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      console.log('Class document update queued');
-
-      const teacherUpdates: any = {
-        updatedAt: serverTimestamp(),
-      };
-
-      const assignedClasses = teacherData.assignedClasses || [];
-      if (!assignedClasses.includes(classId)) {
-        teacherUpdates.assignedClasses = arrayUnion(classId);
-      }
-
-      if (isFormTeacher && !teacherData.isFormTeacher) {
-        teacherUpdates.isFormTeacher = true;
-      }
-
-      teacherUpdates.assignedClassId = classId;
-      teacherUpdates.assignedClassName = classData.name;
-
-      batch.update(teacherRef, teacherUpdates);
-
-      console.log('Teacher user document update queued');
-
-      await batch.commit();
-      console.log('Batch commit successful - teacher assigned with subject!');
-
-    } catch (error) {
-      console.error('Error in assignTeacherToClass:', error);
-      throw error;
     }
+
+    if (roleType === 'substantive') {
+      await assignmentEngine.assignOwner({
+        teacherId,
+        classId,
+        subject: subjectName,
+        startDate: options.startDate,
+      });
+      return;
+    }
+
+    if (!options.endDate) {
+      throw new assignmentEngine.AssignmentRuleError(
+        'DATES_REQUIRED',
+        'Covering and TP assignments require an end date.'
+      );
+    }
+    await assignmentEngine.assignDelegate({
+      teacherId,
+      classId,
+      subject: subjectName,
+      role: roleType as assignmentEngine.DelegateRole,
+      startDate: options.startDate ?? new Date(),
+      endDate: options.endDate,
+    });
   },
 
   assignFormTeacherOnly: async (teacherId: string, classId: string): Promise<void> => {
-    return teacherService.assignTeacherToClass(teacherId, classId, 'Form Teacher', true);
+    await assignmentEngine.assignOwner({ teacherId, classId, subject: FORM_TEACHER_SUBJECT });
+  },
+
+  /**
+   * End one assignment row.
+   *   delegate row → delegation ends, owner operates again (handback).
+   *   owner row    → owner vacates the slot (a running cover continues).
+   *   stale legacy row not referenced by a slot → just archived.
+   */
+  endAssignment: async (
+    assignmentId: string,
+    reason: AssignmentEndReason = 'removed'
+  ): Promise<void> => {
+    const ref = doc(db, 'teacher_assignments', assignmentId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error('Assignment not found');
+    const data = snap.data() as DocumentData;
+    if (data.status === 'ended') return;
+
+    const role = roleOf(data);
+    const slotId =
+      data.slotId || assignmentEngine.slotIdForNormalized(data.classId, rowNormalizedSubject(data));
+    const engineReason = toEngineReason(reason, role);
+
+    const handled = isCoverRole(role)
+      ? await assignmentEngine.endDelegation(slotId, engineReason, { expectedAssignmentId: assignmentId })
+      : await assignmentEngine.removeOwner(slotId, engineReason, { expectedAssignmentId: assignmentId });
+
+    if (!handled) {
+      // Row isn't the slot's current owner/delegate (legacy leftover) — archive it.
+      await updateDoc(ref, {
+        status: 'ended',
+        endReason: engineReason,
+        endDate: Timestamp.fromDate(new Date()),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  },
+
+  /**
+   * Same-kind duplicates on a slot (2+ owners or 2+ covers). Owner + one
+   * cover is NOT an overlap. Use this to populate the Overlaps modal so
+   * detection and resolution agree.
+   */
+  findSlotOverlaps: (classNames?: Record<string, string>) =>
+    assignmentEngine.findSlotOverlaps(classNames),
+
+  /** Keep one assignment, archive the other same-kind rows on that slot. */
+  resolveSlotConflict: async (
+    classId: string,
+    normalizedSubject: string,
+    keepAssignmentId: string
+  ): Promise<assignmentEngine.ResolveResult> => {
+    return assignmentEngine.resolveSlotOverlap(classId, normalizedSubject, keepAssignmentId);
+  },
+
+  /** Tidies expired covers/TP in the log. Authority already reverted at expiry. */
+  reactivateExpiredCovers: async (): Promise<number> => {
+    try {
+      return await assignmentEngine.closeExpiredDelegations();
+    } catch (error) {
+      console.error('Error closing expired delegations:', error);
+      return 0;
+    }
   },
 
   getTeacherSubjectsForClass: async (teacherId: string, classId: string): Promise<string[]> => {
     try {
-      const assignmentsRef = collection(db, 'teacher_assignments');
-      const q = query(
-        assignmentsRef,
-        where('teacherId', '==', teacherId),
-        where('classId', '==', classId)
-      );
-
-      const snapshot = await getDocs(q);
-      const subjects = snapshot.docs
-        .map(docSnapshot => {
-          const data = docSnapshot.data();
-          if (data.subject === 'Form Teacher' && !data.isFormTeacher) {
-            return null;
-          }
-          return data.subject;
-        })
-        .filter(subject => subject !== null);
-
-      console.log(`📚 Teacher ${teacherId} teaches subjects in class ${classId}:`, subjects);
-      return subjects;
+      const slots = await assignmentEngine.getSlotsForClass(classId);
+      const now = new Date();
+      return slots
+        .filter(
+          s =>
+            s.ownerTeacherId === teacherId ||
+            (s.delegateTeacherId === teacherId &&
+              assignmentEngine.delegationState(s, now) !== 'expired')
+        )
+        .map(s => s.subject);
     } catch (error) {
       console.error('Error getting teacher subjects for class:', error);
       return [];
@@ -1718,243 +1830,135 @@ const teacherService = {
 
   isFormTeacherForClass: async (teacherId: string, classId: string): Promise<boolean> => {
     try {
-      const classDoc = await getDoc(doc(db, 'classes', classId));
-      if (!classDoc.exists()) return false;
-
-      const classData = classDoc.data();
-      return classData.formTeacherId === teacherId;
+      const slot = await assignmentEngine.getSlot(classId, FORM_TEACHER_SUBJECT);
+      return slot?.ownerTeacherId === teacherId;
     } catch (error) {
       console.error('Error checking form teacher status:', error);
       return false;
     }
   },
 
-  updateTeacherStatus: async (teacherId: string, status: 'active' | 'inactive' | 'on_leave' | 'transferred'): Promise<void> => {
-    try {
-      const teacherRef = doc(db, 'users', teacherId);
-      await updateDoc(teacherRef, {
-        status,
-        updatedAt: serverTimestamp()
-      });
-      console.log(`✅ Updated teacher ${teacherId} status to ${status}`);
-    } catch (error) {
-      console.error('Error updating teacher status:', error);
-      throw error;
+  /**
+   * on_leave            → status only; ownership untouched. Assign covers next.
+   * on_leave → active   → "Return to Duty": leave covers end, TP continues.
+   * other               → status only.
+   */
+  updateTeacherStatus: async (
+    teacherId: string,
+    status: 'active' | 'inactive' | 'on_leave' | 'transferred'
+  ): Promise<void> => {
+    const teacherDoc = await getDoc(doc(db, 'users', teacherId));
+    if (!teacherDoc.exists()) throw new Error('Teacher not found');
+    const previous = teacherDoc.data().status || 'active';
+
+    if (status === 'on_leave' && previous !== 'on_leave') {
+      await assignmentEngine.setTeacherOnLeave(teacherId);
+      return;
     }
+    if (status === 'active' && previous === 'on_leave') {
+      await assignmentEngine.returnTeacherToDuty(teacherId);
+      return;
+    }
+    await updateDoc(doc(db, 'users', teacherId), { status, updatedAt: serverTimestamp() });
   },
 
   updateTeacher: async (teacherId: string, updates: Partial<Teacher>): Promise<void> => {
     try {
       const teacherRef = doc(db, 'users', teacherId);
       const teacherDoc = await getDoc(teacherRef);
-      if (!teacherDoc.exists()) {
-        throw new Error('Teacher not found');
-      }
+      if (!teacherDoc.exists()) throw new Error('Teacher not found');
+      const current = teacherDoc.data() as DocumentData;
 
-      const firestoreUpdates: any = {
-        updatedAt: serverTimestamp()
-      };
+      const firestoreUpdates: Record<string, any> = { updatedAt: serverTimestamp() };
+      const nameChanged =
+        updates.name !== undefined &&
+        updates.name.trim() !== '' &&
+        updates.name !== (current.fullName || current.name);
 
       if (updates.name !== undefined) {
         firestoreUpdates.fullName = updates.name;
         firestoreUpdates.name = updates.name;
       }
-
       if (updates.email !== undefined) firestoreUpdates.email = updates.email;
       if (updates.phone !== undefined) firestoreUpdates.phone = updates.phone;
       if (updates.department !== undefined) firestoreUpdates.department = updates.department;
       if (updates.subjects !== undefined) firestoreUpdates.subjects = updates.subjects;
-      if (updates.status !== undefined) firestoreUpdates.status = updates.status;
+      if (updates.dateOfBirth !== undefined) {
+        firestoreUpdates.dateOfBirth = normalizeDateOfBirth(updates.dateOfBirth);
+      }
 
       await updateDoc(teacherRef, firestoreUpdates);
-      console.log(`✅ Updated teacher ${teacherId}`);
+
+      // Keep denormalized names in sync on slots, open rows and class pointers.
+      // (Ended history rows keep the name as it was at the time.)
+      if (nameChanged) {
+        const newName = updates.name!;
+        const [openRows, slotRows, classRows] = await Promise.all([
+          getDocs(query(collection(db, 'teacher_assignments'), where('teacherId', '==', teacherId), where('status', '==', 'active'))),
+          assignmentEngine.getSlotsForTeacher(teacherId),
+          getDocs(query(collection(db, 'classes'), where('formTeacherId', '==', teacherId))),
+        ]);
+        const batch = writeBatch(db);
+        openRows.docs.forEach(d => batch.update(d.ref, { teacherName: newName, updatedAt: serverTimestamp() }));
+        slotRows.forEach(({ slot, relation }) =>
+          batch.update(doc(db, 'class_slots', slot.id), {
+            [relation === 'owner' ? 'ownerTeacherName' : 'delegateTeacherName']: newName,
+            updatedAt: serverTimestamp(),
+          })
+        );
+        classRows.docs.forEach(d => batch.update(d.ref, { formTeacherName: newName, updatedAt: serverTimestamp() }));
+        await batch.commit();
+      }
+
+      if (updates.status !== undefined && updates.status !== (current.status || 'active')) {
+        await teacherService.updateTeacherStatus(teacherId, updates.status as any);
+      }
     } catch (error) {
       console.error('Error updating teacher:', error);
       throw error;
     }
   },
 
+  /**
+   * Blocks while the teacher holds any role. History rows, results and
+   * attendance are never deleted (names are denormalized on them).
+   * Prefer setting status 'inactive' over deleting.
+   */
   deleteTeacher: async (teacherId: string): Promise<void> => {
-    try {
-      const assignments = await teacherService.getTeacherAssignments(teacherId);
-
-      if (assignments.length > 0) {
-        throw new Error(`Cannot delete teacher with ${assignments.length} class assignments. Remove assignments first.`);
-      }
-
-      const teacherRef = doc(db, 'users', teacherId);
-      await deleteDoc(teacherRef);
-      console.log(`✅ Teacher ${teacherId} permanently deleted`);
-    } catch (error) {
-      console.error('Error deleting teacher:', error);
-      throw error;
+    const roles = await assignmentEngine.getSlotsForTeacher(teacherId);
+    const now = new Date();
+    const live = roles.filter(
+      r => r.relation === 'owner' || assignmentEngine.delegationState(r.slot, now) !== 'expired'
+    );
+    if (live.length > 0) {
+      throw new Error(
+        `Cannot delete: teacher still holds ${live.length} role(s) ` +
+        `(${live.map(r => `${r.slot.subject} ${r.slot.className}`).join(', ')}). Remove or transfer them first.`
+      );
     }
+    await deleteDoc(doc(db, 'users', teacherId));
   },
 
+  /** Remove one subject (or the Form Teacher role) from a teacher in a class. */
   removeTeacherSubject: async (teacherId: string, classId: string, subject: string): Promise<void> => {
-    try {
-      console.log('Removing teacher subject:', { teacherId, classId, subject });
-
-      const assignmentsRef = collection(db, 'teacher_assignments');
-      const q = query(
-        assignmentsRef,
-        where('teacherId', '==', teacherId),
-        where('classId', '==', classId),
-        where('subject', '==', subject)
-      );
-
-      const snapshot = await getDocs(q);
-
-      if (snapshot.empty) {
-        throw new Error(`Assignment not found for subject: ${subject}`);
-      }
-
-      const batch = writeBatch(db);
-      let wasFormTeacher = false;
-
-      snapshot.forEach(docSnapshot => {
-        const data = docSnapshot.data();
-        wasFormTeacher = data.isFormTeacher || false;
-        batch.delete(docSnapshot.ref);
+    const slot = await assignmentEngine.getSlot(classId, subject);
+    if (slot?.ownerTeacherId === teacherId) {
+      await assignmentEngine.removeOwner(slot.id, 'removed', {
+        expectedAssignmentId: slot.ownerAssignmentId ?? undefined,
       });
-
-      const remainingQuery = query(
-        assignmentsRef,
-        where('teacherId', '==', teacherId),
-        where('classId', '==', classId)
-      );
-      const remainingSnapshot = await getDocs(remainingQuery);
-
-      const teacherRef = doc(db, 'users', teacherId);
-      const classRef = doc(db, 'classes', classId);
-
-      if (remainingSnapshot.empty) {
-        batch.update(teacherRef, {
-          assignedClasses: arrayRemove(classId),
-          updatedAt: serverTimestamp()
-        });
-
-        batch.update(classRef, {
-          teachers: arrayRemove(teacherId),
-          updatedAt: serverTimestamp()
-        });
-
-        if (wasFormTeacher) {
-          batch.update(classRef, {
-            formTeacherId: null,
-            formTeacherName: null,
-          });
-
-          const otherClassesQuery = query(
-            collection(db, 'classes'),
-            where('formTeacherId', '==', teacherId)
-          );
-          const otherClassesSnapshot = await getDocs(otherClassesQuery);
-
-          if (otherClassesSnapshot.empty) {
-            batch.update(teacherRef, { isFormTeacher: false });
-          }
-        }
-      } else {
-        if (wasFormTeacher) {
-          const hasFormTeacherRemaining = remainingSnapshot.docs.some(
-            docSnapshot => docSnapshot.data().isFormTeacher === true
-          );
-
-          if (!hasFormTeacherRemaining) {
-            batch.update(classRef, {
-              formTeacherId: null,
-              formTeacherName: null,
-              updatedAt: serverTimestamp()
-            });
-
-            const otherClassesQuery = query(
-              collection(db, 'classes'),
-              where('formTeacherId', '==', teacherId)
-            );
-            const otherClassesSnapshot = await getDocs(otherClassesQuery);
-
-            if (otherClassesSnapshot.empty) {
-              batch.update(teacherRef, { isFormTeacher: false });
-            }
-          }
-        }
-      }
-
-      await batch.commit();
-      console.log(`✅ Removed subject ${subject} from teacher ${teacherId} in class ${classId}`);
-    } catch (error) {
-      console.error('Error removing teacher subject:', error);
-      throw error;
+      return;
     }
+    if (slot?.delegateTeacherId === teacherId) {
+      await assignmentEngine.endDelegation(slot.id, 'cancelled', {
+        expectedAssignmentId: slot.delegateAssignmentId ?? undefined,
+      });
+      return;
+    }
+    throw new Error(`${subject} is not currently assigned to this teacher in this class.`);
   },
 
   removeTeacherFromClass: async (teacherId: string, classId: string): Promise<void> => {
-    try {
-      console.log('Starting teacher removal:', { teacherId, classId });
-
-      const teacherRef = doc(db, 'users', teacherId);
-      const teacherDoc = await getDoc(teacherRef);
-
-      if (!teacherDoc.exists()) {
-        throw new Error('Teacher not found');
-      }
-
-      const teacherData = teacherDoc.data() as DocumentData;
-
-      const batch = writeBatch(db);
-
-      const assignmentsRef = collection(db, 'teacher_assignments');
-      const q = query(
-        assignmentsRef,
-        where('teacherId', '==', teacherId),
-        where('classId', '==', classId)
-      );
-
-      const assignmentSnapshot = await getDocs(q);
-      assignmentSnapshot.forEach(docSnapshot => {
-        batch.delete(docSnapshot.ref);
-      });
-
-      console.log('Teacher assignment documents queued for deletion');
-
-      const classRef = doc(db, 'classes', classId);
-      const classDoc = await getDoc(classRef);
-
-      if (classDoc.exists()) {
-        const classData = classDoc.data() as DocumentData;
-
-        batch.update(classRef, {
-          teachers: arrayRemove(teacherId),
-          ...(classData.formTeacherId === teacherId && {
-            formTeacherId: null,
-            formTeacherName: null,
-          }),
-          updatedAt: serverTimestamp(),
-        });
-
-        console.log('Class document update queued');
-      }
-
-      batch.update(teacherRef, {
-        assignedClasses: arrayRemove(classId),
-        ...(teacherData.assignedClassId === classId && {
-          assignedClassId: null,
-          assignedClassName: null,
-          isFormTeacher: false,
-        }),
-        updatedAt: serverTimestamp(),
-      });
-
-      console.log('Teacher user document update queued');
-
-      await batch.commit();
-      console.log('Batch commit successful - teacher removed!');
-
-    } catch (error) {
-      console.error('Error in removeTeacherFromClass:', error);
-      throw error;
-    }
+    await assignmentEngine.removeTeacherFromClass(teacherId, classId, 'removed');
   },
 
   getTeacherFullAssignments: async (teacherId: string): Promise<{
@@ -1964,36 +1968,28 @@ const teacherService = {
     isFormTeacher: boolean;
   }[]> => {
     try {
-      const assignments = await teacherService.getTeacherAssignments(teacherId);
+      const rows = await assignmentEngine.getSlotsForTeacher(teacherId);
+      const now = new Date();
+      const byClass = new Map<string, { className: string; subjects: Set<string>; isFormTeacher: boolean }>();
 
-      const classMap = new Map<string, {
-        className: string;
-        subjects: Set<string>;
-        isFormTeacher: boolean;
-      }>();
-
-      assignments.forEach(assignment => {
-        if (!classMap.has(assignment.classId)) {
-          classMap.set(assignment.classId, {
-            className: assignment.className,
-            subjects: new Set(),
-            isFormTeacher: assignment.isFormTeacher,
-          });
+      for (const { slot, relation } of rows) {
+        if (relation === 'delegate' && assignmentEngine.delegationState(slot, now) === 'expired') continue;
+        if (!byClass.has(slot.classId)) {
+          byClass.set(slot.classId, { className: slot.className, subjects: new Set(), isFormTeacher: false });
         }
-
-        const classData = classMap.get(assignment.classId)!;
-        classData.subjects.add(assignment.subject);
-
-        if (assignment.isFormTeacher) {
-          classData.isFormTeacher = true;
+        const entry = byClass.get(slot.classId)!;
+        if (slot.isFormTeacherSlot) {
+          if (relation === 'owner') entry.isFormTeacher = true;
+        } else {
+          entry.subjects.add(slot.subject);
         }
-      });
+      }
 
-      return Array.from(classMap.entries()).map(([classId, data]) => ({
+      return Array.from(byClass.entries()).map(([classId, d]) => ({
         classId,
-        className: data.className,
-        subjects: Array.from(data.subjects).filter(s => s !== 'Form Teacher'),
-        isFormTeacher: data.isFormTeacher,
+        className: d.className,
+        subjects: Array.from(d.subjects),
+        isFormTeacher: d.isFormTeacher,
       }));
     } catch (error) {
       console.error('Error getting teacher full assignments:', error);
@@ -2001,94 +1997,26 @@ const teacherService = {
     }
   },
 
+  /** Atomic, conflict-free migration between classes (see engine). */
   transferTeacher: async (
     teacherId: string,
     fromClassId: string,
     toClassId: string,
     subjectMapping?: Record<string, string>
-  ): Promise<void> => {
-    try {
-      const assignments = await teacherService.getTeacherAssignments(teacherId);
-      const fromClassAssignments = assignments.filter(a => a.classId === fromClassId);
-
-      if (fromClassAssignments.length === 0) {
-        throw new Error('No assignments found for teacher in source class');
-      }
-
-      const batch = writeBatch(db);
-
-      const toClassDoc = await getDoc(doc(db, 'classes', toClassId));
-      if (!toClassDoc.exists()) {
-        throw new Error('Target class not found');
-      }
-      const toClassData = toClassDoc.data() as DocumentData;
-
-      const teacherDoc = await getDoc(doc(db, 'users', teacherId));
-      const teacherData = teacherDoc.exists() ? teacherDoc.data() : {};
-
-      for (const assignment of fromClassAssignments) {
-        const newSubject = subjectMapping?.[assignment.subject] || assignment.subject;
-
-        const newAssignmentRef = doc(collection(db, 'teacher_assignments'));
-        batch.set(newAssignmentRef, {
-          teacherId: assignment.teacherId,
-          teacherName: teacherData.fullName || teacherData.name,
-          teacherEmail: teacherData.email,
-          classId: toClassId,
-          className: toClassData.name,
-          subject: newSubject,
-          normalizedSubject: normalizeSubjectName(newSubject),
-          isFormTeacher: assignment.isFormTeacher,
-          assignedAt: serverTimestamp(),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-
-        const oldAssignmentRef = doc(db, 'teacher_assignments', assignment.id);
-        batch.delete(oldAssignmentRef);
-      }
-
-      const teacherRef = doc(db, 'users', teacherId);
-
-      batch.update(teacherRef, {
-        assignedClasses: arrayRemove(fromClassId),
-        updatedAt: serverTimestamp()
-      });
-
-      batch.update(teacherRef, {
-        assignedClasses: arrayUnion(toClassId),
-        assignedClassId: toClassId,
-        assignedClassName: toClassData.name,
-        updatedAt: serverTimestamp()
-      });
-
-      const fromClassRef = doc(db, 'classes', fromClassId);
-      batch.update(fromClassRef, {
-        teachers: arrayRemove(teacherId),
-        updatedAt: serverTimestamp()
-      });
-
-      const toClassRef = doc(db, 'classes', toClassId);
-      const updateData: any = {
-        teachers: arrayUnion(teacherId),
-        updatedAt: serverTimestamp()
-      };
-
-      if (fromClassAssignments.some(a => a.isFormTeacher)) {
-        updateData.formTeacherId = teacherId;
-        updateData.formTeacherName = teacherData.fullName || teacherData.name;
-      }
-
-      batch.update(toClassRef, updateData);
-
-      await batch.commit();
-      console.log(`✅ Transferred teacher ${teacherId} from ${fromClassId} to ${toClassId}`);
-    } catch (error) {
-      console.error('Error transferring teacher:', error);
-      throw error;
-    }
+  ): Promise<assignmentEngine.TransferReport> => {
+    return assignmentEngine.transferTeacher({ teacherId, fromClassId, toClassId, subjectMapping });
   },
+
+  // ── New capabilities ─────────────────────────────────────────────
+  setTeacherOnLeave: assignmentEngine.setTeacherOnLeave,
+  returnTeacherToDuty: assignmentEngine.returnTeacherToDuty,
+  handBackTp: assignmentEngine.handBackTp,
+  getUncoveredSlots: assignmentEngine.getUncoveredSlots,
+
+  /** One-off: build class_slots from existing rows. Run once after deploy. */
+  repairAssignments: (opts?: { dryRun?: boolean }) => assignmentEngine.migrateToSlots(opts),
 };
+
 
 // ==================== RESULTS ANALYSIS SERVICE ====================
 
@@ -2308,16 +2236,31 @@ const resultsAnalysisService = {
   }
 };
 
-// ==================== EXPORT ALL SERVICES ====================
+// ==================== EXPORT ALL SERVICES & HELPERS ====================
 export {
   classService,
   learnerService,
   teacherService,
   resultsAnalysisService,
+
   normalizeSubjectName,
+
   parseClassName,
   generateStudentId,
+  generateClassPrefix,
+  generateSequentialStudentId,
   calculateGenderStats,
   calculateAge,
   toDate,
+
+  normalizeDateOfBirth,
+  deriveBirthYearAndAge,
+
+  // New in this revision
+  mapAssignmentDoc,
+  parseLocalDateInput,
+  toEndOfDay,
+  formatLocalYMD,
+  FORM_TEACHER_SUBJECT,
+  assignmentEngine,
 };

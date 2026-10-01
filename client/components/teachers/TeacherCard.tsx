@@ -24,10 +24,45 @@ import {
   Briefcase,
   X,
   UserX,
-  Layers
+  Layers,
+  Clock,
+  UserCog,
 } from 'lucide-react';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { Teacher, TeacherStatus } from '@/types/teachers';
+import type {
+  TeacherAssignment,
+  AssignmentRoleType,
+} from '@/types/school';
+
+// ==================== SMALL HELPERS ====================
+
+const ROLE_LABELS: Record<AssignmentRoleType, string> = {
+  substantive: 'Substantive',
+  tp: 'Teaching Practice',
+  'leave-cover': 'Leave cover',
+};
+
+const ROLE_BADGE_CLASSES: Record<AssignmentRoleType, string> = {
+  substantive: 'bg-slate-100 text-slate-700 border-slate-200',
+  tp: 'bg-amber-50 text-amber-700 border-amber-200',
+  'leave-cover': 'bg-rose-50 text-rose-700 border-rose-200',
+};
+
+const formatShortDate = (d: Date | null | undefined): string => {
+  if (!d) return '';
+  try {
+    return d.toLocaleDateString(undefined, {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return '';
+  }
+};
+
+// ==================== PROPS ====================
 
 interface TeacherCardProps {
   teacher: Teacher;
@@ -44,10 +79,15 @@ interface TeacherCardProps {
   onRemoveAssignment: (classId: string, className: string) => void;
   onTransfer: (classId: string, className: string) => void;
   onViewLearners: (classId?: string) => void;
+
+  // NEW — optional, called by the per-subject End Cover button on cover rows
+  onEndCover?: (assignment: TeacherAssignment) => void;
 }
 
+// ==================== STATUS CONFIG ====================
+
 const getStatusConfig = (status: string = 'active') => {
-  switch(status) {
+  switch (status) {
     case 'active':
       return { bg: 'bg-green-100', text: 'text-green-800', icon: CheckCircle, label: 'Active' };
     case 'inactive':
@@ -60,6 +100,8 @@ const getStatusConfig = (status: string = 'active') => {
       return { bg: 'bg-green-100', text: 'text-green-800', icon: CheckCircle, label: 'Active' };
   }
 };
+
+// ==================== COMPONENT ====================
 
 export const TeacherCard: React.FC<TeacherCardProps> = ({
   teacher,
@@ -75,45 +117,58 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
   onRemoveSubject,
   onRemoveAssignment,
   onTransfer,
-  onViewLearners
+  onViewLearners,
+  onEndCover,
 }) => {
-  const { 
-    assignments = [], 
-    isLoading: isLoadingAssignments,
-    getClassesWithSubjects 
+  // Default `activeOnly: true` — we don't want ended history cluttering the card.
+  const {
+    assignments = [],
+    isFetching: isFetchingAssignments,
+    getClassesWithSubjectDetails,
   } = useTeacherAssignments(teacher.id);
 
   const [showActions, setShowActions] = useState(false);
   const [expandedClass, setExpandedClass] = useState<string | null>(null);
   const [expandedDetails, setExpandedDetails] = useState(false);
-  
+
   const teacherStatus = teacher.status || 'active';
   const StatusIcon = getStatusConfig(teacherStatus).icon;
-  
+
+  // Rich per-class view: { classId, className, isFormTeacher, subjectDetails[], ... }
   const assignmentsByClass = useMemo(() => {
-    return getClassesWithSubjects();
-  }, [assignments, getClassesWithSubjects]);
+    return getClassesWithSubjectDetails();
+  }, [assignments, getClassesWithSubjectDetails]);
+
+  // Quick lookups
+  const hasActiveCover = useMemo(
+    () =>
+      assignmentsByClass.some((c) =>
+        c.subjectDetails.some(
+          (s) => (s.roleType === 'tp' || s.roleType === 'leave-cover') && s.status === 'active'
+        )
+      ),
+    [assignmentsByClass]
+  );
 
   const getClassName = (classId: string): string => {
-    return classes.find(c => c.id === classId)?.name || 'Unknown Class';
+    return classes.find((c) => c.id === classId)?.name || 'Unknown Class';
   };
 
-  const getClass = (classId: string) => {
-    return classes.find(c => c.id === classId);
-  };
+  const getClass = (classId: string) => classes.find((c) => c.id === classId);
 
   return (
-    <div className="group bg-white rounded-xl border border-gray-200 p-5 
+    <div
+      className="group bg-white rounded-xl border border-gray-200 p-5 
                     shadow-sm hover:shadow-lg transition-all duration-300 
-                    hover:border-gray-300 hover:-translate-y-0.5 relative">
-      
-      {isLoadingAssignments && (
+                    hover:border-gray-300 hover:-translate-y-0.5 relative"
+    >
+      {isFetchingAssignments && assignments.length === 0 && (
         <div className="absolute inset-0 bg-white/80 rounded-xl flex items-center justify-center z-10">
           <Loader2 size={24} className="animate-spin text-blue-600" />
         </div>
       )}
 
-      {isUserAdmin && !isLoadingAssignments && (
+      {isUserAdmin && !isFetchingAssignments && (
         <div className="absolute top-4 right-4">
           <button
             onClick={() => setShowActions(!showActions)}
@@ -121,7 +176,7 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
           >
             <MoreVertical size={16} className="text-gray-500" />
           </button>
-          
+
           {showActions && (
             <div className="absolute right-0 mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20 max-h-96 overflow-y-auto">
               <button
@@ -134,7 +189,7 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
                 <Edit size={14} className="text-blue-600" />
                 <span>Edit Teacher</span>
               </button>
-              
+
               {assignmentsByClass.length > 0 && (
                 <button
                   onClick={() => {
@@ -147,15 +202,17 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
                   <span>Remove Multiple Assignments</span>
                 </button>
               )}
-              
+
               {assignmentsByClass.length > 0 && (
                 <>
                   <div className="border-t border-gray-100 my-1"></div>
-                  <div className="px-4 py-1 text-xs font-medium text-gray-500">CLASS ASSIGNMENTS</div>
-                  
-                  {assignmentsByClass.map(assignment => {
+                  <div className="px-4 py-1 text-xs font-medium text-gray-500">
+                    CLASS ASSIGNMENTS
+                  </div>
+
+                  {assignmentsByClass.map((assignment) => {
                     const className = getClassName(assignment.classId);
-                    
+
                     return (
                       <div key={assignment.classId} className="relative group/submenu">
                         <div className="px-4 py-2 text-left text-sm hover:bg-gray-50 cursor-default">
@@ -166,9 +223,9 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
                                 <Star size={12} className="text-purple-600 fill-purple-600" />
                               )}
                             </div>
-                            <ChevronDown size={14} className="rotate-270 ml-2 flex-shrink-0" />
+                            <ChevronDown size={14} className="ml-2 flex-shrink-0" />
                           </div>
-                          
+
                           <div className="absolute left-full top-0 ml-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 hidden group-hover/submenu:block z-30">
                             <button
                               onClick={() => {
@@ -180,10 +237,10 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
                               <Users size={14} />
                               <span>View Learners</span>
                             </button>
-                            
+
                             <div className="border-t border-gray-100 my-1"></div>
 
-                            {assignment.subjects.map(subject => (
+                            {assignment.subjects.map((subject) => (
                               <button
                                 key={subject}
                                 onClick={() => {
@@ -196,7 +253,7 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
                                 <span>Remove {subject}</span>
                               </button>
                             ))}
-                            
+
                             {assignment.isFormTeacher && (
                               <button
                                 onClick={() => {
@@ -209,11 +266,11 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
                                 <span>Remove Form Teacher</span>
                               </button>
                             )}
-                            
+
                             {assignment.subjects.length > 0 && (
                               <div className="border-t border-gray-100 my-1"></div>
                             )}
-                            
+
                             <button
                               onClick={() => {
                                 setShowActions(false);
@@ -224,7 +281,7 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
                               <X size={14} />
                               <span>Remove Entire Assignment</span>
                             </button>
-                            
+
                             <button
                               onClick={() => {
                                 setShowActions(false);
@@ -235,7 +292,7 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
                               <UserX size={14} />
                               <span>Remove All from Class</span>
                             </button>
-                            
+
                             <button
                               onClick={() => {
                                 setShowActions(false);
@@ -253,9 +310,9 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
                   })}
                 </>
               )}
-              
+
               <div className="border-t border-gray-100 my-1"></div>
-              
+
               <button
                 onClick={() => {
                   setShowActions(false);
@@ -266,7 +323,9 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
               >
                 <CheckCircle size={14} className="text-green-600" />
                 <span>Set Active</span>
-                {teacherStatus === 'active' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                {teacherStatus === 'active' && (
+                  <span className="ml-auto text-xs text-gray-400">✓</span>
+                )}
               </button>
               <button
                 onClick={() => {
@@ -278,7 +337,9 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
               >
                 <PowerOff size={14} className="text-gray-600" />
                 <span>Set Inactive</span>
-                {teacherStatus === 'inactive' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                {teacherStatus === 'inactive' && (
+                  <span className="ml-auto text-xs text-gray-400">✓</span>
+                )}
               </button>
               <button
                 onClick={() => {
@@ -290,7 +351,9 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
               >
                 <XCircle size={14} className="text-yellow-600" />
                 <span>Set On Leave</span>
-                {teacherStatus === 'on_leave' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                {teacherStatus === 'on_leave' && (
+                  <span className="ml-auto text-xs text-gray-400">✓</span>
+                )}
               </button>
               <button
                 onClick={() => {
@@ -302,11 +365,13 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
               >
                 <RefreshCw size={14} className="text-blue-600" />
                 <span>Set Transferred</span>
-                {teacherStatus === 'transferred' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                {teacherStatus === 'transferred' && (
+                  <span className="ml-auto text-xs text-gray-400">✓</span>
+                )}
               </button>
-              
+
               <div className="border-t border-gray-100 my-1"></div>
-              
+
               <button
                 onClick={() => {
                   setShowActions(false);
@@ -322,6 +387,7 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
         </div>
       )}
 
+      {/* ── Header ───────────────────────────────────────────────── */}
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-12 h-12 bg-gradient-to-br from-blue-50 to-blue-100 
@@ -329,19 +395,28 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
             <User size={22} className="text-blue-600" />
           </div>
           <div className="min-w-0">
-            <h3 className="font-bold text-gray-900 truncate">
-              {teacher.name}
-            </h3>
+            <h3 className="font-bold text-gray-900 truncate">{teacher.name}</h3>
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getStatusConfig(teacherStatus).bg} ${getStatusConfig(teacherStatus).text}`}>
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getStatusConfig(teacherStatus).bg} ${getStatusConfig(teacherStatus).text}`}
+              >
                 <StatusIcon size={10} />
                 {getStatusConfig(teacherStatus).label}
               </span>
+
+              {/* NEW: On Cover chip */}
+              {hasActiveCover && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-rose-50 text-rose-700 border border-rose-200">
+                  <Clock size={10} />
+                  On cover
+                </span>
+              )}
             </div>
           </div>
         </div>
       </div>
 
+      {/* ── Contact ──────────────────────────────────────────────── */}
       <div className="space-y-2 mb-4">
         <div className="flex items-center gap-2 text-sm">
           <Mail size={14} className="text-gray-400 flex-shrink-0" />
@@ -353,13 +428,18 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
             <span className="text-gray-700 truncate">{teacher.phone}</span>
           </div>
         )}
-        
+
         <button
           onClick={() => setExpandedDetails(!expandedDetails)}
           className="w-full flex items-center justify-between text-xs text-blue-600 hover:text-blue-800 mt-1"
         >
-          <span className="font-medium">{expandedDetails ? 'Hide details' : 'Show all details'}</span>
-          <ChevronDown size={14} className={`transition-transform duration-200 ${expandedDetails ? 'rotate-180' : ''}`} />
+          <span className="font-medium">
+            {expandedDetails ? 'Hide details' : 'Show all details'}
+          </span>
+          <ChevronDown
+            size={14}
+            className={`transition-transform duration-200 ${expandedDetails ? 'rotate-180' : ''}`}
+          />
         </button>
       </div>
 
@@ -368,43 +448,60 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
           {teacher.nrc && (
             <div className="flex items-center gap-2">
               <CreditCard size={12} className="text-gray-500" />
-              <span className="text-gray-700"><span className="font-medium">NRC:</span> {teacher.nrc}</span>
+              <span className="text-gray-700">
+                <span className="font-medium">NRC:</span> {teacher.nrc}
+              </span>
             </div>
           )}
           {teacher.tsNumber && (
             <div className="flex items-center gap-2">
               <Hash size={12} className="text-gray-500" />
-              <span className="text-gray-700"><span className="font-medium">TS #:</span> {teacher.tsNumber}</span>
+              <span className="text-gray-700">
+                <span className="font-medium">TS #:</span> {teacher.tsNumber}
+              </span>
             </div>
           )}
           {teacher.employeeNumber && (
             <div className="flex items-center gap-2">
               <Briefcase size={12} className="text-gray-500" />
-              <span className="text-gray-700"><span className="font-medium">Employee #:</span> {teacher.employeeNumber}</span>
+              <span className="text-gray-700">
+                <span className="font-medium">Employee #:</span> {teacher.employeeNumber}
+              </span>
             </div>
           )}
           {teacher.department && (
             <div className="flex items-center gap-2">
               <BookOpen size={12} className="text-gray-500" />
-              <span className="text-gray-700"><span className="font-medium">Department:</span> {teacher.department}</span>
+              <span className="text-gray-700">
+                <span className="font-medium">Department:</span> {teacher.department}
+              </span>
             </div>
           )}
           {teacher.dateOfBirth && (
             <div className="flex items-center gap-2">
               <Calendar size={12} className="text-gray-500" />
-              <span className="text-gray-700"><span className="font-medium">DOB:</span> {new Date(teacher.dateOfBirth).toLocaleDateString()}</span>
+              <span className="text-gray-700">
+                <span className="font-medium">DOB:</span>{' '}
+                {new Date(teacher.dateOfBirth).toLocaleDateString()}
+              </span>
             </div>
           )}
           {teacher.dateOfFirstAppointment && (
             <div className="flex items-center gap-2">
               <Calendar size={12} className="text-gray-500" />
-              <span className="text-gray-700"><span className="font-medium">First Appt:</span> {new Date(teacher.dateOfFirstAppointment).toLocaleDateString()}</span>
+              <span className="text-gray-700">
+                <span className="font-medium">First Appt:</span>{' '}
+                {new Date(teacher.dateOfFirstAppointment).toLocaleDateString()}
+              </span>
             </div>
           )}
           {teacher.dateOfCurrentAppointment && (
             <div className="flex items-center gap-2">
               <Calendar size={12} className="text-gray-500" />
-              <span className="text-gray-700"><span className="font-medium">Current Appt:</span> {new Date(teacher.dateOfCurrentAppointment).toLocaleDateString()}</span>
+              <span className="text-gray-700">
+                <span className="font-medium">Current Appt:</span>{' '}
+                {new Date(teacher.dateOfCurrentAppointment).toLocaleDateString()}
+              </span>
             </div>
           )}
         </div>
@@ -415,7 +512,10 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
           <p className="text-xs text-gray-500 mb-1">Subjects Qualified:</p>
           <div className="flex flex-wrap gap-1">
             {teacher.subjects.slice(0, 3).map((subject, idx) => (
-              <span key={idx} className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">
+              <span
+                key={idx}
+                className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full"
+              >
                 {subject}
               </span>
             ))}
@@ -428,19 +528,20 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
         </div>
       )}
 
+      {/* ── Assignments ──────────────────────────────────────────── */}
       <div className="border-t border-gray-100 pt-4">
         {assignmentsByClass.length > 0 ? (
           <div>
             <p className="text-xs text-gray-500 mb-2">Currently assigned to</p>
             <div className="space-y-3">
-              {assignmentsByClass.map(assignment => {
+              {assignmentsByClass.map((assignment) => {
                 const className = getClassName(assignment.classId);
                 const classObj = getClass(assignment.classId);
                 const isExpanded = expandedClass === assignment.classId;
-                
+
                 return (
                   <div key={assignment.classId} className="space-y-2">
-                    <div 
+                    <div
                       className="flex items-center justify-between cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
                       onClick={() => setExpandedClass(isExpanded ? null : assignment.classId)}
                     >
@@ -456,45 +557,119 @@ export const TeacherCard: React.FC<TeacherCardProps> = ({
                           )}
                         </span>
                       </div>
-                      <ChevronRight 
-                        size={14} 
-                        className={`text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} 
+                      <ChevronRight
+                        size={14}
+                        className={`text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
                       />
                     </div>
-                    
+
                     {isExpanded && (
                       <div className="pl-6 space-y-2 animate-in slide-in-from-top duration-200">
-                        {assignment.subjects.length > 0 ? (
+                        {/* Per-subject rows with role + date + End Cover button */}
+                        {assignment.subjectDetails.length > 0 ? (
                           <div>
-                            <p className="text-xs font-medium text-gray-500 mb-1">Subjects Teaching:</p>
-                            <div className="flex flex-wrap gap-1">
-                              {assignment.subjects.map((subject, idx) => (
-                                <span 
-                                  key={idx}
-                                  className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full"
-                                >
-                                  {subject}
-                                </span>
-                              ))}
+                            <p className="text-xs font-medium text-gray-500 mb-1">
+                              Subjects Teaching:
+                            </p>
+                            <div className="space-y-1.5">
+                              {assignment.subjectDetails.map((s) => {
+                                const isCover =
+                                  s.roleType === 'tp' || s.roleType === 'leave-cover';
+                                const isSuspended = s.status === 'suspended';
+                                const roleLabel = ROLE_LABELS[s.roleType] || s.roleType;
+                                const roleCls =
+                                  ROLE_BADGE_CLASSES[s.roleType] ||
+                                  'bg-gray-100 text-gray-700 border-gray-200';
+
+                                return (
+                                  <div
+                                    key={s.assignmentId}
+                                    className="flex flex-wrap items-center gap-1.5 text-xs"
+                                  >
+                                    <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">
+                                      {s.subject}
+                                    </span>
+
+                                    <span
+                                      className={`inline-flex items-center px-1.5 py-0.5 rounded-full border text-[10px] font-semibold uppercase tracking-wider ${roleCls}`}
+                                    >
+                                      {roleLabel}
+                                    </span>
+
+                                    {isSuspended && (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-yellow-50 text-yellow-700 border border-yellow-200 text-[10px] font-semibold uppercase tracking-wider">
+                                        Suspended
+                                      </span>
+                                    )}
+
+                                    {isCover && s.endDate && (
+                                      <span className="inline-flex items-center gap-1 text-[11px] text-gray-500">
+                                        <Clock size={10} />
+                                        Until {formatShortDate(s.endDate)}
+                                      </span>
+                                    )}
+
+                                    {isCover && !s.endDate && (
+                                      <span className="inline-flex items-center gap-1 text-[11px] text-gray-500">
+                                        <Clock size={10} />
+                                        Open-ended
+                                      </span>
+                                    )}
+
+                                    {isCover && isUserAdmin && onEndCover && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          // Build a minimal TeacherAssignment shape the caller can consume
+                                          onEndCover({
+                                            id: s.assignmentId,
+                                            teacherId: teacher.id,
+                                            teacherName: teacher.name,
+                                            classId: assignment.classId,
+                                            className,
+                                            subject: s.subject,
+                                            normalizedSubjectId: s.normalizedSubjectId,
+                                            isFormTeacher: s.isFormTeacher,
+                                            roleType: s.roleType,
+                                            status: s.status,
+                                            startDate: s.startDate ?? undefined,
+                                            endDate: s.endDate ?? null,
+                                          } as TeacherAssignment);
+                                        }}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-md transition-colors"
+                                        title="End this cover assignment"
+                                      >
+                                        <UserCog size={10} /> End cover
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         ) : assignment.isFormTeacher ? (
-                          <p className="text-xs text-gray-500 italic">Form teacher only (no subjects)</p>
+                          <p className="text-xs text-gray-500 italic">
+                            Form teacher only (no subjects)
+                          </p>
                         ) : null}
-                        
+
                         {classObj && (
                           <div className="grid grid-cols-2 gap-2 mt-2">
                             <div className="bg-gray-50 p-2 rounded-lg">
                               <p className="text-[0.6rem] text-gray-500">Students</p>
-                              <p className="text-sm font-semibold text-gray-900">{classObj.students || 0}</p>
+                              <p className="text-sm font-semibold text-gray-900">
+                                {classObj.students || 0}
+                              </p>
                             </div>
                             <div className="bg-gray-50 p-2 rounded-lg">
                               <p className="text-[0.6rem] text-gray-500">Year</p>
-                              <p className="text-sm font-semibold text-gray-900">{classObj.year || 'N/A'}</p>
+                              <p className="text-sm font-semibold text-gray-900">
+                                {classObj.year || 'N/A'}
+                              </p>
                             </div>
                           </div>
                         )}
-                        
+
                         <div className="flex gap-2 mt-2">
                           <button
                             onClick={(e) => {

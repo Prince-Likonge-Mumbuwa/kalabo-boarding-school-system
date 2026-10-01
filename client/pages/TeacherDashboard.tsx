@@ -1,4 +1,4 @@
-// @/pages/teacher/TeacherDashboard.tsx - FULLY UPDATED WITH RESULTS WARNING
+// @/pages/teacher/TeacherDashboard.tsx
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
@@ -7,12 +7,13 @@ import { useResultsAnalytics } from '@/hooks/useResults';
 import { attendanceService, AttendanceRecord } from '@/services/attendanceService';
 import { useAttendanceAnalytics } from '@/hooks/useAttendanceAnalytics';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { useAcademicTerm } from '@/hooks/useAcademicTerm';
 import { TeacherResultsWarning } from '@/components/results/TeacherResultsWarning';
-import { 
-  BookOpen, Users, TrendingUp, AlertCircle, Loader2, 
-  Calendar, ChevronRight, FileText, ClipboardCheck, 
+import {
+  BookOpen, Users, TrendingUp, AlertCircle, Loader2,
+  Calendar, ChevronRight, FileText, ClipboardCheck,
   BarChart3, GraduationCap, UserCheck, UserX, Clock,
-  TrendingDown, Minus, AlertTriangle
+  TrendingDown, Minus, AlertTriangle,
 } from 'lucide-react';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -41,10 +42,10 @@ interface AttendanceStats {
   absentToday: number;
   excusedToday: number;
   ditchingToday: number;
-  byClass: Array<{ 
-    className: string; 
-    rate: number; 
-    present: number; 
+  byClass: Array<{
+    className: string;
+    rate: number;
+    present: number;
     total: number;
     late: number;
     absent: number;
@@ -60,7 +61,7 @@ const DashboardSkeleton = () => (
       <div className="h-8 sm:h-9 lg:h-10 bg-gray-200 rounded w-64 mb-2"></div>
       <div className="h-4 sm:h-5 bg-gray-100 rounded w-72"></div>
     </div>
-    
+
     <div>
       <div className="h-6 bg-gray-200 rounded w-40 mb-4"></div>
       <div className="grid grid-cols-2 gap-4">
@@ -80,7 +81,7 @@ const DashboardSkeleton = () => (
         ))}
       </div>
     </div>
-    
+
     <div>
       <div className="h-6 bg-gray-200 rounded w-32 mb-4"></div>
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
@@ -112,7 +113,7 @@ const EmptyState = () => (
       Awaiting Class Assignments
     </h2>
     <p className="text-sm sm:text-base text-gray-600 max-w-md mx-auto leading-relaxed">
-      Your teaching assignments are currently being configured by the administration. 
+      Your teaching assignments are currently being configured by the administration.
       You'll receive access to your classes and students once the process is complete.
     </p>
     <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -139,7 +140,7 @@ interface MetricCardProps {
 
 const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoading, subtext, onClick }: MetricCardProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
-  
+
   const colorStyles = {
     blue: {
       bg: 'bg-gradient-to-br from-blue-50 to-indigo-50',
@@ -147,7 +148,7 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
       iconColor: 'text-blue-600',
       value: 'text-blue-600',
       border: 'border-blue-200',
-      hover: 'hover:border-blue-300'
+      hover: 'hover:border-blue-300',
     },
     purple: {
       bg: 'bg-gradient-to-br from-purple-50 to-pink-50',
@@ -155,7 +156,7 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
       iconColor: 'text-purple-600',
       value: 'text-purple-600',
       border: 'border-purple-200',
-      hover: 'hover:border-purple-300'
+      hover: 'hover:border-purple-300',
     },
     green: {
       bg: 'bg-gradient-to-br from-green-50 to-emerald-50',
@@ -163,7 +164,7 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
       iconColor: 'text-green-600',
       value: 'text-green-600',
       border: 'border-green-200',
-      hover: 'hover:border-green-300'
+      hover: 'hover:border-green-300',
     },
     orange: {
       bg: 'bg-gradient-to-br from-orange-50 to-amber-50',
@@ -171,7 +172,7 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
       iconColor: 'text-orange-600',
       value: 'text-orange-600',
       border: 'border-orange-200',
-      hover: 'hover:border-orange-300'
+      hover: 'hover:border-orange-300',
     },
     red: {
       bg: 'bg-gradient-to-br from-red-50 to-rose-50',
@@ -179,7 +180,7 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
       iconColor: 'text-red-600',
       value: 'text-red-600',
       border: 'border-red-200',
-      hover: 'hover:border-red-300'
+      hover: 'hover:border-red-300',
     },
     indigo: {
       bg: 'bg-gradient-to-br from-indigo-50 to-blue-50',
@@ -187,7 +188,7 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
       iconColor: 'text-indigo-600',
       value: 'text-indigo-600',
       border: 'border-indigo-200',
-      hover: 'hover:border-indigo-300'
+      hover: 'hover:border-indigo-300',
     },
     yellow: {
       bg: 'bg-gradient-to-br from-yellow-50 to-amber-50',
@@ -195,14 +196,14 @@ const MetricCard = ({ label, value, icon: Icon, description, color, trend, isLoa
       iconColor: 'text-yellow-600',
       value: 'text-yellow-600',
       border: 'border-yellow-200',
-      hover: 'hover:border-yellow-300'
-    }
+      hover: 'hover:border-yellow-300',
+    },
   };
 
   const style = colorStyles[color];
 
   return (
-    <div 
+    <div
       className={`
         bg-white rounded-xl border border-gray-200 p-5
         hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5
@@ -374,7 +375,7 @@ interface QuickActionProps {
 
 const QuickAction = ({ to, icon: Icon, title, description, disabled }: QuickActionProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
-  
+
   const content = (
     <div className={`
       flex flex-col items-center text-center gap-1 sm:gap-1.5
@@ -382,8 +383,8 @@ const QuickAction = ({ to, icon: Icon, title, description, disabled }: QuickActi
     `}>
       <div className={`
         p-2 sm:p-2.5 rounded-xl
-        ${disabled 
-          ? 'bg-gray-100 text-gray-400' 
+        ${disabled
+          ? 'bg-gray-100 text-gray-400'
           : 'bg-gradient-to-br from-blue-50 to-indigo-50 text-blue-600 group-hover:from-blue-100 group-hover:to-indigo-100'
         }
         transition-all duration-200
@@ -435,7 +436,7 @@ interface ClassCardProps {
 
 const ClassCard = ({ classItem, isFormTeacher, userId, attendanceRate }: ClassCardProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
-  
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 sm:p-6 hover:shadow-md transition-all duration-300 hover:border-gray-300">
       <div className="flex items-start justify-between mb-3">
@@ -464,7 +465,7 @@ const ClassCard = ({ classItem, isFormTeacher, userId, attendanceRate }: ClassCa
           </div>
         )}
       </div>
-      
+
       <div className="space-y-2 mb-3">
         <div className="flex items-center gap-2 text-gray-600">
           <Users size={isMobile ? 14 : 16} className="flex-shrink-0" />
@@ -479,7 +480,7 @@ const ClassCard = ({ classItem, isFormTeacher, userId, attendanceRate }: ClassCa
           </span>
         </div>
       </div>
-      
+
       <Link
         to={`/dashboard/teacher/class/${classItem.id}`}
         className="mt-2 inline-flex items-center justify-between w-full px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors group"
@@ -496,9 +497,12 @@ export default function TeacherDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isMobile = useMediaQuery('(max-width: 640px)');
-  const [selectedTerm] = useState<string>('Term 1');
-  const [selectedYear] = useState<number>(new Date().getFullYear());
-  
+
+  // ── Real-time academic term (auto-detected) ────────────────────────────
+  const academicTerm = useAcademicTerm();
+  const selectedTerm = academicTerm.term;   // e.g. "Term 2"
+  const selectedYear = academicTerm.year;   // e.g. 2025
+
   // Attendance state
   const [attendanceStats, setAttendanceStats] = useState<AttendanceStats>({
     todayRate: 0,
@@ -512,22 +516,22 @@ export default function TeacherDashboard() {
     ditchingToday: 0,
     byClass: [],
     trend: 'stable',
-    trendValue: '0% vs last week'
+    trendValue: '0% vs last week',
   });
   const [loadingAttendance, setLoadingAttendance] = useState(false);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
-  
+
   // Fetch all active classes
-  const { 
-    classes = [], 
-    isLoading: classesLoading 
+  const {
+    classes = [],
+    isLoading: classesLoading,
   } = useSchoolClasses({ isActive: true });
 
   // Fetch results analytics for pass rate calculation
-  const { 
-    analytics, 
+  const {
+    analytics,
     isLoading: resultsLoading,
-    isFetching 
+    isFetching,
   } = useResultsAnalytics({
     teacherId: user?.uid || '',
     term: selectedTerm,
@@ -540,9 +544,9 @@ export default function TeacherDashboard() {
   // Find classes assigned to this teacher
   const assignedClasses = useMemo(() => {
     if (!user?.uid || !classes.length) return [];
-    
-    return classes.filter((cls: ClassFromHook) => 
-      cls.teachers?.includes(user.uid) || 
+
+    return classes.filter((cls: ClassFromHook) =>
+      cls.teachers?.includes(user.uid) ||
       cls.formTeacherId === user.uid
     );
   }, [classes, user?.uid]);
@@ -564,53 +568,53 @@ export default function TeacherDashboard() {
         examName: entry.examName,
         term: selectedTerm,
         year: selectedYear,
-      }
+      },
     });
   }, [navigate, selectedTerm, selectedYear]);
 
   // Fetch comprehensive attendance data
   const fetchAttendanceData = useCallback(async () => {
     if (assignedClasses.length === 0) return;
-    
+
     setLoadingAttendance(true);
     try {
       const today = new Date().toISOString().split('T')[0];
       const weekAgo = new Date();
       weekAgo.setDate(weekAgo.getDate() - 7);
       const weekAgoStr = weekAgo.toISOString().split('T')[0];
-      
+
       let totalTodayPresent = 0;
       let totalTodayStudents = 0;
       let totalLateToday = 0;
       let totalAbsentToday = 0;
       let totalExcusedToday = 0;
       let totalDitchingToday = 0;
-      
+
       const classStats = [];
       let allTodayRecords: AttendanceRecord[] = [];
       let allWeekRecords: AttendanceRecord[] = [];
-      
+
       for (const cls of assignedClasses) {
         const todayRecords = await attendanceService.getByClassAndDate(cls.id, today);
         allTodayRecords = [...allTodayRecords, ...todayRecords];
-        
+
         const weekRecords = await attendanceService.getByDateRange(weekAgoStr, today);
         allWeekRecords = [...allWeekRecords, ...weekRecords];
-        
+
         const studentsInClass = cls.students || 0;
-        
+
         if (studentsInClass > 0) {
-          const present = todayRecords.filter(r => 
+          const present = todayRecords.filter(r =>
             r.status === 'present' || r.status === 'late'
           ).length;
-          
+
           const late = todayRecords.filter(r => r.status === 'late').length;
           const absent = todayRecords.filter(r => r.status === 'absent').length;
           const excused = todayRecords.filter(r => r.status === 'excused').length;
-          
+
           const dailyRecords = todayRecords.filter(r => r.attendanceType === 'daily');
           const periodicRecords = todayRecords.filter(r => r.attendanceType === 'periodic');
-          
+
           const ditching = dailyRecords.filter(daily => {
             if (daily.status === 'present' || daily.status === 'late') {
               const studentPeriodic = periodicRecords.filter(p => p.studentId === daily.studentId);
@@ -618,31 +622,31 @@ export default function TeacherDashboard() {
             }
             return false;
           }).length;
-          
+
           totalTodayPresent += present;
           totalTodayStudents += studentsInClass;
           totalLateToday += late;
           totalAbsentToday += absent;
           totalExcusedToday += excused;
           totalDitchingToday += ditching;
-          
+
           classStats.push({
             className: cls.name,
             rate: studentsInClass > 0 ? Math.round((present / studentsInClass) * 100) : 0,
             present,
             total: studentsInClass,
             late,
-            absent
+            absent,
           });
         }
       }
-      
+
       setAttendanceRecords(allTodayRecords);
-      
-      const todayRate = totalTodayStudents > 0 
-        ? Math.round((totalTodayPresent / totalTodayStudents) * 100) 
+
+      const todayRate = totalTodayStudents > 0
+        ? Math.round((totalTodayPresent / totalTodayStudents) * 100)
         : 0;
-      
+
       const dailyGroups: Record<string, AttendanceRecord[]> = {};
       allWeekRecords.forEach(record => {
         if (!dailyGroups[record.date]) {
@@ -650,10 +654,10 @@ export default function TeacherDashboard() {
         }
         dailyGroups[record.date].push(record);
       });
-      
+
       let weeklyTotal = 0;
       let weeklyDays = 0;
-      
+
       Object.entries(dailyGroups).forEach(([date, records]) => {
         const dayStudents = new Set(records.map(r => r.studentId)).size;
         const dayPresent = records.filter(r => r.status === 'present' || r.status === 'late').length;
@@ -662,22 +666,22 @@ export default function TeacherDashboard() {
           weeklyDays++;
         }
       });
-      
+
       const weeklyRate = weeklyDays > 0 ? Math.round(weeklyTotal / weeklyDays) : 0;
-      
+
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const yesterdayStr = yesterday.toISOString().split('T')[0];
-      
+
       const yesterdayGroups = allWeekRecords.filter(r => r.date === yesterdayStr);
       const yesterdayStudents = new Set(yesterdayGroups.map(r => r.studentId)).size;
       const yesterdayPresent = yesterdayGroups.filter(r => r.status === 'present' || r.status === 'late').length;
       const yesterdayRate = yesterdayStudents > 0 ? (yesterdayPresent / yesterdayStudents) * 100 : 0;
-      
+
       const trendDiff = todayRate - yesterdayRate;
       const trend = trendDiff > 2 ? 'up' : trendDiff < -2 ? 'down' : 'stable';
       const trendValue = `${trendDiff > 0 ? '+' : ''}${trendDiff.toFixed(1)}% vs yesterday`;
-      
+
       setAttendanceStats({
         todayRate,
         weeklyRate,
@@ -690,7 +694,7 @@ export default function TeacherDashboard() {
         ditchingToday: totalDitchingToday,
         byClass: classStats,
         trend,
-        trendValue
+        trendValue,
       });
     } catch (error) {
       console.error('Error fetching attendance:', error);
@@ -709,7 +713,7 @@ export default function TeacherDashboard() {
     const totalStudents = assignedClasses.reduce((sum, cls) => sum + (cls.students || 0), 0);
     const passRate = analytics?.passRate || 0;
     const averagePercentage = analytics?.averagePercentage || 0;
-    
+
     return {
       classesHandled: assignedClasses.length,
       totalStudents,
@@ -734,7 +738,7 @@ export default function TeacherDashboard() {
   return (
     <DashboardLayout activeTab="dashboard">
       <div className="p-4 sm:p-6 lg:p-8 space-y-8 sm:space-y-10">
-        
+
         {/* ===== HEADER ===== */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
@@ -743,6 +747,19 @@ export default function TeacherDashboard() {
             </h1>
             <p className="text-sm sm:text-base text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
               <span>Welcome back, {user?.fullName?.split(' ')[0] || 'Teacher'}</span>
+
+              {/* ── Current term badge ── */}
+              <span className="text-gray-300">•</span>
+              <span className="inline-flex items-center gap-1.5 text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full text-xs font-medium border border-blue-200">
+                <Calendar size={12} />
+                {academicTerm.label}
+                {academicTerm.daysRemaining > 0 && (
+                  <span className="text-blue-500">
+                    • {academicTerm.daysRemaining}d left
+                  </span>
+                )}
+              </span>
+
               {stats.isFormTeacher && (
                 <>
                   <span className="text-gray-300">•</span>
@@ -764,11 +781,11 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        {/* ===== RESULTS ENTRY WARNING - NEW SECTION ===== */}
+        {/* ===== RESULTS ENTRY WARNING ===== */}
         {assignedClasses.length > 0 && (
-          <TeacherResultsWarning 
-            term={selectedTerm} 
-            year={selectedYear} 
+          <TeacherResultsWarning
+            term={selectedTerm}
+            year={selectedYear}
             compact={false}
             onNavigateToResults={handleNavigateToResults}
           />
@@ -787,7 +804,7 @@ export default function TeacherDashboard() {
               {stats.subjects.map((subject, idx) => (
                 <span
                   key={idx}
-                  className="px-3 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-blue-50 to-indigo-50 
+                  className="px-3 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-blue-50 to-indigo-50
                            text-blue-700 rounded-full text-xs sm:text-sm font-medium border border-blue-200"
                 >
                   {subject}
@@ -811,7 +828,7 @@ export default function TeacherDashboard() {
                 description="Classes you currently teach"
                 color="blue"
               />
-              
+
               <MetricCard
                 label="Students"
                 value={stats.totalStudents}
@@ -819,17 +836,17 @@ export default function TeacherDashboard() {
                 description="Learners across all classes"
                 color="purple"
               />
-              
+
               <MetricCard
                 label="Pass Rate"
                 value={stats.passRate > 0 ? `${stats.passRate}%` : '—'}
                 icon={TrendingUp}
-                description={`Average pass rate • ${selectedTerm} ${selectedYear}`}
+                description={`Average pass rate • ${academicTerm.label}`}
                 color="green"
                 isLoading={resultsLoading}
                 subtext={stats.averagePercentage > 0 ? `${stats.averagePercentage}% avg` : undefined}
               />
-              
+
               <MetricCard
                 label="Today's Attendance"
                 value={attendanceStats.todayRate > 0 ? `${attendanceStats.todayRate}%` : '—'}
@@ -849,7 +866,7 @@ export default function TeacherDashboard() {
             stats={attendanceStats}
             lateArrivals={analyticsAttendance.lateArrivals}
             subjectTruancy={analyticsAttendance.subjectTruancy}
-            onViewAll={() => window.location.href = '/dashboard/teacher/attendance'}
+            onViewAll={() => { navigate('/dashboard/teacher/attendance'); }}
           />
         )}
 
