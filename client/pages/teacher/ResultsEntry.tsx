@@ -1,6 +1,8 @@
 // @/pages/teacher/ResultsEntry.tsx - COMPLETE FIXED VERSION
 // Fixed: PDF generation and subject-specific completion for same teacher two subjects
 // Fixed: Progress bar now reflects total entries entered vs total expected
+// Added: Bulk results entry (paste from Excel / upload CSV) via BulkResultsEntryModal
+// Fixed: Enter / Arrow-Down now moves to the next learner (input refs are registered)
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -18,7 +20,8 @@ import {
   Trash2,
   History,
   UserX,
-  RefreshCw
+  RefreshCw,
+  Upload
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useResults, useSubjectCompletion } from '@/hooks/useResults';
@@ -28,6 +31,7 @@ import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { calculateGrade, normalizeSubjectName } from '@/services/resultsService';
+import { BulkResultsEntryModal } from '@/components/results/BulkResultsEntryModal';
 
 // ==================== INTERFACES ====================
 interface StudentResultInput {
@@ -156,7 +160,7 @@ interface StudentRowProps {
   index: number;
   totalMarks: number;
   onMarksChange: (studentId: string, marks: string) => void;
-  inputRef?: React.RefObject<HTMLInputElement>;
+  inputRef?: React.Ref<HTMLInputElement>;
   onEnterPress?: () => void;
   isMobile: boolean;
   disabled?: boolean;
@@ -1069,6 +1073,12 @@ export default function ResultsEntry() {
   
   const inputElements = useRef<Map<string, HTMLInputElement>>(new Map());
   const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  // Callback ref so each mark input is registered for Enter / Arrow-Down navigation
+  const registerInput = useCallback((id: string) => (el: HTMLInputElement | null) => {
+    if (el) inputElements.current.set(id, el);
+    else inputElements.current.delete(id);
+  }, []);
   
   // Core State
   const [selectedClass, setSelectedClass] = useState('');
@@ -1088,6 +1098,9 @@ export default function ResultsEntry() {
   const [showPDFPreview, setShowPDFPreview] = useState(false);
   const [allExamData, setAllExamData] = useState<ExamData | null>(null);
   const [loadingAllData, setLoadingAllData] = useState(false);
+
+  // Bulk Entry State
+  const [showBulkEntry, setShowBulkEntry] = useState(false);
 
   // UI State
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -1397,6 +1410,7 @@ export default function ResultsEntry() {
       const nextStudent = students[currentIndex + 1];
       const nextInput = inputElements.current.get(nextStudent.id);
       nextInput?.focus();
+      nextInput?.select();
     }
   }, [students]);
 
@@ -1647,6 +1661,26 @@ export default function ResultsEntry() {
     });
   }, [drafts, activeDraftId, saveDrafts, showToast]);
 
+  // ==================== BULK ENTRY ====================
+  // Marks go into the on-screen table only. The teacher still clicks
+  // Save / Overwrite, so the normal save + overwrite confirmation applies.
+  const handleApplyBulkMarks = useCallback((updates: Record<string, string>) => {
+    const count = Object.keys(updates).length;
+    setShowBulkEntry(false);
+    if (count === 0) {
+      showToast('info', 'No marks to apply.');
+      return;
+    }
+    setStudents(prev =>
+      prev.map(s => (updates[s.id] !== undefined ? { ...s, marks: updates[s.id] } : s))
+    );
+    setHasUnsavedChanges(true);
+    showToast(
+      'success',
+      `${count} mark${count === 1 ? '' : 's'} added to the table. Review them, then click ${hasFirestoreResults ? 'Overwrite' : 'Save'}.`
+    );
+  }, [hasFirestoreResults, showToast]);
+
   const handleDownloadMarks = useCallback(() => {
     setShowPDFPreview(true);
   }, []);
@@ -1752,6 +1786,7 @@ export default function ResultsEntry() {
   const totalStudents = students.length;
   const completionPercentage = totalStudents > 0 ? Math.round((filledCount / totalStudents) * 100) : 0;
   const noExamsConfigured = selectedClass && selectedSubject && availableExamTypes.length === 0;
+  const currentExamLabel = examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term';
 
   // Loading state
   if (loadingClasses || loadingAssignments || loadingExamConfig) {
@@ -1811,6 +1846,23 @@ export default function ResultsEntry() {
           {/* Action Buttons */}
           {selectedClass && selectedSubject && students.length > 0 && availableExamTypes.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
+
+              {/* Bulk Entry Button */}
+              <button
+                onClick={() => setShowBulkEntry(true)}
+                className={`
+                  inline-flex items-center justify-center gap-1 sm:gap-2
+                  bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50
+                  font-medium transition-all active:scale-[0.98]
+                  focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
+                  px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
+                  ${isSmallMobile ? 'flex-1' : ''}
+                `}
+                title="Paste or upload marks for the whole class"
+              >
+                <Upload size={16} />
+                <span className="hidden xs:inline">Bulk Entry</span>
+              </button>
               
               {/* Download Button */}
               <button
@@ -2120,9 +2172,7 @@ export default function ResultsEntry() {
                           index={index}
                           totalMarks={totalMarks}
                           onMarksChange={handleMarksChange}
-                          inputRef={{
-                            current: inputElements.current.get(student.id) || null
-                          }}
+                          inputRef={registerInput(student.id)}
                           onEnterPress={() => focusNextInput(student.id)}
                           isMobile={true}
                           disabled={false}
@@ -2158,9 +2208,7 @@ export default function ResultsEntry() {
                               index={index}
                               totalMarks={totalMarks}
                               onMarksChange={handleMarksChange}
-                              inputRef={{
-                                current: inputElements.current.get(student.id) || null
-                              }}
+                              inputRef={registerInput(student.id)}
                               onEnterPress={() => focusNextInput(student.id)}
                               isMobile={false}
                               disabled={false}
@@ -2244,6 +2292,20 @@ export default function ResultsEntry() {
           onDownload={handleGeneratePDF}
           allExamData={allExamData}
           loadingAllData={loadingAllData}
+        />
+      )}
+
+      {/* Bulk Entry Modal */}
+      {selectedSubject && (
+        <BulkResultsEntryModal
+          isOpen={showBulkEntry}
+          onClose={() => setShowBulkEntry(false)}
+          students={students}
+          totalMarks={totalMarks}
+          classLabel={selectedClassData?.name || ''}
+          subject={selectedSubject}
+          examLabel={currentExamLabel}
+          onApply={handleApplyBulkMarks}
         />
       )}
 

@@ -1,8 +1,7 @@
 // @/services/smsService.ts — wired to Firebase Cloud Functions backend
-// Version 3.0.0 — CBC-aligned subject codes + bulk preflight
-//   - Uses SUBJECT_SMS_ABBREVIATIONS from resultsService.ts v7.0.0
-//   - Messages average ~140-160 chars (1 SMS) instead of ~264 (2 SMS)
-//   - Adds previewClassSMS() for bulk cost estimation before sending
+// Version 3.1.0 — adds announcement sends (all parents / one parent)
+//   - previewAnnouncement() : local cost estimate before sending
+//   - sendAnnouncement()    : posts to /sendAnnouncement endpoint
 
 import {
   resultsService,
@@ -29,7 +28,6 @@ export interface SendSMSResponse {
   messageId?: string;
   error?: string;
   studentName?: string;
-  /** Segment metadata returned to caller for cost transparency. */
   segments?: SMSSegmentInfo;
 }
 
@@ -44,7 +42,6 @@ export interface BulkSendResponse {
     phoneNumber: string;
     carrier: string;
     status: string;
-    /** Per-student segment info. */
     segments?: SMSSegmentInfo;
   }>;
   failedList: Array<{
@@ -58,7 +55,6 @@ export interface BulkSendResponse {
   };
   campaignId?: string;
   error?: string;
-  /** Aggregate cost estimate across the whole batch. */
   costEstimate?: {
     totalSegments: number;
     totalCharacters: number;
@@ -105,7 +101,6 @@ export interface SMSPreview {
   error?: string;
 }
 
-/** NEW: bulk preview — one entry per student + class-level totals. */
 export interface ClassSMSPreview {
   success: boolean;
   classId: string;
@@ -123,19 +118,64 @@ export interface ClassSMSPreview {
   error?: string;
 }
 
+// ==================== ANNOUNCEMENT TYPES ====================
+
+export type AnnouncementTarget =
+  | { type: 'all' }
+  | { type: 'student'; studentId: string };
+
+export interface AnnouncementSendResponse {
+  success: boolean;
+  announcementId: string;
+  total: number;
+  sent: number;
+  failed: number;
+  results: Array<{
+    studentId: string;
+    studentName: string;
+    phoneNumber: string;
+    carrier: string;
+    status: string;
+    segments?: SMSSegmentInfo;
+  }>;
+  failedList: Array<{
+    studentId: string;
+    studentName: string;
+    reason: string;
+  }>;
+  summary: {
+    skippedNoPhone: number;
+    skippedInvalid: number;
+  };
+  costEstimate?: {
+    totalSegments: number;
+    totalCharacters: number;
+    averagePerMessage: number;
+    encoding: 'GSM-7' | 'UCS-2' | 'mixed';
+    totalCostZmw: number;
+  };
+  error?: string;
+}
+
+export interface AnnouncementPreview {
+  success: boolean;
+  body: string;
+  segments: SMSSegmentInfo;
+  recipientCount: number;
+  totalSegments: number;
+  estimatedCostZmw: number;
+  error?: string;
+}
+
 // ==================== CONFIGURATION ====================
 
 /**
  * Cost per SMS segment in ZMW (Africa's Talking Zambia rates).
- * Update when AT pricing changes. Used only for client-side estimates —
- * the actual billing comes from AT.
+ * Update when AT pricing changes. Used only for client-side estimates.
  */
 const COST_PER_SEGMENT_ZMW = 0.48;
 
 // ==================== FALLBACK FORMATTER ====================
-// If the backend hasn't yet adopted the compact format, the client-side
-// formatter in resultsService is used to guarantee short messages.
-// This wrapper keeps the caller simple — always returns a compact body.
 
 const buildCompactBody = async (
   studentId: string,
@@ -167,12 +207,10 @@ const buildCompactBody = async (
 export const smsService = {
   // ==================== HEALTH ====================
 
-  /** Firebase Functions backend has no health endpoint — stub. */
   healthCheck: async (): Promise<{ status: string; smsConfigured: boolean }> => {
     return { status: 'OK', smsConfigured: true };
   },
 
-  /** Not implemented against the new backend — use canReceiveSMS() locally. */
   getStudentPhoneInfo: async (studentId: string): Promise<StudentPhoneInfo> => {
     return {
       success: false,
@@ -189,10 +227,6 @@ export const smsService = {
 
   // ==================== PREVIEW — SINGLE ====================
 
-  /**
-   * Build the exact SMS body that would be sent — without hitting the API.
-   * Use in the UI to show users a preview before they confirm.
-   */
   previewStudentSMS: async (
     studentId: string,
     term: string,
@@ -235,12 +269,6 @@ export const smsService = {
 
   // ==================== PREVIEW — BULK ====================
 
-  /**
-   * Build previews for every student in a class without sending anything.
-   * Returns per-student bodies + class-level cost estimate.
-   *
-   * Use this to drive a "Confirm send to N students for ZMW X" modal.
-   */
   previewClassSMS: async (
     classId: string,
     term: string,
@@ -316,14 +344,6 @@ export const smsService = {
 
   // ==================== SINGLE SEND ====================
 
-  /**
-   * Send results SMS to a single student's guardian.
-   *
-   * The compact body is built client-side (from Firestore) and sent to the
-   * backend as `messageBody`. If the backend doesn't accept `messageBody`,
-   * it will fall back to building its own — but the client-side compact
-   * version is preferred and cuts cost roughly in half.
-   */
   sendStudentResults: async (
     studentId: string,
     term: string,
@@ -333,7 +353,6 @@ export const smsService = {
     try {
       console.log(`📱 Preparing SMS for ${studentId} — ${term} ${year}`);
 
-      // 1) Build the compact body locally
       const built = await buildCompactBody(studentId, term, year, options);
 
       if (!built) {
@@ -356,7 +375,6 @@ export const smsService = {
         );
       }
 
-      // 2) Send to backend, including the pre-formatted body.
       const response = await fetch(`${SMS_API_URL}/sendSingleSms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -396,12 +414,6 @@ export const smsService = {
 
   // ==================== BULK SEND ====================
 
-  /**
-   * Bulk send results to all active students in a class.
-   *
-   * Compact bodies are built in parallel on the client and shipped to the
-   * backend as an array. The backend can then skip its own formatting.
-   */
   bulkSendClass: async (
     classId: string,
     term: string,
@@ -411,7 +423,6 @@ export const smsService = {
     try {
       console.log(`📱 Preparing bulk SMS for class ${classId} — ${term} ${year}`);
 
-      // 1) Load all learners in the class and pre-build compact bodies
       const learners = await resultsService.getLearnersInClass(classId);
 
       const prepared = await Promise.all(
@@ -433,7 +444,6 @@ export const smsService = {
         throw new Error('No students have results to send');
       }
 
-      // 2) Aggregate cost estimate
       const totalSegments = ready.reduce((sum, r) => sum + (r.segments?.segments || 0), 0);
       const totalCharacters = ready.reduce((sum, r) => sum + (r.segments?.length || 0), 0);
       const encodings = new Set(ready.map(r => r.segments?.encoding || 'GSM-7'));
@@ -450,7 +460,6 @@ export const smsService = {
         `est. ZMW ${totalCostZmw.toFixed(2)}`
       );
 
-      // 3) Send the pre-built bodies to the backend
       const response = await fetch(`${SMS_API_URL}/bulkSendSms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -482,7 +491,6 @@ export const smsService = {
 
       console.log(`✅ Bulk SMS complete: ${data.sent}/${data.total} sent`);
 
-      // 4) Merge client-side segment info into per-student results
       const segmentsByStudent = new Map(
         ready.map(r => [r.studentId, r.segments as SMSSegmentInfo])
       );
@@ -518,9 +526,152 @@ export const smsService = {
     }
   },
 
+  // ==================== ANNOUNCEMENT PREVIEW ====================
+
+  /**
+   * Local-only preview of an announcement. No API call, no Firestore reads.
+   * Computes segments + cost from the raw message and recipient count.
+   *
+   * Use in the modal to show "This will send N SMS segments = ZMW X".
+   */
+  previewAnnouncement: (message: string, recipientCount: number): AnnouncementPreview => {
+    try {
+      const trimmed = (message || '').trim();
+      if (!trimmed) {
+        return {
+          success: false,
+          body: '',
+          segments: { length: 0, encoding: 'GSM-7', segments: 0 },
+          recipientCount,
+          totalSegments: 0,
+          estimatedCostZmw: 0,
+          error: 'Message is empty',
+        };
+      }
+
+      const segments = getSmsSegments(trimmed);
+      const totalSegments = segments.segments * Math.max(recipientCount, 0);
+      const estimatedCostZmw = totalSegments * COST_PER_SEGMENT_ZMW;
+
+      return {
+        success: true,
+        body: trimmed,
+        segments,
+        recipientCount,
+        totalSegments,
+        estimatedCostZmw,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        body: '',
+        segments: { length: 0, encoding: 'GSM-7', segments: 0 },
+        recipientCount,
+        totalSegments: 0,
+        estimatedCostZmw: 0,
+        error: error.message || 'Preview failed',
+      };
+    }
+  },
+
+  // ==================== ANNOUNCEMENT SEND ====================
+
+  /**
+   * Send a free-form SMS to parents.
+   *
+   * target = { type: 'all' }                        → every active learner's guardian
+   * target = { type: 'student', studentId: '...' }  → one learner's guardian
+   *
+   * The `studentId` can be either the custom ID (e.g. "G12A_001") or the
+   * Firestore document ID. The backend resolves both.
+   *
+   * Backend: /sendAnnouncement
+   */
+  sendAnnouncement: async (params: {
+    message: string;
+    target: AnnouncementTarget;
+    senderName: string;
+    senderUid: string;
+  }): Promise<AnnouncementSendResponse> => {
+    try {
+      const trimmed = (params.message || '').trim();
+      if (!trimmed) {
+        throw new Error('Message is required');
+      }
+
+      // Compute segments client-side so we can attach them to the response
+      const segments = getSmsSegments(trimmed);
+
+      console.log(
+        `📢 Sending announcement — target: ${params.target.type}, ` +
+        `${segments.length} chars, ${segments.segments} segment(s)`
+      );
+
+      const response = await fetch(`${SMS_API_URL}/sendAnnouncement`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: trimmed,
+          target: params.target,
+          senderName: params.senderName,
+          senderUid: params.senderUid,
+          meta: {
+            source: 'client-announcement-v1',
+            segments: segments.segments,
+            encoding: segments.encoding,
+            charCount: segments.length,
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to send announcement');
+      }
+
+      console.log(
+        `✅ Announcement sent: ${data.sent}/${data.total} ` +
+        `(failed: ${data.failed})`
+      );
+
+      // Attach segment info + cost estimate to each result
+      const resultsWithSegments = (data.results || []).map((r: any) => ({
+        ...r,
+        segments,
+      }));
+
+      const totalSegments = segments.segments * (data.sent || 0);
+      const totalCostZmw = totalSegments * COST_PER_SEGMENT_ZMW;
+
+      return {
+        success: data.success,
+        announcementId: data.announcementId,
+        total: data.total,
+        sent: data.sent,
+        failed: data.failed || 0,
+        results: resultsWithSegments,
+        failedList: data.failedList || [],
+        summary: {
+          skippedNoPhone: data.summary?.skippedNoPhone ?? 0,
+          skippedInvalid: data.summary?.skippedInvalid ?? 0,
+        },
+        costEstimate: {
+          totalSegments,
+          totalCharacters: segments.length * (data.sent || 0),
+          averagePerMessage: segments.length,
+          encoding: segments.encoding,
+          totalCostZmw,
+        },
+      } as AnnouncementSendResponse;
+    } catch (error: any) {
+      console.error('❌ Announcement error:', error);
+      throw new Error(error.message || 'Failed to send announcement');
+    }
+  },
+
   // ==================== LOGS / UTILITIES ====================
 
-  /** Logs live in Firestore `sms_logs` — stub so callers don't break. */
   getSMSLogs: async (studentId: string): Promise<SMSLog[]> => {
     console.warn(
       `getSMSLogs(${studentId}): logs are now in Firestore 'sms_logs'.`
@@ -528,7 +679,6 @@ export const smsService = {
     return [];
   },
 
-  /** Local check — no API call. */
   canReceiveSMS: (
     learner: { guardianPhone?: string; parentPhone?: string } | null | undefined
   ): boolean => {
@@ -537,7 +687,6 @@ export const smsService = {
     return !!phone && phone.length >= 10;
   },
 
-  /** Translate backend error strings into user-friendly messages. */
   formatError: (error: string): string => {
     if (!error) return 'Unknown error';
     if (error.includes('No guardian phone')) {
@@ -558,6 +707,15 @@ export const smsService = {
     if (error.includes("Africa's Talking rejected")) {
       return 'Gateway rejected the message';
     }
+    if (error.includes('Message is required')) {
+      return 'Please write a message before sending';
+    }
+    if (error.includes('Message exceeds')) {
+      return 'Message is too long';
+    }
+    if (error.includes('This target has')) {
+      return 'Too many recipients — split into smaller groups';
+    }
     if (error.includes('fetch')) {
       return 'Network error — check your internet connection';
     }
@@ -567,12 +725,8 @@ export const smsService = {
     return error;
   },
 
-  // ==================== COST UTILITIES (exported for UI) ====================
+  // ==================== COST UTILITIES ====================
 
-  /**
-   * Estimate SMS cost for a raw body without sending.
-   * Handy for "What will this cost?" previews.
-   */
   estimateCost: (body: string): { segments: SMSSegmentInfo; costZmw: number } => {
     const segments = getSmsSegments(body);
     return {
@@ -581,13 +735,11 @@ export const smsService = {
     };
   },
 
-  /** Format a segments object for display. */
   formatSegmentsLabel: (segments: SMSSegmentInfo): string => {
     const costStr = (segments.segments * COST_PER_SEGMENT_ZMW).toFixed(2);
     return `${segments.length} chars · ${segments.encoding} · ${segments.segments} SMS · ZMW ${costStr}`;
   },
 
-  /** Expose the per-segment rate for callers that compute their own totals. */
   COST_PER_SEGMENT_ZMW,
 };
 

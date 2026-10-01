@@ -1,7 +1,10 @@
+// @/hooks/useSchoolLearners.ts
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { learnerService } from '@/services/schoolService';
 import { Learner, CSVLearnerData, LearnerFilterOptions } from '@/types/school';
 import { useMemo } from 'react';
+
+// ==================== TYPES ====================
 
 // Extended types for enhanced learner system
 interface AddEnhancedLearnerData {
@@ -12,7 +15,12 @@ interface AddEnhancedLearnerData {
   guardian: string;
   sponsor: string;
   guardianPhone: string;
-  birthYear: number;
+
+  // ✅ Primary DOB (ISO "YYYY-MM-DD") — preferred going forward
+  dateOfBirth?: string;
+  // ⚠️ Legacy fallback — service derives dateOfBirth from this if needed
+  birthYear?: number;
+
   classId: string;
   preferredName?: string;
   alternativeGuardian?: string;
@@ -33,7 +41,12 @@ interface UpdateLearnerData {
   alternativeGuardian?: string;
   alternativeGuardianPhone?: string;
   sponsor?: string;
+
+  // ✅ New: DOB is the source of truth for edits
+  dateOfBirth?: string;
+  // ⚠️ Legacy: still accepted, service recomputes dateOfBirth + age
   birthYear?: number;
+
   previousSchool?: string;
   medicalNotes?: string;
   allergies?: string[];
@@ -48,10 +61,14 @@ interface AddLearnerData {
   classId: string;
 }
 
+// ==================== HOOK ====================
+
 export const useSchoolLearners = (classId?: string) => {
   const queryClient = useQueryClient();
 
-  // Query: Get learners - handles both class-specific and all learners
+  // ==================== QUERIES ====================
+
+  // Query: Get learners — handles both class-specific and all learners
   const learnersQuery = useQuery({
     queryKey: classId ? ['learners', classId] : ['allLearners'],
     queryFn: async () => {
@@ -69,13 +86,15 @@ export const useSchoolLearners = (classId?: string) => {
   // SAFE: Always use empty array fallback
   const learners = learnersQuery.data || [];
 
-  // SAFE: Memoized gender statistics - won't cause errors even if learners is empty
+  // ==================== DERIVED STATS ====================
+
+  // SAFE: Memoized gender statistics — won't cause errors even if learners is empty
   const genderStats = useMemo(() => {
-    const boys = learners.filter(l => l?.gender === 'male').length;
-    const girls = learners.filter(l => l?.gender === 'female').length;
-    const unspecified = learners.filter(l => !l?.gender).length;
+    const boys = learners.filter((l) => l?.gender === 'male').length;
+    const girls = learners.filter((l) => l?.gender === 'female').length;
+    const unspecified = learners.filter((l) => !l?.gender).length;
     const total = learners.length;
-    
+
     return {
       boys,
       girls,
@@ -89,30 +108,59 @@ export const useSchoolLearners = (classId?: string) => {
   // SAFE: Memoized sponsor statistics
   const sponsorStats = useMemo(() => {
     const sponsorMap = new Map<string, number>();
-    
-    learners.forEach(learner => {
+
+    learners.forEach((learner) => {
       if (learner.sponsor) {
         const count = sponsorMap.get(learner.sponsor) || 0;
         sponsorMap.set(learner.sponsor, count + 1);
       }
     });
-    
+
     return Object.fromEntries(sponsorMap);
   }, [learners]);
 
-  // Query: Search learners in class
+  // ✅ NEW: Memoized age distribution — handy for reports
+  const ageStats = useMemo(() => {
+    const buckets: Record<string, number> = {
+      '10-12': 0,
+      '13-15': 0,
+      '16-18': 0,
+      '19+': 0,
+      unknown: 0,
+    };
+
+    learners.forEach((learner) => {
+      const age = learner.age;
+      if (!age || age <= 0) {
+        buckets.unknown++;
+      } else if (age <= 12) {
+        buckets['10-12']++;
+      } else if (age <= 15) {
+        buckets['13-15']++;
+      } else if (age <= 18) {
+        buckets['16-18']++;
+      } else {
+        buckets['19+']++;
+      }
+    });
+
+    return buckets;
+  }, [learners]);
+
+  // ==================== SEARCH / FILTER (as mutations) ====================
+
   const searchLearnersQuery = useMutation({
     mutationFn: ({ classId, searchTerm }: { classId: string; searchTerm: string }) =>
       learnerService.searchLearnersInClass(classId, searchTerm),
   });
 
-  // Query: Filter learners with multiple criteria
   const filterLearnersQuery = useMutation({
     mutationFn: (filters: LearnerFilterOptions) =>
       learnerService.getFilteredLearners(filters),
   });
 
-  // Mutation: Add individual learner (enhanced version)
+  // ==================== ADD (ENHANCED) ====================
+
   const addEnhancedLearnerMutation = useMutation({
     mutationFn: (data: AddEnhancedLearnerData) => learnerService.addLearner(data),
     onSuccess: (result, variables) => {
@@ -121,31 +169,35 @@ export const useSchoolLearners = (classId?: string) => {
       queryClient.invalidateQueries({ queryKey: ['allLearners'] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
-      
-      // Also invalidate sponsor stats
       queryClient.invalidateQueries({ queryKey: ['learners', 'bySponsor'] });
-      
+
       console.log(`✅ Learner added with ID: ${result.studentId}`);
     },
   });
 
-  // Keep backward compatibility with old addLearner
+  // ==================== ADD (LEGACY) ====================
+  // Keeps backward compat with old AddLearnerData shape.
+  // Now derives dateOfBirth from the age instead of storing birthYear.
+
   const addLearnerMutation = useMutation({
     mutationFn: async (data: AddLearnerData) => {
-      // Convert old format to new format
       const currentYear = new Date().getFullYear();
+      const approxBirthYear = currentYear - data.age;
+
+      // ✅ Send dateOfBirth (preferred). Keep birthYear as belt-and-braces.
       const enhancedData: AddEnhancedLearnerData = {
         fullName: data.name,
-        address: '', // Default empty for backward compatibility
-        dateOfFirstEntry: new Date().toISOString().split('T')[0], // Today as default
+        address: '',
+        dateOfFirstEntry: new Date().toISOString().split('T')[0],
         gender: data.gender,
-        guardian: '', // Default empty for backward compatibility
-        sponsor: 'Self', // Default sponsor
+        guardian: '',
+        sponsor: 'Self',
         guardianPhone: data.parentPhone,
-        birthYear: currentYear - data.age, // Calculate birth year from age
+        dateOfBirth: `${approxBirthYear}-01-01`, // ✅ derived from age
+        birthYear: approxBirthYear,              // ⚠️ legacy mirror
         classId: data.classId,
       };
-      
+
       return learnerService.addLearner(enhancedData);
     },
     onSuccess: (_, variables) => {
@@ -156,14 +208,21 @@ export const useSchoolLearners = (classId?: string) => {
     },
   });
 
-  // Mutation: Update learner (UPDATED - now uses the actual service method)
+  // ==================== UPDATE ====================
+  // The service recomputes birthYear + age whenever dateOfBirth is present.
+
   const updateLearnerMutation = useMutation({
-    mutationFn: ({ learnerId, updates }: { learnerId: string; updates: UpdateLearnerData }) => {
-      // Now directly calling the service method that we added
+    mutationFn: ({
+      learnerId,
+      updates,
+    }: {
+      learnerId: string;
+      updates: UpdateLearnerData;
+    }) => {
+      // Direct passthrough — the service handles DOB normalization + derivation.
       return learnerService.updateLearner(learnerId, updates);
     },
     onSuccess: (_, variables) => {
-      // Invalidate relevant queries
       if (classId) {
         queryClient.invalidateQueries({ queryKey: ['learners', classId] });
       } else {
@@ -172,7 +231,7 @@ export const useSchoolLearners = (classId?: string) => {
       queryClient.invalidateQueries({ queryKey: ['classes'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
       queryClient.invalidateQueries({ queryKey: ['learners', 'bySponsor'] });
-      
+
       console.log(`✅ Learner updated successfully`);
     },
     onError: (error) => {
@@ -180,41 +239,52 @@ export const useSchoolLearners = (classId?: string) => {
     },
   });
 
-  // Mutation: Bulk import learners
+  // ==================== BULK IMPORT ====================
+
   const bulkImportLearnersMutation = useMutation({
-    mutationFn: ({ classId, learnersData }: { classId: string; learnersData: CSVLearnerData[] }) =>
-      learnerService.bulkImportLearners(classId, learnersData),
+    mutationFn: ({
+      classId,
+      learnersData,
+    }: {
+      classId: string;
+      learnersData: CSVLearnerData[];
+    }) => learnerService.bulkImportLearners(classId, learnersData),
     onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: ['learners', variables.classId] });
       queryClient.invalidateQueries({ queryKey: ['allLearners'] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
       queryClient.invalidateQueries({ queryKey: ['learners', 'bySponsor'] });
-      
+
       console.log(`✅ Bulk import completed: ${result.success} learners added`);
       console.log(`📋 Generated student IDs:`, result.studentIds);
     },
   });
 
-  // Mutation: Transfer learner
+  // ==================== TRANSFER ====================
+
   const transferLearnerMutation = useMutation({
-    mutationFn: ({ learnerId, fromClassId, toClassId }: {
+    mutationFn: ({
+      learnerId,
+      fromClassId,
+      toClassId,
+    }: {
       learnerId: string;
       fromClassId: string;
       toClassId: string;
     }) => learnerService.transferLearner(learnerId, fromClassId, toClassId),
     onSuccess: (newStudentId, variables) => {
-      // Invalidate both old and new class data
       queryClient.invalidateQueries({ queryKey: ['learners', variables.fromClassId] });
       queryClient.invalidateQueries({ queryKey: ['learners', variables.toClassId] });
       queryClient.invalidateQueries({ queryKey: ['allLearners'] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
-      
+
       console.log(`✅ Learner transferred with new ID: ${newStudentId}`);
     },
   });
 
-  // Mutation: Remove learner (soft delete / archive)
+  // ==================== ARCHIVE (SOFT DELETE) ====================
+
   const removeLearnerMutation = useMutation({
     mutationFn: ({ learnerId, classId }: { learnerId: string; classId: string }) =>
       learnerService.removeLearner(learnerId, classId),
@@ -227,7 +297,9 @@ export const useSchoolLearners = (classId?: string) => {
     },
   });
 
-  // NEW MUTATION: Hard delete learner (permanent)
+  // ==================== HARD DELETE (PERMANENT) ====================
+  // Optimistically removes the learner from both class + all-learners caches.
+
   const hardDeleteLearnerMutation = useMutation({
     mutationFn: ({ learnerId, classId }: { learnerId: string; classId: string }) =>
       learnerService.hardDeleteLearner(learnerId, classId),
@@ -235,25 +307,27 @@ export const useSchoolLearners = (classId?: string) => {
       await queryClient.cancelQueries({ queryKey: ['learners', classId] });
       await queryClient.cancelQueries({ queryKey: ['allLearners'] });
 
-      // Snapshot the previous values
       const previousClassLearners = queryClient.getQueryData(['learners', classId]);
       const previousAllLearners = queryClient.getQueryData(['allLearners']);
 
       // Optimistically remove the learner from the cache
-      queryClient.setQueryData(['learners', classId], (old: Learner[] = []) => {
-        return old.filter(l => l.id !== learnerId);
-      });
+      queryClient.setQueryData(['learners', classId], (old: Learner[] = []) =>
+        old.filter((l) => l.id !== learnerId)
+      );
 
-      queryClient.setQueryData(['allLearners'], (old: Learner[] = []) => {
-        return old.filter(l => l.id !== learnerId);
-      });
+      queryClient.setQueryData(['allLearners'], (old: Learner[] = []) =>
+        old.filter((l) => l.id !== learnerId)
+      );
 
       return { previousClassLearners, previousAllLearners };
     },
     onError: (error, variables, context) => {
       // Rollback on error
       if (context?.previousClassLearners) {
-        queryClient.setQueryData(['learners', variables.classId], context.previousClassLearners);
+        queryClient.setQueryData(
+          ['learners', variables.classId],
+          context.previousClassLearners
+        );
       }
       if (context?.previousAllLearners) {
         queryClient.setQueryData(['allLearners'], context.previousAllLearners);
@@ -269,12 +343,12 @@ export const useSchoolLearners = (classId?: string) => {
     },
   });
 
-  // Mutation: Update learner gender
+  // ==================== UPDATE GENDER ====================
+
   const updateLearnerGenderMutation = useMutation({
     mutationFn: ({ learnerId, gender }: { learnerId: string; gender: 'male' | 'female' }) =>
       learnerService.updateLearnerGender(learnerId, gender),
     onSuccess: () => {
-      // Invalidate all learners queries since gender might affect multiple views
       if (classId) {
         queryClient.invalidateQueries({ queryKey: ['learners', classId] });
       } else {
@@ -284,21 +358,25 @@ export const useSchoolLearners = (classId?: string) => {
     },
   });
 
-  // Mutation: Get learners by sponsor
+  // ==================== LOOKUP MUTATIONS ====================
+
   const getLearnersBySponsorQuery = useMutation({
     mutationFn: (sponsorName: string) => learnerService.getLearnersBySponsor(sponsorName),
   });
 
-  // Mutation: Get learner by student ID
   const getLearnerByStudentIdQuery = useMutation({
     mutationFn: (studentId: string) => learnerService.getLearnerByStudentId(studentId),
   });
 
-  // Helper function: Generate student ID preview
-  const previewStudentId = async (classId: string, className?: string): Promise<string | null> => {
+  // ==================== HELPERS ====================
+
+  const previewStudentId = async (
+    classId: string,
+    className?: string
+  ): Promise<string | null> => {
     try {
-      // This would need class details - you might want to pass class type/level/section
-      // For now, return null and let components handle it
+      // Placeholder — components compute the preview themselves
+      // using classPrefix + nextStudentIndex from the class doc.
       return null;
     } catch (error) {
       console.error('Error previewing student ID:', error);
@@ -306,22 +384,23 @@ export const useSchoolLearners = (classId?: string) => {
     }
   };
 
+  // ==================== RETURN ====================
+
   return {
-    // Data - SAFE: Always returns array (never undefined)
+    // Data — SAFE: Always returns array (never undefined)
     learners,
-    
-    // Gender stats - SAFE: Always returns valid stats object
+
+    // Stats — SAFE: Always return valid objects
     genderStats,
-    
-    // Sponsor stats
     sponsorStats,
-    
+    ageStats, // ✅ New: age distribution
+
     // Query states
     isLoading: learnersQuery.isLoading,
     isFetching: learnersQuery.isFetching,
     isError: learnersQuery.isError,
     error: learnersQuery.error,
-    
+
     // Mutation states
     isAddingLearner: addLearnerMutation.isPending || addEnhancedLearnerMutation.isPending,
     isImportingLearners: bulkImportLearnersMutation.isPending,
@@ -333,10 +412,10 @@ export const useSchoolLearners = (classId?: string) => {
     isUpdatingGender: updateLearnerGenderMutation.isPending,
     isFetchingBySponsor: getLearnersBySponsorQuery.isPending,
     isUpdatingLearner: updateLearnerMutation.isPending,
-    
+
     // Mutations (enhanced)
     addEnhancedLearner: addEnhancedLearnerMutation.mutateAsync,
-    addLearner: addLearnerMutation.mutateAsync, // Keep for backward compatibility
+    addLearner: addLearnerMutation.mutateAsync, // Backward compatible
     bulkImportLearners: bulkImportLearnersMutation.mutateAsync,
     transferLearner: transferLearnerMutation.mutateAsync,
     removeLearner: removeLearnerMutation.mutateAsync, // Soft delete (archive)
@@ -347,16 +426,16 @@ export const useSchoolLearners = (classId?: string) => {
     getLearnersBySponsor: getLearnersBySponsorQuery.mutateAsync,
     getLearnerByStudentId: getLearnerByStudentIdQuery.mutateAsync,
     updateLearner: updateLearnerMutation.mutateAsync,
-    
+
     // Search results
     searchResults: searchLearnersQuery.data,
     filterResults: filterLearnersQuery.data,
     learnersBySponsor: getLearnersBySponsorQuery.data,
     learnerByStudentId: getLearnerByStudentIdQuery.data,
-    
+
     // Helper functions
     previewStudentId,
-    
+
     // Refetch
     refetch: learnersQuery.refetch,
   };

@@ -1,6 +1,7 @@
 // client/hooks/teachers/useTeacherModals.ts
 import { useState } from 'react';
 import { Teacher, ModalType, ModalData } from '@/types/teachers';
+import type { AssignmentRoleType, TeacherAssignment } from '@/types/school';
 
 export const useTeacherModals = () => {
   const [activeModal, setActiveModal] = useState<ModalType>(null);
@@ -14,7 +15,15 @@ export const useTeacherModals = () => {
   const [targetClassId, setTargetClassId] = useState('');
   const [selectedSubjectToRemove, setSelectedSubjectToRemove] = useState<string>('');
   const [bulkRemoveAssignments, setBulkRemoveAssignments] = useState<any[]>([]);
-  
+
+  // ── NEW: assignment-role fields for the assignment modal ────────
+  const [coverRoleType, setCoverRoleType] = useState<AssignmentRoleType>('substantive');
+  const [coverStartDate, setCoverStartDate] = useState<string>('');   // ISO date "YYYY-MM-DD"
+  const [coverEndDate, setCoverEndDate] = useState<string>('');       // ISO date, required for tp/leave-cover
+
+  // ── NEW: target assignment for the end-assignment modal ─────────
+  const [assignmentToEnd, setAssignmentToEnd] = useState<TeacherAssignment | null>(null);
+
   const [previewTeachers, setPreviewTeachers] = useState<Teacher[]>([]);
   const [previewAssignments, setPreviewAssignments] = useState<Record<string, any[]>>({});
   const [previewFilterInfo, setPreviewFilterInfo] = useState<string>('');
@@ -31,11 +40,29 @@ export const useTeacherModals = () => {
     setTargetClassId('');
     setSelectedSubjectToRemove('');
     setBulkRemoveAssignments([]);
+
+    // NEW
+    setCoverRoleType('substantive');
+    setCoverStartDate('');
+    setCoverEndDate('');
+    setAssignmentToEnd(null);
   };
 
-  const openAssignmentModal = (teacher?: Teacher) => {
+  const openAssignmentModal = (
+    teacher?: Teacher,
+    initialRoleType: AssignmentRoleType = 'substantive'
+  ) => {
     setSelectedTeacher(teacher || null);
     setSelectedSubjects([]);
+    setAssignAsFormTeacher(false);
+    setSelectedClassId('');
+    setCurrentSubject('');
+
+    // NEW defaults
+    setCoverRoleType(initialRoleType);
+    setCoverStartDate(new Date().toISOString().split('T')[0]); // today
+    setCoverEndDate('');
+
     setActiveModal('assignment');
   };
 
@@ -57,7 +84,12 @@ export const useTeacherModals = () => {
     setActiveModal('transfer');
   };
 
-  const openRemoveSubjectModal = (teacher: Teacher, classId: string, className: string, subject: string) => {
+  const openRemoveSubjectModal = (
+    teacher: Teacher,
+    classId: string,
+    className: string,
+    subject: string
+  ) => {
     setSelectedTeacher(teacher);
     setSelectedClassId(classId);
     setSelectedClassName(className);
@@ -76,11 +108,30 @@ export const useTeacherModals = () => {
     setActiveModal('confirm');
   };
 
-  const openPreviewModal = (teachers: Teacher[], assignments: Record<string, any[]>, filterInfo: string) => {
+  const openPreviewModal = (
+    teachers: Teacher[],
+    assignments: Record<string, any[]>,
+    filterInfo: string
+  ) => {
     setPreviewTeachers(teachers);
     setPreviewAssignments(assignments);
     setPreviewFilterInfo(filterInfo);
     setActiveModal('teachers-preview');
+  };
+
+  // ── NEW: end-assignment modal ───────────────────────────────────
+  const openEndAssignmentModal = (assignment: TeacherAssignment) => {
+    setAssignmentToEnd(assignment);
+    setModalData({
+      teacher: selectedTeacher || undefined,
+      assignmentId: assignment.id,
+      action: 'assignment-end',
+      title: 'End Cover Assignment',
+      message: `End ${assignment.teacherName}'s ${assignment.roleType} assignment for ${assignment.subject} in ${assignment.className}? The substantive teacher will be reactivated if suspended.`,
+      confirmText: 'End Cover',
+      cancelText: 'Cancel',
+    });
+    setActiveModal('confirm');
   };
 
   return {
@@ -99,7 +150,13 @@ export const useTeacherModals = () => {
     previewTeachers,
     previewAssignments,
     previewFilterInfo,
-    
+
+    // NEW state
+    coverRoleType,
+    coverStartDate,
+    coverEndDate,
+    assignmentToEnd,
+
     // Setters
     setSelectedTeacher,
     setSelectedClassId,
@@ -112,7 +169,13 @@ export const useTeacherModals = () => {
     setBulkRemoveAssignments,
     setModalData,
     setActiveModal,
-    
+
+    // NEW setters
+    setCoverRoleType,
+    setCoverStartDate,
+    setCoverEndDate,
+    setAssignmentToEnd,
+
     // Actions
     resetModalState,
     openAssignmentModal,
@@ -123,5 +186,8 @@ export const useTeacherModals = () => {
     openBulkRemoveModal,
     openConfirmationModal,
     openPreviewModal,
+
+    // NEW action
+    openEndAssignmentModal,
   };
 };

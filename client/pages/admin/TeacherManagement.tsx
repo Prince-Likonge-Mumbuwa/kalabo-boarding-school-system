@@ -4,7 +4,7 @@ import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useAuth } from '@/hooks/useAuth';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect } from 'react';
 import {
   Search,
@@ -22,23 +22,37 @@ import {
   UserCheck,
   AlertCircle,
   Download,
-  Grid3X3,
-  List,
-  Star
+  Star,
+  Phone,
+  Mail,
+  BookOpen,
+  Edit,
+  Trash2,
+  UserPlus,
+  ArrowRightLeft,
+  UserMinus,
+  Layers,
+  Clock,
+  UserCog,
+  RotateCcw,
+  Database,
+  Lock,
 } from 'lucide-react';
 import { generateTeacherListPDF } from '@/services/pdf/teacherListPDF';
+import { teacherService, parseLocalDateInput } from '@/services/schoolService';
+import * as assignmentEngine from '@/services/assignmentEngine';
 
 // Import types
-import { Teacher, TeacherStatus, ViewMode, ModalType } from '@/types/teachers';
+import { Teacher, TeacherStatus, ViewMode } from '@/types/teachers';
+import type { TeacherAssignment } from '@/types/school';
 
 // Import hooks
 import { useTeacherFilters } from '@/hooks/teachers/useTeacherFilters';
 import { useTeacherModals } from '@/hooks/teachers/useTeacherModals';
 import { useTeacherBulkOperations } from '@/hooks/teachers/useTeacherBulkOperations';
+import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 
 // Import components
-import { TeacherCard } from '@/components/teachers/TeacherCard';
-import { TeacherDataTable } from '@/components/teachers/TeacherDataTable';
 import {
   TeachersPreviewModal,
   ConfirmationModal,
@@ -47,18 +61,68 @@ import {
   DeleteTeacherModal,
   RemoveSubjectModal,
   TransferTeacherModal,
-  BulkRemoveModal
+  BulkRemoveModal,
+  OverlappingSlotsModal,
 } from '@/components/teachers/TeacherModals';
+
+// ==================== SMALL HELPERS ====================
+
+const ROLE_LABELS: Record<string, string> = {
+  substantive: 'Primary',
+  tp: 'TP',
+  'leave-cover': 'Leave cover',
+};
+
+const ROLE_BADGE_CLASSES: Record<string, string> = {
+  substantive: 'bg-slate-100 text-slate-700 border-slate-200',
+  tp: 'bg-amber-50 text-amber-700 border-amber-200',
+  'leave-cover': 'bg-rose-50 text-rose-700 border-rose-200',
+};
+
+const STATUS_LABELS: Record<TeacherStatus, string> = {
+  active: 'Active',
+  inactive: 'Inactive',
+  transferred: 'Transferred',
+  on_leave: 'On Leave',
+};
+
+const formatShortDate = (d: Date | null | undefined): string => {
+  if (!d) return '';
+  try {
+    return d.toLocaleDateString(undefined, {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return '';
+  }
+};
+
+const isDelegateRole = (r?: string | null) => r === 'tp' || r === 'leave-cover';
+
+// ==================== COMPONENT ====================
 
 export default function TeacherManagement() {
   const { user } = useAuth();
   const isUserAdmin = user?.userType === 'admin';
   const isMobile = useMediaQuery('(max-width: 640px)');
   const queryClient = useQueryClient();
-  
-  // View mode state
-  const [viewMode, setViewMode] = useState<ViewMode>('grid');
-  
+
+  // View mode state - default to list for the new layout
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+
+  // Selected teacher state for the right panel
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
+
+  // Overlapping slots viewer state
+  const [showOverlappingSlots, setShowOverlappingSlots] = useState(false);
+  const [overlappingSlots, setOverlappingSlots] = useState<assignmentEngine.SlotOverlap[]>([]);
+  const [isLoadingOverlapping, setIsLoadingOverlapping] = useState(false);
+
+  // One-time migration state
+  const [isMigrating, setIsMigrating] = useState(false);
+
   // Edit teacher data state
   const [editTeacherData, setEditTeacherData] = useState({
     name: '',
@@ -66,11 +130,11 @@ export default function TeacherManagement() {
     phone: '',
     department: '',
     subjects: [] as string[],
-    newSubject: ''
+    newSubject: '',
   });
 
   // ==================== HOOKS ====================
-  const { 
+  const {
     allTeachers: teachers = [],
     isLoading: isLoadingTeachers,
     isFetching: isFetchingTeachers,
@@ -83,6 +147,7 @@ export default function TeacherManagement() {
     isDeletingTeacher,
     isRemovingSubject,
     isTransferringTeacher,
+    isEndingAssignment,
     assignTeacherToClass,
     assignTeacherWithMultipleSubjects,
     removeTeacherFromClass,
@@ -91,20 +156,27 @@ export default function TeacherManagement() {
     updateTeacher,
     deleteTeacher,
     transferTeacher,
+    endAssignment,
+    reactivateExpiredCovers,
+    resolveSlotConflict,
+    isResolvingSlotConflict,
     refetchTeachers,
+    // engine actions
+    returnTeacherToDuty,
+    endDelegation,
+    handBackTp,
+    findSlotOverlaps,
+    getUncoveredSlots,
   } = useSchoolTeachers();
-  
-  const { 
+
+  const {
     classes = [],
     isLoading: isLoadingClasses,
     isError: classesError,
-    refetch: refetchClasses
+    refetch: refetchClasses,
   } = useSchoolClasses({ isActive: true });
 
-  const { 
-    learners = [],
-    refetch: refetchLearners
-  } = useSchoolLearners('');
+  const { learners = [] } = useSchoolLearners('');
 
   // Filter hook
   const {
@@ -119,10 +191,10 @@ export default function TeacherManagement() {
     filteredTeachers,
     filterCounts,
     stats,
-    clearFilters
+    clearFilters,
   } = useTeacherFilters(teachers);
 
-  // Modal hook
+  // Modal hook — includes role/date state for the assignment modal
   const {
     activeModal,
     modalData,
@@ -138,26 +210,28 @@ export default function TeacherManagement() {
     previewTeachers,
     previewAssignments,
     previewFilterInfo,
+
+    coverRoleType,
+    coverStartDate,
+    coverEndDate,
+    setCoverRoleType,
+    setCoverStartDate,
+    setCoverEndDate,
+
     setSelectedTeacher,
     setSelectedClassId,
-    setSelectedClassName,
     setSelectedSubjects,
     setCurrentSubject,
     setAssignAsFormTeacher,
     setTargetClassId,
-    setSelectedSubjectToRemove,
-    setBulkRemoveAssignments,
-    setModalData,
-    setActiveModal,
     resetModalState,
     openAssignmentModal,
     openEditModal,
     openDeleteModal,
     openTransferModal,
-    openRemoveSubjectModal,
     openBulkRemoveModal,
     openConfirmationModal,
-    openPreviewModal
+    openPreviewModal,
   } = useTeacherModals();
 
   // Bulk operations hook
@@ -167,10 +241,67 @@ export default function TeacherManagement() {
     removeToast,
     handleBulkRemove,
     handlePreviewTeachers,
-    handleDownloadPDF
+    handleDownloadPDF,
   } = useTeacherBulkOperations();
 
+  // ==================== ENGINE STATUS ====================
+
+  // Has migrateToSlots() run? Until it has, assignment changes are blocked.
+  const engineReadyQuery = useQuery({
+    queryKey: ['system', 'engineReady'],
+    queryFn: () => assignmentEngine.isEngineReady(),
+    enabled: isUserAdmin,
+    staleTime: 5 * 60 * 1000,
+  });
+  const engineReady = engineReadyQuery.data === true;
+
+  // Subjects whose Primary Owner is on leave with no live/scheduled cover.
+  const uncoveredQuery = useQuery({
+    queryKey: ['class_slots', 'uncovered'],
+    queryFn: () => getUncoveredSlots(),
+    enabled: isUserAdmin && engineReady,
+    staleTime: 60 * 1000,
+  });
+  const uncoveredSlots = uncoveredQuery.data ?? [];
+
+  // ==================== ASSIGNMENTS (SELECTED TEACHER) ====================
+  const {
+    assignments: activeTeacherAssignments = [],
+    isFetching: isFetchingActiveAssignments,
+    getClassesWithSubjectDetails,
+  } = useTeacherAssignments(selectedTeacherId || '');
+
+  // Grouped by class, with role, dates and live authority per subject.
+  const assignmentsByClass = getClassesWithSubjectDetails();
+
   // ==================== EFFECTS ====================
+
+  // Close expired covers / TP once when an admin opens this page.
+  // Authority already reverted at the end date; this tidies the records.
+  useEffect(() => {
+    if (!isUserAdmin || !engineReady) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const count = await reactivateExpiredCovers();
+        if (!cancelled && count && count > 0) {
+          addToast({
+            type: 'info',
+            title: 'Expired Covers Closed',
+            message: `${count} cover/TP assignment${count === 1 ? '' : 's'} reached the end date. The primary teacher${count === 1 ? ' has' : 's have'} control again.`,
+            duration: 5000,
+          });
+        }
+      } catch (err) {
+        console.warn('closing expired covers failed:', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUserAdmin, engineReady]);
+
   useEffect(() => {
     if (selectedTeacher && activeModal === 'edit') {
       setEditTeacherData({
@@ -179,70 +310,116 @@ export default function TeacherManagement() {
         phone: selectedTeacher.phone || '',
         department: selectedTeacher.department || '',
         subjects: Array.isArray(selectedTeacher.subjects) ? selectedTeacher.subjects : [],
-        newSubject: ''
+        newSubject: '',
       });
     }
   }, [selectedTeacher, activeModal]);
 
-  // ==================== HANDLERS ====================
-  const handleViewLearners = async (classId?: string) => {
+  // Auto-select first teacher if none is selected and data is loaded
+  useEffect(() => {
+    if (filteredTeachers.length > 0 && !selectedTeacherId) {
+      setSelectedTeacherId(filteredTeachers[0].id);
+    }
+  }, [filteredTeachers, selectedTeacherId]);
+
+  const activeTeacher = filteredTeachers.find(t => t.id === selectedTeacherId) || null;
+
+  // ==================== SHARED ERROR TOAST ====================
+  const toastError = (title: string, error: any, fallback: string) => {
+    console.error(title, error);
+    addToast({
+      type: 'error',
+      title,
+      message: error?.message || fallback,
+      duration: 6000,
+    });
+  };
+
+  const requireAdmin = (what: string): boolean => {
+    if (isUserAdmin) return true;
+    addToast({
+      type: 'error',
+      title: 'Permission Denied',
+      message: `Only administrators can ${what}`,
+    });
+    return false;
+  };
+
+  // ==================== ONE-TIME MIGRATION ====================
+  const handleMigrate = async () => {
+    if (!requireAdmin('run the migration')) return;
+    setIsMigrating(true);
     try {
-      let learnersToShow = [...learners];
-      let className = 'All Learners';
-      
-      if (classId) {
-        const classObj = classes.find(c => c.id === classId);
-        className = classObj?.name || 'Unknown Class';
-        learnersToShow = learners.filter(learner => learner.classId === classId);
-      }
-      
+      const dry = await teacherService.repairAssignments({ dryRun: true });
+      console.log('Migration dry run:', dry);
+
+      const ok = window.confirm(
+        `Prepare the assignment system?\n\n` +
+          `• ${dry.slotsWritten} class/subject slots will be created\n` +
+          `• ${dry.duplicateOwnersArchived} duplicate primary teacher(s) will be archived (newest kept)\n` +
+          `• ${dry.duplicateDelegatesArchived} duplicate cover(s) will be archived\n` +
+          `• ${dry.delegatesWithoutEndDateClosed} cover(s) with no end date will be closed — re-assign them with dates\n` +
+          `• ${dry.formTeacherFlagsCleared} wrong Form Teacher flag(s) will be cleared\n` +
+          (dry.orphanDelegates.length
+            ? `• ${dry.orphanDelegates.length} cover(s) have no primary teacher — assign one afterwards\n`
+            : '') +
+          `\nNothing is deleted. Continue?`
+      );
+      if (!ok) return;
+
+      const result = await teacherService.repairAssignments();
+      console.log('Migration result:', result);
+
+      await queryClient.invalidateQueries();
       addToast({
-        type: 'info',
-        title: 'Learners Found',
-        message: `${learnersToShow.length} learners in ${className}`,
-        duration: 3000
+        type: 'success',
+        title: 'Assignment System Ready',
+        message: `${result.slotsWritten} slots created. Assigning, covers, TP and transfers are now enabled.`,
+        duration: 7000,
       });
-      
-    } catch (error) {
-      console.error('Error loading learners:', error);
-      addToast({
-        type: 'error',
-        title: 'Failed to Load Learners',
-        message: 'An error occurred while loading learners data.',
-        duration: 5000
-      });
+    } catch (error: any) {
+      toastError('Migration Failed', error, 'Could not prepare the assignment system.');
+    } finally {
+      setIsMigrating(false);
     }
   };
 
+  // ==================== HANDLERS ====================
   const handleUpdateStatus = async (teacherId: string, newStatus: TeacherStatus) => {
-    if (!isUserAdmin) {
-      addToast({
-        type: 'error',
-        title: 'Permission Denied',
-        message: 'Only administrators can update teacher status'
-      });
-      return;
-    }
+    if (!requireAdmin('update teacher status')) return;
 
     const teacher = teachers.find(t => t.id === teacherId);
-    if (!teacher) return;
+    if (!teacher || teacher.status === newStatus) return;
 
-    const statusLabels = {
-      active: 'Active',
-      inactive: 'Inactive',
-      transferred: 'Transferred',
-      on_leave: 'On Leave'
-    };
+    const returning = teacher.status === 'on_leave' && newStatus === 'active';
 
     openConfirmationModal({
       teacher,
       newStatus,
       action: 'status-update',
-      title: `Change Status to ${statusLabels[newStatus]}`,
-      message: `Are you sure you want to change ${teacher.name}'s status to ${statusLabels[newStatus]}?`,
-      confirmText: 'Update Status',
-      cancelText: 'Cancel'
-    });
+      title: returning ? 'Return to Duty' : `Change Status to ${STATUS_LABELS[newStatus]}`,
+      message:
+        newStatus === 'on_leave'
+          ? `Put ${teacher.name} on leave? They stay the primary teacher of all their classes. ` +
+            `Assign covering teachers (with start and end dates) for the subjects that need them.`
+          : returning
+          ? `Return ${teacher.name} to duty? Their leave covers end now and they get full control of their classes back. Teaching Practice placements continue.`
+          : `Change ${teacher.name}'s status to ${STATUS_LABELS[newStatus]}?`,
+      confirmText: returning ? 'Return to Duty' : 'Update Status',
+      cancelText: 'Cancel',
+    } as any);
+  };
+
+  const handleReturnToDutyClick = (teacher: Teacher) => {
+    if (!requireAdmin('return teachers to duty')) return;
+    openConfirmationModal({
+      teacher,
+      action: 'return-to-duty',
+      title: 'Return to Duty',
+      message: `Return ${teacher.name} to duty? Their leave covers end now and they get full control of their classes back. Teaching Practice placements continue.`,
+      confirmText: 'Return to Duty',
+      cancelText: 'Cancel',
+    } as any);
   };
 
   const handleEditTeacher = async () => {
@@ -256,27 +433,19 @@ export default function TeacherManagement() {
           email: editTeacherData.email,
           phone: editTeacherData.phone,
           department: editTeacherData.department,
-          subjects: editTeacherData.subjects
-        }
+          subjects: editTeacherData.subjects,
+        },
       });
-      
+
       addToast({
         type: 'success',
         title: 'Teacher Updated',
-        message: `${selectedTeacher.name}'s information has been updated successfully.`,
-        duration: 4000
+        message: `${editTeacherData.name || selectedTeacher.name}'s information has been updated.`,
+        duration: 4000,
       });
-      
       resetModalState();
-      queryClient.invalidateQueries({ queryKey: ['teachers'] });
     } catch (error: any) {
-      console.error('Update error:', error);
-      addToast({
-        type: 'error',
-        title: 'Update Failed',
-        message: error.message || 'Failed to update teacher information',
-        duration: 5000
-      });
+      toastError('Update Failed', error, 'Failed to update teacher information');
     }
   };
 
@@ -285,97 +454,51 @@ export default function TeacherManagement() {
 
     try {
       await deleteTeacher(selectedTeacher.id);
-      
       addToast({
         type: 'success',
         title: 'Teacher Deleted',
-        message: `${selectedTeacher.name} has been permanently deleted.`,
-        duration: 4000
+        message: `${selectedTeacher.name} has been deleted. Their past assignments, grades and attendance are kept.`,
+        duration: 5000,
       });
-      
       resetModalState();
-      queryClient.invalidateQueries({ queryKey: ['teachers'] });
+      setSelectedTeacherId(null);
     } catch (error: any) {
-      console.error('Delete error:', error);
-      addToast({
-        type: 'error',
-        title: 'Delete Failed',
-        message: error.message || 'Failed to delete teacher',
-        duration: 5000
-      });
+      toastError('Delete Failed', error, 'Failed to delete teacher');
     }
   };
 
   const handleAddSubjectToTeacher = () => {
     if (!editTeacherData.newSubject) {
-      addToast({
-        type: 'warning',
-        title: 'Subject Required',
-        message: 'Please enter a subject name',
-        duration: 3000
-      });
+      addToast({ type: 'warning', title: 'Subject Required', message: 'Please enter a subject name', duration: 3000 });
       return;
     }
-
     if (editTeacherData.subjects.includes(editTeacherData.newSubject)) {
-      addToast({
-        type: 'warning',
-        title: 'Duplicate Subject',
-        message: 'This subject has already been added',
-        duration: 3000
-      });
+      addToast({ type: 'warning', title: 'Duplicate Subject', message: 'This subject has already been added', duration: 3000 });
       return;
     }
-
     setEditTeacherData({
       ...editTeacherData,
       subjects: [...editTeacherData.subjects, editTeacherData.newSubject],
-      newSubject: ''
-    });
-
-    addToast({
-      type: 'success',
-      title: 'Subject Added',
-      message: `${editTeacherData.newSubject} has been added to the teacher's subjects.`,
-      duration: 2000
+      newSubject: '',
     });
   };
 
   const handleRemoveSubjectFromTeacher = (subjectToRemove: string) => {
     setEditTeacherData({
       ...editTeacherData,
-      subjects: editTeacherData.subjects.filter(s => s !== subjectToRemove)
-    });
-
-    addToast({
-      type: 'info',
-      title: 'Subject Removed',
-      message: `${subjectToRemove} has been removed from the teacher's subjects.`,
-      duration: 2000
+      subjects: editTeacherData.subjects.filter(s => s !== subjectToRemove),
     });
   };
 
   const handleAddSubject = () => {
     if (!currentSubject) {
-      addToast({
-        type: 'warning',
-        title: 'Subject Required',
-        message: 'Please select a subject',
-        duration: 3000
-      });
+      addToast({ type: 'warning', title: 'Subject Required', message: 'Please select a subject', duration: 3000 });
       return;
     }
-
     if (selectedSubjects.includes(currentSubject)) {
-      addToast({
-        type: 'warning',
-        title: 'Duplicate Subject',
-        message: 'This subject has already been added',
-        duration: 3000
-      });
+      addToast({ type: 'warning', title: 'Duplicate Subject', message: 'This subject has already been added', duration: 3000 });
       return;
     }
-
     setSelectedSubjects([...selectedSubjects, currentSubject]);
     setCurrentSubject('');
   };
@@ -386,12 +509,7 @@ export default function TeacherManagement() {
 
   const handleAssignTeacher = async () => {
     if (!selectedTeacher || !selectedClassId) {
-      addToast({
-        type: 'warning',
-        title: 'Incomplete Selection',
-        message: 'Please select both a teacher and a class',
-        duration: 3000
-      });
+      addToast({ type: 'warning', title: 'Incomplete Selection', message: 'Please select both a teacher and a class', duration: 3000 });
       return;
     }
 
@@ -399,73 +517,83 @@ export default function TeacherManagement() {
       addToast({
         type: 'warning',
         title: 'No Role Selected',
-        message: 'Please either assign as Form Teacher OR select at least one subject to teach',
-        duration: 4000
+        message: 'Choose Form Teacher, at least one subject, or both.',
+        duration: 4000,
       });
       return;
     }
 
-    if (!isUserAdmin) {
-      addToast({
-        type: 'error',
-        title: 'Permission Denied',
-        message: 'Only administrators can assign teachers to classes',
-        duration: 4000
-      });
-      return;
-    }
+    if (!requireAdmin('assign teachers to classes')) return;
 
     const selectedClass = classes.find(c => c.id === selectedClassId);
     if (!selectedClass) {
+      addToast({ type: 'error', title: 'Class Not Found', message: 'The selected class could not be found', duration: 3000 });
+      return;
+    }
+
+    // Date inputs are "YYYY-MM-DD" → parse as LOCAL dates; end runs to 23:59.
+    const isDelegate = isDelegateRole(coverRoleType);
+    const startDate = parseLocalDateInput(coverStartDate) ?? undefined;
+    const endDate = parseLocalDateInput(coverEndDate, true);
+
+    if (isDelegate && (!startDate || !endDate)) {
       addToast({
-        type: 'error',
-        title: 'Class Not Found',
-        message: 'The selected class could not be found',
-        duration: 3000
+        type: 'warning',
+        title: 'Dates Required',
+        message: 'Covering and Teaching Practice assignments need a start date and an end date.',
+        duration: 4000,
       });
       return;
     }
 
     try {
       if (selectedSubjects.length > 0) {
+        // The hook assigns subjects and (if ticked) the Form Teacher role as separate slots.
         await assignTeacherWithMultipleSubjects({
           teacherId: selectedTeacher.id,
           classId: selectedClassId,
           subjects: selectedSubjects,
-          isFormTeacher: assignAsFormTeacher
+          isFormTeacher: assignAsFormTeacher,
+          roleType: coverRoleType,
+          startDate,
+          endDate: isDelegate ? endDate : null,
         });
-      } else if (assignAsFormTeacher) {
+      } else {
         await assignTeacherToClass({
           teacherId: selectedTeacher.id,
           classId: selectedClassId,
           subject: 'Form Teacher',
-          isFormTeacher: true
+          isFormTeacher: true,
+          roleType: coverRoleType,
+          startDate,
+          endDate: isDelegate ? endDate : null,
         });
       }
-      
-      const roleText = assignAsFormTeacher ? 'Form Teacher' : 'Subject Teacher';
-      const subjectsText = selectedSubjects.length > 0 ? ` for ${selectedSubjects.length} subject(s)` : '';
-      
+
+      const roleText =
+        coverRoleType === 'tp'
+          ? 'Teaching Practice delegate'
+          : coverRoleType === 'leave-cover'
+          ? 'Covering Teacher'
+          : 'Primary Teacher';
+      const parts = [
+        ...(selectedSubjects.length ? [`${selectedSubjects.length} subject(s)`] : []),
+        ...(assignAsFormTeacher ? ['Form Teacher'] : []),
+      ];
+      const window_ = isDelegate ? ` (${formatShortDate(startDate)} – ${formatShortDate(endDate)})` : '';
+
       addToast({
         type: 'success',
         title: 'Assignment Successful',
-        message: `${selectedTeacher.name} assigned to ${selectedClass.name} as ${roleText}${subjectsText}`,
-        duration: 5000
+        message:
+          `${selectedTeacher.name} is now ${roleText} for ${parts.join(' + ')} in ${selectedClass.name}${window_}.` +
+          (!isDelegate ? ' Any previous teacher on those slots has been archived.' : ''),
+        duration: 6000,
       });
-      
-      queryClient.invalidateQueries({ queryKey: ['teachers'] });
-      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
-      
+
       resetModalState();
-      
     } catch (error: any) {
-      console.error('Assignment error:', error);
-      addToast({
-        type: 'error',
-        title: 'Assignment Failed',
-        message: error.message || 'Failed to assign teacher',
-        duration: 5000
-      });
+      toastError('Assignment Failed', error, 'Failed to assign teacher');
     }
   };
 
@@ -476,104 +604,53 @@ export default function TeacherManagement() {
       await removeTeacherSubject({
         teacherId: selectedTeacher.id,
         classId: selectedClassId,
-        subject: selectedSubjectToRemove
+        subject: selectedSubjectToRemove,
       });
-      
       addToast({
         type: 'success',
         title: 'Subject Removed',
-        message: `${selectedSubjectToRemove} has been removed from ${selectedTeacher.name}'s assignments.`,
-        duration: 4000
+        message: `${selectedSubjectToRemove} has been removed from ${selectedTeacher.name}.`,
+        duration: 4000,
       });
-      
-      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
-      
       resetModalState();
     } catch (error: any) {
-      console.error('Remove subject error:', error);
-      addToast({
-        type: 'error',
-        title: 'Remove Failed',
-        message: error.message || 'Failed to remove subject',
-        duration: 5000
-      });
+      toastError('Remove Failed', error, 'Failed to remove subject');
     }
   };
 
-  const handleRemoveFormTeacherStatus = async () => {
-    if (!selectedTeacher || !selectedClassId) return;
-
+  // Explicit args — avoids reading stale modal state right after setState.
+  const removeFormTeacherRole = async (teacher: Teacher, classId: string) => {
     try {
-      await removeTeacherSubject({
-        teacherId: selectedTeacher.id,
-        classId: selectedClassId,
-        subject: 'Form Teacher'
-      });
-      
+      await removeTeacherSubject({ teacherId: teacher.id, classId, subject: 'Form Teacher' });
       addToast({
         type: 'success',
-        title: 'Status Updated',
-        message: `${selectedTeacher.name} is no longer Form Teacher of this class.`,
-        duration: 4000
+        title: 'Form Teacher Removed',
+        message: `${teacher.name} is no longer Form Teacher of this class.`,
+        duration: 4000,
       });
-      
-      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
-      queryClient.invalidateQueries({ queryKey: ['teachers'] });
-      
       resetModalState();
-      
     } catch (error: any) {
-      console.error('Remove form teacher error:', error);
-      addToast({
-        type: 'error',
-        title: 'Update Failed',
-        message: error.message || 'Failed to remove form teacher status',
-        duration: 5000
-      });
+      toastError('Update Failed', error, 'Failed to remove form teacher status');
     }
   };
 
-  const handleRemoveFromClass = async () => {
-    if (!selectedTeacher || !selectedClassId) return;
-
+  const removeFromClass = async (teacher: Teacher, classId: string, className?: string) => {
     try {
-      await removeTeacherFromClass({
-        teacherId: selectedTeacher.id,
-        classId: selectedClassId
-      });
-      
+      await removeTeacherFromClass({ teacherId: teacher.id, classId });
       addToast({
         type: 'success',
         title: 'Teacher Removed',
-        message: `${selectedTeacher.name} has been removed from the class.`,
-        duration: 4000
+        message: `${teacher.name} has been removed from ${className || 'the class'}. Any running cover continues until its end date.`,
+        duration: 5000,
       });
-      
-      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
-      queryClient.invalidateQueries({ queryKey: ['teachers'] });
-      
       resetModalState();
-      
     } catch (error: any) {
-      console.error('Remove error:', error);
-      addToast({
-        type: 'error',
-        title: 'Remove Failed',
-        message: error.message || 'Failed to remove teacher',
-        duration: 5000
-      });
+      toastError('Remove Failed', error, 'Failed to remove teacher');
     }
   };
 
-  const handleRemoveAssignment = async (teacherId: string, classId: string) => {
-    if (!isUserAdmin) {
-      addToast({
-        type: 'error',
-        title: 'Permission Denied',
-        message: 'Only administrators can remove teacher assignments'
-      });
-      return;
-    }
+  const handleRemoveAssignment = (teacherId: string, classId: string) => {
+    if (!requireAdmin('remove teacher assignments')) return;
 
     const teacher = teachers.find(t => t.id === teacherId);
     const classObj = classes.find(c => c.id === classId);
@@ -584,51 +661,15 @@ export default function TeacherManagement() {
       className: classObj?.name,
       action: 'assignment-remove',
       title: 'Remove Teacher Assignment',
-      message: `Are you sure you want to remove ${teacher?.name}'s assignment from ${classObj?.name}? This will remove all subjects they teach in this class.`,
+      message: `Remove ${teacher?.name} from ${classObj?.name}? All their roles in this class end. Their past grades and attendance are kept.`,
       confirmText: 'Remove',
-      cancelText: 'Cancel'
-    });
-  };
-
-  const handleConfirmRemoveAssignment = async () => {
-    if (!modalData || !modalData.teacher || !modalData.classId) return;
-
-    try {
-      await removeTeacherFromClass({
-        teacherId: modalData.teacher.id,
-        classId: modalData.classId
-      });
-      
-      addToast({
-        type: 'success',
-        title: 'Assignment Removed',
-        message: `${modalData.teacher.name} has been removed from ${modalData.className}.`,
-        duration: 4000
-      });
-      
-      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', modalData.teacher.id] });
-      queryClient.invalidateQueries({ queryKey: ['teachers'] });
-      
-      resetModalState();
-    } catch (error: any) {
-      console.error('Remove assignment error:', error);
-      addToast({
-        type: 'error',
-        title: 'Remove Failed',
-        message: error.message || 'Failed to remove assignment',
-        duration: 5000
-      });
-    }
+      cancelText: 'Cancel',
+    } as any);
   };
 
   const handleTransferTeacher = async () => {
     if (!selectedTeacher || !selectedClassId || !targetClassId) {
-      addToast({
-        type: 'warning',
-        title: 'Incomplete Selection',
-        message: 'Please select both source and target classes',
-        duration: 3000
-      });
+      addToast({ type: 'warning', title: 'Incomplete Selection', message: 'Please select both source and target classes', duration: 3000 });
       return;
     }
 
@@ -636,73 +677,152 @@ export default function TeacherManagement() {
     const sourceClass = classes.find(c => c.id === selectedClassId);
 
     try {
-      await transferTeacher({
+      const report: any = await transferTeacher({
         teacherId: selectedTeacher.id,
         fromClassId: selectedClassId,
-        toClassId: targetClassId
+        toClassId: targetClassId,
       });
-      
+
+      const extra: string[] = [];
+      if (report?.replacedOwnersInTarget?.length) {
+        extra.push(`${report.replacedOwnersInTarget.length} previous teacher(s) in ${targetClass?.name} archived`);
+      }
+      if (report?.sourceSlotsStillCovered?.length) {
+        extra.push(`still covered in ${sourceClass?.name}: ${report.sourceSlotsStillCovered.join(', ')}`);
+      }
+
       addToast({
         type: 'success',
         title: 'Transfer Successful',
-        message: `${selectedTeacher.name} transferred from ${sourceClass?.name} to ${targetClass?.name}`,
-        duration: 5000
+        message:
+          `${selectedTeacher.name} moved from ${sourceClass?.name} to ${targetClass?.name}` +
+          (report?.carried?.length ? ` (${report.carried.join(', ')})` : '') +
+          (extra.length ? `. ${extra.join('; ')}.` : '.'),
+        duration: 7000,
       });
-      
-      queryClient.invalidateQueries({ queryKey: ['teacher_assignments', selectedTeacher.id] });
-      
       resetModalState();
     } catch (error: any) {
-      console.error('Transfer error:', error);
-      addToast({
-        type: 'error',
-        title: 'Transfer Failed',
-        message: error.message || 'Failed to transfer teacher',
-        duration: 5000
-      });
+      toastError('Transfer Failed', error, 'Failed to transfer teacher');
     }
   };
 
-  const handleBulkRemoveClick = (teacher: Teacher) => {
-    fetch(`/api/teacher-assignments/${teacher.id}`)
-      .then(res => res.json())
-      .then(data => {
-        openBulkRemoveModal(teacher, data);
-      })
-      .catch(error => {
-        console.error('Error fetching assignments:', error);
-        addToast({
-          type: 'error',
-          title: 'Failed to Load Assignments',
-          message: 'Could not load teacher assignments.',
-          duration: 4000
-        });
-      });
+  // ── Bulk remove: only current (non-ended) assignments are offered ──
+  const handleBulkRemoveClick = async (teacher: Teacher) => {
+    try {
+      const all = await teacherService.getTeacherAssignments(teacher.id);
+      const now = new Date();
+      const current = all.filter(
+        a =>
+          a.status !== 'ended' &&
+          !(isDelegateRole(a.roleType) && a.endDate && a.endDate < now)
+      );
+      openBulkRemoveModal(teacher, current);
+    } catch (error: any) {
+      toastError('Failed to Load Assignments', error, 'Could not load teacher assignments.');
+    }
   };
 
   const handleConfirmBulkRemove = async (selectedClassIds: string[]) => {
     if (!selectedTeacher) return;
-    
-    const success = await handleBulkRemove(
-      selectedTeacher,
-      selectedClassIds,
-      removeTeacherFromClass
-    );
-    
-    if (success) {
-      resetModalState();
+    const success = await handleBulkRemove(selectedTeacher, selectedClassIds, removeTeacherFromClass);
+    if (success) resetModalState();
+  };
+
+  // ── Delegate row: end THIS teacher's cover / TP placement ──
+  const handleEndCoverClick = (assignment: TeacherAssignment) => {
+    if (!requireAdmin('end cover assignments')) return;
+    if (!activeTeacher) return;
+
+    const isTp = assignment.roleType === 'tp';
+    openConfirmationModal({
+      action: 'assignment-end',
+      teacher: activeTeacher,
+      assignmentId: assignment.id,
+      title: isTp ? 'End Teaching Practice' : 'End Cover',
+      message:
+        `End ${assignment.teacherName}'s ${ROLE_LABELS[assignment.roleType] || assignment.roleType} for ` +
+        `${assignment.subject} in ${assignment.className}? The primary teacher gets control back immediately.`,
+      confirmText: isTp ? 'Hand Back' : 'End Cover',
+      cancelText: 'Cancel',
+    } as any);
+  };
+
+  // ── Owner row: end the cover / TP that is covering THIS teacher ──
+  const handleEndDelegationOnOwnedSlot = (s: {
+    slotId: string | null;
+    subject: string;
+    coveredByTeacherName: string | null;
+    coveredByRole: string | null;
+  }, className: string) => {
+    if (!requireAdmin('end cover assignments')) return;
+    if (!activeTeacher || !s.slotId) return;
+
+    const isTp = s.coveredByRole === 'tp';
+    openConfirmationModal({
+      action: 'delegation-end',
+      teacher: activeTeacher,
+      slotId: s.slotId,
+      delegateRole: s.coveredByRole,
+      title: isTp ? 'Hand Back from TP' : 'End Cover',
+      message:
+        `End ${s.coveredByTeacherName || 'the covering teacher'}'s ${isTp ? 'Teaching Practice' : 'cover'} for ` +
+        `${s.subject} in ${className}? ${activeTeacher.name} gets control back immediately.`,
+      confirmText: isTp ? 'Hand Back' : 'End Cover',
+      cancelText: 'Cancel',
+    } as any);
+  };
+
+  // ── Overlaps: genuine duplicates only (2+ primaries or 2+ covers) ──
+  const handleShowOverlappingSlots = async () => {
+    if (!requireAdmin('view this report')) return;
+
+    setShowOverlappingSlots(true);
+    setIsLoadingOverlapping(true);
+    setOverlappingSlots([]);
+
+    try {
+      const classNames = Object.fromEntries(classes.map(c => [c.id, c.name]));
+      setOverlappingSlots(await findSlotOverlaps(classNames));
+    } catch (error: any) {
+      toastError('Failed to Load Overlaps', error, 'Could not load assignment overlaps.');
+    } finally {
+      setIsLoadingOverlapping(false);
+    }
+  };
+
+  const handleResolveOverlap = async ({
+    slot,
+    keepAssignmentId,
+  }: {
+    slot: assignmentEngine.SlotOverlap;
+    keepAssignmentId: string;
+  }) => {
+    try {
+      const result: any = await resolveSlotConflict({
+        classId: slot.classId,
+        normalizedSubject: slot.normalizedSubjectId,
+        keepAssignmentId,
+      });
+
+      const warnings: string[] = result?.warnings ?? [];
+      addToast({
+        type: warnings.length ? 'warning' : 'success',
+        title: 'Overlap Resolved',
+        message:
+          `${result?.kept?.teacherName || 'Teacher'} kept ${slot.subject} — ${slot.className}. ` +
+          `${result?.ended ?? 0} other assignment(s) archived.` +
+          (warnings.length ? ` ${warnings.join(' ')}` : ''),
+        duration: 7000,
+      });
+
+      await handleShowOverlappingSlots();
+    } catch (error: any) {
+      toastError('Resolve Failed', error, 'Could not resolve the overlap.');
     }
   };
 
   const handlePreviewClick = async () => {
-    const result = await handlePreviewTeachers(
-      teachers,
-      filteredTeachers,
-      searchTerm,
-      statusFilter,
-      assignmentFilter
-    );
-    
+    const result = await handlePreviewTeachers(teachers, filteredTeachers, searchTerm, statusFilter, assignmentFilter);
     if (result) {
       openPreviewModal(result.teachersToShow, result.assignmentsMap, result.filterInfo);
     }
@@ -716,65 +836,124 @@ export default function TeacherManagement() {
       classes,
       generateTeacherListPDF
     );
-    
-    if (success) {
-      resetModalState();
-    }
+    if (success) resetModalState();
   };
 
   const handleConfirmAction = async () => {
-    if (!modalData) return;
+    const data: any = modalData;
+    if (!data) return;
 
-    switch (modalData.action) {
-      case 'status-update':
+    switch (data.action) {
+      case 'status-update': {
+        const teacher = data.teacher as Teacher;
+        const newStatus = data.newStatus as TeacherStatus;
+        const wasOnLeave = teacher.status === 'on_leave';
         try {
-          await updateTeacherStatus({ 
-            teacherId: modalData.teacher.id, 
-            status: modalData.newStatus 
-          });
-          
-          const statusLabels = {
-            active: 'Active',
-            inactive: 'Inactive',
-            transferred: 'Transferred',
-            on_leave: 'On Leave'
-          };
-          
+          await updateTeacherStatus({ teacherId: teacher.id, status: newStatus });
+
+          let message = `${teacher.name}'s status changed to ${STATUS_LABELS[newStatus]}.`;
+          if (newStatus === 'on_leave') {
+            const uncovered = (await getUncoveredSlots()).filter(s => s.ownerTeacherId === teacher.id);
+            message += uncovered.length
+              ? ` ${uncovered.length} subject(s) need a covering teacher: ${uncovered
+                  .map(s => `${s.subject} (${s.className})`)
+                  .join(', ')}.`
+              : ' All their subjects are already covered.';
+          } else if (wasOnLeave && newStatus === 'active') {
+            message += ' Leave covers have ended; they have full control again.';
+          }
+
           addToast({
-            type: 'success',
+            type: newStatus === 'on_leave' ? 'warning' : 'success',
             title: 'Status Updated',
-            message: `${modalData.teacher.name}'s status changed to ${statusLabels[modalData.newStatus]}`,
-            duration: 4000
+            message,
+            duration: 7000,
           });
-          
           resetModalState();
         } catch (error: any) {
-          console.error('Status update error:', error);
-          addToast({
-            type: 'error',
-            title: 'Update Failed',
-            message: error.message || 'Failed to update teacher status',
-            duration: 5000
-          });
+          toastError('Update Failed', error, 'Failed to update teacher status');
         }
         break;
-      
+      }
+
+      case 'return-to-duty': {
+        const teacher = data.teacher as Teacher;
+        try {
+          const r = await returnTeacherToDuty(teacher.id);
+          addToast({
+            type: 'success',
+            title: 'Returned to Duty',
+            message:
+              `${teacher.name} is back on duty. ${r.coversEnded} cover(s) ended.` +
+              (r.tpPlacementsContinuing ? ` ${r.tpPlacementsContinuing} TP placement(s) continue.` : ''),
+            duration: 6000,
+          });
+          resetModalState();
+        } catch (error: any) {
+          toastError('Return to Duty Failed', error, 'Could not return teacher to duty');
+        }
+        break;
+      }
+
       case 'remove-from-class':
-        setSelectedTeacher(modalData.teacher);
-        setSelectedClassId(modalData.classId);
-        await handleRemoveFromClass();
-        break;
-      
-      case 'remove-form-teacher':
-        setSelectedTeacher(modalData.teacher);
-        setSelectedClassId(modalData.classId);
-        await handleRemoveFormTeacherStatus();
-        break;
-      
       case 'assignment-remove':
-        await handleConfirmRemoveAssignment();
+        if (data.teacher && data.classId) {
+          await removeFromClass(data.teacher, data.classId, data.className);
+        } else {
+          resetModalState();
+        }
         break;
-      
+
+      case 'remove-form-teacher':
+        if (data.teacher && data.classId) {
+          await removeFormTeacherRole(data.teacher, data.classId);
+        } else {
+          resetModalState();
+        }
+        break;
+
+      case 'assignment-end':
+        if (data.assignmentId) {
+          try {
+            await endAssignment({ assignmentId: data.assignmentId, reason: 'handover' });
+            addToast({
+              type: 'success',
+              title: 'Cover Ended',
+              message: 'The primary teacher has control again.',
+              duration: 4000,
+            });
+            resetModalState();
+          } catch (error: any) {
+            toastError('End Cover Failed', error, 'Failed to end cover assignment');
+          }
+        } else {
+          resetModalState();
+        }
+        break;
+
+      case 'delegation-end':
+        if (data.slotId) {
+          try {
+            if (data.delegateRole === 'tp') {
+              await handBackTp(data.slotId);
+            } else {
+              await endDelegation({ slotId: data.slotId, reason: 'returned-to-duty' });
+            }
+            addToast({
+              type: 'success',
+              title: data.delegateRole === 'tp' ? 'Handed Back' : 'Cover Ended',
+              message: `${data.teacher?.name || 'The primary teacher'} has control again.`,
+              duration: 4000,
+            });
+            resetModalState();
+          } catch (error: any) {
+            toastError('End Cover Failed', error, 'Failed to end the cover');
+          }
+        } else {
+          resetModalState();
+        }
+        break;
+
       default:
         resetModalState();
     }
@@ -791,7 +970,7 @@ export default function TeacherManagement() {
             </div>
             <h3 className="text-xl font-semibold text-gray-900 mb-2">Failed to load data</h3>
             <p className="text-gray-600 mb-6">
-              {teachersErrorMessage?.message || 'An error occurred while fetching teachers'}
+              {(teachersErrorMessage as any)?.message || 'An error occurred while fetching teachers'}
             </p>
             <button
               onClick={() => {
@@ -827,10 +1006,9 @@ export default function TeacherManagement() {
     <>
       <DashboardLayout activeTab="teachers">
         <div className="min-h-screen bg-gray-50/80 p-3 sm:p-6 lg:p-8 transition-all duration-200">
-          
           {/* Toast Notifications */}
           <div className="fixed top-4 right-4 z-50 space-y-2 w-80 max-w-full">
-            {toasts.map(toast => (
+            {toasts.map((toast: any) => (
               <div
                 key={toast.id}
                 className={`
@@ -849,34 +1027,95 @@ export default function TeacherManagement() {
                     {toast.type === 'info' && <Info className="text-blue-600" size={20} />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className={`font-medium text-sm
+                    <p
+                      className={`font-medium text-sm
                       ${toast.type === 'success' ? 'text-green-800' : ''}
                       ${toast.type === 'error' ? 'text-red-800' : ''}
                       ${toast.type === 'warning' ? 'text-yellow-800' : ''}
                       ${toast.type === 'info' ? 'text-blue-800' : ''}
-                    `}>
+                    `}
+                    >
                       {toast.title}
                     </p>
-                    <p className={`text-xs mt-0.5
+                    <p
+                      className={`text-xs mt-0.5
                       ${toast.type === 'success' ? 'text-green-700' : ''}
                       ${toast.type === 'error' ? 'text-red-700' : ''}
                       ${toast.type === 'warning' ? 'text-yellow-700' : ''}
                       ${toast.type === 'info' ? 'text-blue-700' : ''}
-                    `}>
+                    `}
+                    >
                       {toast.message}
                     </p>
                   </div>
-                  <button
-                    onClick={() => removeToast(toast.id)}
-                    className="flex-shrink-0 hover:opacity-70"
-                  >
+                  <button onClick={() => removeToast(toast.id)} className="flex-shrink-0 hover:opacity-70">
                     <X size={16} className="text-gray-500" />
                   </button>
                 </div>
               </div>
             ))}
           </div>
-          
+
+          {/* ===== ONE-TIME SETUP BANNER ===== */}
+          {isUserAdmin && engineReadyQuery.isSuccess && !engineReady && (
+            <div className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex items-start gap-3 flex-1">
+                <Database className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
+                <div>
+                  <p className="font-semibold text-amber-900 text-sm">One-time setup needed</p>
+                  <p className="text-xs text-amber-800 mt-0.5">
+                    Prepare the assignment system to enable assigning teachers, covers, Teaching
+                    Practice and transfers. You'll see a summary before anything changes. Nothing is deleted.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleMigrate}
+                disabled={isMigrating}
+                className="px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 disabled:opacity-50 flex items-center gap-2 justify-center"
+              >
+                {isMigrating ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
+                {isMigrating ? 'Preparing…' : 'Prepare now'}
+              </button>
+            </div>
+          )}
+
+          {/* ===== SUBJECTS NEEDING COVER ===== */}
+          {isUserAdmin && engineReady && uncoveredSlots.length > 0 && (
+            <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="text-rose-600 flex-shrink-0 mt-0.5" size={20} />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-rose-900 text-sm">
+                    {uncoveredSlots.length} subject{uncoveredSlots.length === 1 ? '' : 's'} need a covering teacher
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {uncoveredSlots.slice(0, 12).map(s => (
+                      <span
+                        key={s.id}
+                        className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-rose-200 text-rose-700"
+                      >
+                        {s.subject} · {s.className} · {s.ownerTeacherName} on leave
+                      </span>
+                    ))}
+                    {uncoveredSlots.length > 12 && (
+                      <span className="text-[11px] text-rose-700">+{uncoveredSlots.length - 12} more</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setCoverRoleType('leave-cover' as any);
+                    openAssignmentModal();
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg flex-shrink-0"
+                >
+                  Assign cover
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* ===== HEADER ===== */}
           <div className="mb-6 sm:mb-8">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -885,11 +1124,19 @@ export default function TeacherManagement() {
                   Teacher Management
                 </h1>
                 <p className="text-sm sm:text-base text-gray-600 mt-1 sm:mt-2 flex items-center gap-2 flex-wrap">
-                  <span>{filteredTeachers.length} teacher{filteredTeachers.length !== 1 ? 's' : ''} shown</span>
+                  <span>
+                    {filteredTeachers.length} teacher{filteredTeachers.length !== 1 ? 's' : ''} shown
+                  </span>
                   <span className="text-gray-300">•</span>
                   <span className="text-green-600">{stats.activeTeachers} active</span>
                   <span className="text-gray-300">•</span>
                   <span className="text-purple-600">{stats.formTeachers} form teachers</span>
+                  {stats.onCoverTeachers > 0 && (
+                    <>
+                      <span className="text-gray-300">•</span>
+                      <span className="text-rose-600">{stats.onCoverTeachers} on cover</span>
+                    </>
+                  )}
                   {isFetchingTeachers && (
                     <span className="inline-flex items-center gap-1.5 text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full text-xs">
                       <Loader2 size={12} className="animate-spin" />
@@ -898,70 +1145,35 @@ export default function TeacherManagement() {
                   )}
                 </p>
               </div>
-              
+
               {/* Admin Actions */}
               {isUserAdmin && (
-                <div className="flex gap-2">
-                  {/* View Mode Toggle */}
-                  <div className="flex items-center bg-white border border-gray-300 rounded-xl overflow-hidden mr-2">
-                    <button
-                      onClick={() => setViewMode('grid')}
-                      className={`p-2.5 transition-colors ${
-                        viewMode === 'grid' 
-                          ? 'bg-blue-50 text-blue-600' 
-                          : 'text-gray-500 hover:bg-gray-50'
-                      }`}
-                      title="Grid view"
-                    >
-                      <Grid3X3 size={isMobile ? 16 : 18} />
-                    </button>
-                    <button
-                      onClick={() => setViewMode('list')}
-                      className={`p-2.5 transition-colors ${
-                        viewMode === 'list' 
-                          ? 'bg-blue-50 text-blue-600' 
-                          : 'text-gray-500 hover:bg-gray-50'
-                      }`}
-                      title="List view"
-                    >
-                      <List size={isMobile ? 16 : 18} />
-                    </button>
-                  </div>
-
+                <div className="flex flex-wrap gap-2">
                   <button
                     onClick={handlePreviewClick}
-                    className={`
-                      inline-flex items-center justify-center
-                      bg-green-600 text-white rounded-xl hover:bg-green-700
-                      font-medium transition-all active:scale-[0.98]
-                      focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2
-                      ${isMobile ? 'p-2.5' : 'px-4 py-2.5 gap-2'}
-                    `}
-                    title={isMobile ? 'Download Teachers List' : undefined}
+                    className="inline-flex items-center justify-center bg-green-600 text-white rounded-xl hover:bg-green-700 font-medium transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 px-4 py-2.5 gap-2 text-sm sm:text-base"
                   >
-                    <Download size={isMobile ? 18 : 20} />
-                    {!isMobile && 'Download Teachers List'}
+                    <Download size={18} />
+                    Download List
                   </button>
-                  
+
+                  <button
+                    onClick={handleShowOverlappingSlots}
+                    className="inline-flex items-center justify-center bg-rose-600 text-white rounded-xl hover:bg-rose-700 font-medium transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 px-4 py-2.5 gap-2 text-sm sm:text-base"
+                    title="Subjects with more than one primary teacher, or more than one cover"
+                  >
+                    <UserCog size={18} />
+                    Overlaps
+                  </button>
+
                   <button
                     onClick={() => openAssignmentModal()}
-                    disabled={isAssigningTeacher}
-                    className={`
-                      inline-flex items-center justify-center
-                      bg-blue-600 text-white rounded-xl hover:bg-blue-700
-                      font-medium transition-all active:scale-[0.98]
-                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
-                      disabled:opacity-50 disabled:cursor-not-allowed
-                      ${isMobile ? 'p-2.5' : 'px-4 py-2.5 gap-2'}
-                    `}
-                    title={isMobile ? 'Assign teacher' : undefined}
+                    disabled={isAssigningTeacher || !engineReady}
+                    title={!engineReady ? 'Complete the one-time setup first' : undefined}
+                    className="inline-flex items-center justify-center bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2.5 gap-2 text-sm sm:text-base"
                   >
-                    {isAssigningTeacher ? (
-                      <Loader2 size={isMobile ? 18 : 20} className="animate-spin" />
-                    ) : (
-                      <UserCheck size={isMobile ? 18 : 20} />
-                    )}
-                    {!isMobile && 'Assign to Class'}
+                    {isAssigningTeacher ? <Loader2 size={18} className="animate-spin" /> : <UserCheck size={18} />}
+                    Assign to Class
                   </button>
                 </div>
               )}
@@ -970,94 +1182,36 @@ export default function TeacherManagement() {
 
           {/* ===== STATS CARDS ===== */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-4 mb-6">
-            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className="p-1.5 sm:p-2 bg-blue-50 rounded-lg">
-                  <Users size={isMobile ? 14 : 16} className="text-blue-600" />
+            {[
+              { label: 'Total', value: stats.totalTeachers, icon: Users, bg: 'bg-blue-50', fg: 'text-blue-600', num: 'text-gray-900' },
+              { label: 'Active', value: stats.activeTeachers, icon: UserCheck, bg: 'bg-green-50', fg: 'text-green-600', num: 'text-green-600' },
+              { label: 'Inactive', value: stats.inactiveTeachers, icon: PowerOff, bg: 'bg-gray-50', fg: 'text-gray-600', num: 'text-gray-600' },
+              { label: 'On Leave', value: stats.onLeaveTeachers, icon: XCircle, bg: 'bg-yellow-50', fg: 'text-yellow-600', num: 'text-yellow-600' },
+              { label: 'On Cover', value: stats.onCoverTeachers, icon: Clock, bg: 'bg-rose-50', fg: 'text-rose-600', num: 'text-rose-600' },
+              { label: 'Form Teachers', value: stats.formTeachers, icon: Star, bg: 'bg-purple-50', fg: 'text-purple-600', num: 'text-purple-600' },
+            ].map(card => {
+              const Icon = card.icon;
+              return (
+                <div
+                  key={card.label}
+                  className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all"
+                >
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <div className={`p-1.5 sm:p-2 ${card.bg} rounded-lg`}>
+                      <Icon size={isMobile ? 14 : 16} className={card.fg} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs sm:text-sm text-gray-600 truncate">{card.label}</p>
+                      <p className={`text-lg sm:text-xl lg:text-2xl font-bold ${card.num}`}>{card.value}</p>
+                    </div>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-xs sm:text-sm text-gray-600 truncate">Total</p>
-                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">
-                    {stats.totalTeachers}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className="p-1.5 sm:p-2 bg-green-50 rounded-lg">
-                  <UserCheck size={isMobile ? 14 : 16} className="text-green-600" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs sm:text-sm text-gray-600 truncate">Active</p>
-                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-green-600">
-                    {stats.activeTeachers}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className="p-1.5 sm:p-2 bg-gray-50 rounded-lg">
-                  <PowerOff size={isMobile ? 14 : 16} className="text-gray-600" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs sm:text-sm text-gray-600 truncate">Inactive</p>
-                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-600">
-                    {stats.inactiveTeachers}
-                  </p>
-                </div>.
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className="p-1.5 sm:p-2 bg-yellow-50 rounded-lg">
-                  <XCircle size={isMobile ? 14 : 16} className="text-yellow-600" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs sm:text-sm text-gray-600 truncate">On Leave</p>
-                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-yellow-600">
-                    {stats.onLeaveTeachers}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className="p-1.5 sm:p-2 bg-indigo-50 rounded-lg">
-                  <Briefcase size={isMobile ? 14 : 16} className="text-indigo-600" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs sm:text-sm text-gray-600 truncate">Assigned</p>
-                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-indigo-600">
-                    {stats.assignedTeachers}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 shadow-sm hover:shadow-md transition-all">
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className="p-1.5 sm:p-2 bg-purple-50 rounded-lg">
-                  <Star size={isMobile ? 14 : 16} className="text-purple-600" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs sm:text-sm text-gray-600 truncate">Form Teachers</p>
-                  <p className="text-lg sm:text-xl lg:text-2xl font-bold text-purple-600">
-                    {stats.formTeachers}
-                  </p>
-                </div>
-              </div>
-            </div>
+              );
+            })}
           </div>
 
           {/* ===== FILTERS SECTION ===== */}
           <div className="mb-6 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            
             {isMobile && (
               <button
                 onClick={() => setShowMobileFilters(!showMobileFilters)}
@@ -1066,39 +1220,36 @@ export default function TeacherManagement() {
                 <div className="flex items-center gap-2">
                   <Filter size={18} className="text-gray-400" />
                   <span className="font-medium text-gray-700">
-                    {searchTerm || statusFilter !== 'all' || assignmentFilter !== 'all' ? 'Filters active' : 'Search & filters'}
+                    {searchTerm || statusFilter !== 'all' || assignmentFilter !== 'all'
+                      ? 'Filters active'
+                      : 'Search & filters'}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   {(searchTerm || statusFilter !== 'all' || assignmentFilter !== 'all') && (
                     <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
                   )}
-                  <ChevronDown 
-                    size={18} 
-                    className={`text-gray-500 transition-transform duration-200 ${showMobileFilters ? 'rotate-180' : ''}`} 
+                  <ChevronDown
+                    size={18}
+                    className={`text-gray-500 transition-transform duration-200 ${showMobileFilters ? 'rotate-180' : ''}`}
                   />
                 </div>
               </button>
             )}
 
-            <div className={`
-              ${isMobile ? 'px-4 pb-4' : 'p-4'}
-              ${isMobile && !showMobileFilters ? 'hidden' : 'block'}
-            `}>
+            <div className={`${isMobile ? 'px-4 pb-4' : 'p-4'} ${isMobile && !showMobileFilters ? 'hidden' : 'block'}`}>
               <div className="flex flex-col lg:flex-row gap-4">
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
                   <input
                     type="text"
-                    placeholder={isMobile ? "Search teachers..." : "Search by name, email, phone, NRC, TS#, or Emp#..."}
+                    placeholder={isMobile ? 'Search teachers...' : 'Search by name, email, phone, NRC, TS#, or Emp#...'}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg 
-                             focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                             text-sm sm:text-base transition-shadow"
+                    className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base transition-shadow"
                   />
                 </div>
-                
+
                 <div className="relative sm:w-48">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2 pointer-events-none">
                     <Filter size={18} className="text-gray-400" />
@@ -1106,10 +1257,7 @@ export default function TeacherManagement() {
                   <select
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value as TeacherStatus | 'all')}
-                    className="w-full pl-10 pr-8 py-2.5 border border-gray-300 rounded-lg 
-                             focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                             appearance-none bg-white cursor-pointer text-sm sm:text-base
-                             hover:border-gray-400 transition-colors"
+                    className="w-full pl-10 pr-8 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white cursor-pointer text-sm sm:text-base hover:border-gray-400 transition-colors"
                   >
                     <option value="all">All Status ({filterCounts.all})</option>
                     <option value="active">Active ({filterCounts.active})</option>
@@ -1129,10 +1277,7 @@ export default function TeacherManagement() {
                   <select
                     value={assignmentFilter}
                     onChange={(e) => setAssignmentFilter(e.target.value as any)}
-                    className="w-full pl-10 pr-8 py-2.5 border border-gray-300 rounded-lg 
-                             focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                             appearance-none bg-white cursor-pointer text-sm sm:text-base
-                             hover:border-gray-400 transition-colors"
+                    className="w-full pl-10 pr-8 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white cursor-pointer text-sm sm:text-base hover:border-gray-400 transition-colors"
                   >
                     <option value="all">All Teachers ({filterCounts.all})</option>
                     <option value="assigned">Assigned ({filterCounts.assigned})</option>
@@ -1144,7 +1289,7 @@ export default function TeacherManagement() {
                   </div>
                 </div>
               </div>
-              
+
               {(searchTerm || statusFilter !== 'all' || assignmentFilter !== 'all') && (
                 <div className="mt-3 flex items-center gap-2 text-sm flex-wrap">
                   <span className="text-gray-600">Active filters:</span>
@@ -1172,7 +1317,10 @@ export default function TeacherManagement() {
                       </button>
                     </span>
                   )}
-                  <button onClick={clearFilters} className="text-blue-600 hover:text-blue-700 font-medium text-xs sm:text-sm hover:underline ml-1">
+                  <button
+                    onClick={clearFilters}
+                    className="text-blue-600 hover:text-blue-700 font-medium text-xs sm:text-sm hover:underline ml-1"
+                  >
                     Clear all
                   </button>
                 </div>
@@ -1180,100 +1328,419 @@ export default function TeacherManagement() {
             </div>
           </div>
 
-          {/* ===== TEACHERS DISPLAY ===== */}
-          {filteredTeachers.length > 0 ? (
-            viewMode === 'grid' ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
-                {filteredTeachers.map((teacher) => (
-                  <TeacherCard
-                    key={teacher.id}
-                    teacher={teacher}
-                    isUserAdmin={isUserAdmin}
-                    classes={classes}
-                    onEdit={() => openEditModal(teacher)}
-                    onDelete={() => openDeleteModal(teacher)}
-                    onAssign={() => openAssignmentModal(teacher)}
-                    onBulkRemove={() => handleBulkRemoveClick(teacher)}
-                    onStatusUpdate={(status) => handleUpdateStatus(teacher.id, status)}
-                    onRemoveFromClass={(classId, className) => {
-                      openConfirmationModal({
-                        teacher,
-                        classId,
-                        className,
-                        action: 'remove-from-class',
-                        title: 'Remove Teacher from Class',
-                        message: `Remove ${teacher.name} completely from ${className}? This will remove all subject assignments and form teacher status.`,
-                        confirmText: 'Remove Completely',
-                        cancelText: 'Cancel'
-                      });
-                    }}
-                    onRemoveFormTeacher={(classId, className) => {
-                      openConfirmationModal({
-                        teacher,
-                        classId,
-                        className,
-                        action: 'remove-form-teacher',
-                        title: 'Remove Form Teacher Status',
-                        message: `Remove ${teacher.name} as Form Teacher of ${className}? They will remain as subject teacher.`,
-                        confirmText: 'Remove Status',
-                        cancelText: 'Cancel'
-                      });
-                    }}
-                    onRemoveSubject={(classId, className, subject) => {
-                      openRemoveSubjectModal(teacher, classId, className, subject);
-                    }}
-                    onRemoveAssignment={(classId, className) => {
-                      openConfirmationModal({
-                        teacher,
-                        classId,
-                        className,
-                        action: 'assignment-remove',
-                        title: 'Remove Teacher Assignment',
-                        message: `Are you sure you want to remove ${teacher.name}'s assignment from ${className}? This will remove all subjects they teach in this class.`,
-                        confirmText: 'Remove',
-                        cancelText: 'Cancel'
-                      });
-                    }}
-                    onTransfer={(classId, className) => {
-                      openTransferModal(teacher, classId, className);
-                    }}
-                    onViewLearners={(classId) => handleViewLearners(classId)}
-                  />
-                ))}
+          {/* ===== MAIN SPLIT LAYOUT (40% List / 60% Details) ===== */}
+          <div className="flex flex-col lg:flex-row gap-6">
+            {/* LEFT PANEL: Teacher List */}
+            <div className="w-full lg:w-[40%] flex flex-col gap-4">
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col h-[600px] lg:h-[calc(100vh-280px)]">
+                <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                  <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                    <Users size={18} className="text-blue-600" />
+                    Teachers List
+                  </h3>
+                  <span className="text-xs font-medium text-gray-500 bg-gray-200 px-2 py-1 rounded-full">
+                    {filteredTeachers.length} found
+                  </span>
+                </div>
+
+                <div className="overflow-y-auto flex-1 p-2 space-y-1">
+                  {filteredTeachers.length > 0 ? (
+                    filteredTeachers.map((teacher) => (
+                      <div
+                        key={teacher.id}
+                        onClick={() => setSelectedTeacherId(teacher.id)}
+                        className={`p-3 rounded-lg cursor-pointer transition-all border ${
+                          selectedTeacherId === teacher.id
+                            ? 'bg-blue-50 border-blue-200 shadow-sm'
+                            : 'bg-white border-transparent hover:bg-gray-50 hover:border-gray-200'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <h4 className="font-medium text-gray-900 text-sm truncate pr-2">{teacher.name}</h4>
+                          <span
+                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider
+                            ${teacher.status === 'active' || !teacher.status ? 'bg-green-100 text-green-700' : ''}
+                            ${teacher.status === 'inactive' ? 'bg-gray-100 text-gray-600' : ''}
+                            ${teacher.status === 'on_leave' ? 'bg-yellow-100 text-yellow-700' : ''}
+                            ${teacher.status === 'transferred' ? 'bg-purple-100 text-purple-700' : ''}`}
+                          >
+                            {teacher.status?.replace('_', ' ') || 'Active'}
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+                          {teacher.email && (
+                            <span className="flex items-center gap-1.5 truncate">
+                              <Mail size={12} className="flex-shrink-0" />
+                              {teacher.email}
+                            </span>
+                          )}
+                          {teacher.phone && (
+                            <span className="flex items-center gap-1.5">
+                              <Phone size={12} className="flex-shrink-0" />
+                              {teacher.phone}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-center p-6">
+                      <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mb-3">
+                        <Users size={24} className="text-gray-400" />
+                      </div>
+                      <p className="text-gray-500 text-sm">No teachers found matching your criteria.</p>
+                      <button onClick={clearFilters} className="text-blue-600 text-sm mt-2 hover:underline">
+                        Clear filters
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-            ) : (
-              <TeacherDataTable
-                teachers={filteredTeachers}
-                classes={classes}
-                isUserAdmin={isUserAdmin}
-                onEdit={openEditModal}
-                onDelete={openDeleteModal}
-                onAssign={openAssignmentModal}
-                onBulkRemove={handleBulkRemoveClick}
-                onViewLearners={handleViewLearners}
-              />
-            )
-          ) : (
-            <div className="text-center py-16 sm:py-20 bg-white rounded-2xl border border-gray-200 shadow-sm">
-              <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 rounded-full mb-4">
-                <Users className="text-gray-400" size={36} />
-              </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">No teachers found</h3>
-              <p className="text-gray-600 mb-6 max-w-md mx-auto">
-                {searchTerm || statusFilter !== 'all' || assignmentFilter !== 'all'
-                  ? 'Try adjusting your filters to find what you\'re looking for.'
-                  : 'Teachers can create accounts via the sign-up page. Assign them to classes once registered.'}
-              </p>
-              {(searchTerm || statusFilter !== 'all' || assignmentFilter !== 'all') && (
-                <button onClick={clearFilters} className="inline-flex items-center gap-2 px-6 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 font-medium transition-all">
-                  Clear Filters
-                </button>
+            </div>
+
+            {/* RIGHT PANEL: Teacher Details & Actions */}
+            <div className="w-full lg:w-[60%]">
+              {activeTeacher ? (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm h-[600px] lg:h-[calc(100vh-280px)] flex flex-col overflow-hidden relative">
+                  {isFetchingActiveAssignments && activeTeacherAssignments.length === 0 && (
+                    <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center">
+                      <Loader2 className="animate-spin text-blue-600" size={32} />
+                    </div>
+                  )}
+
+                  {/* Details Header */}
+                  <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="w-16 h-16 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-2xl font-bold flex-shrink-0">
+                          {activeTeacher.name
+                            .split(' ')
+                            .map((n) => n[0])
+                            .join('')
+                            .substring(0, 2)
+                            .toUpperCase()}
+                        </div>
+                        <div>
+                          <h2 className="text-xl sm:text-2xl font-bold text-gray-900">{activeTeacher.name}</h2>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            <span
+                              className={`text-xs font-semibold px-2.5 py-1 rounded-full uppercase tracking-wider
+                              ${activeTeacher.status === 'active' || !activeTeacher.status ? 'bg-green-100 text-green-700' : ''}
+                              ${activeTeacher.status === 'inactive' ? 'bg-gray-100 text-gray-600' : ''}
+                              ${activeTeacher.status === 'on_leave' ? 'bg-yellow-100 text-yellow-700' : ''}
+                              ${activeTeacher.status === 'transferred' ? 'bg-purple-100 text-purple-700' : ''}`}
+                            >
+                              {activeTeacher.status?.replace('_', ' ') || 'Active'}
+                            </span>
+                            {activeTeacher.department && (
+                              <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
+                                {activeTeacher.department}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Top Actions */}
+                      {isUserAdmin && (
+                        <div className="flex gap-2 self-start sm:self-center items-center flex-wrap">
+                          {activeTeacher.status === 'on_leave' && (
+                            <button
+                              onClick={() => handleReturnToDutyClick(activeTeacher)}
+                              disabled={isUpdatingTeacherStatus || !engineReady}
+                              className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50 flex items-center gap-1.5"
+                              title="End leave covers and give the teacher full control back"
+                            >
+                              <RotateCcw size={14} /> Return to Duty
+                            </button>
+                          )}
+                          <select
+                            value={(activeTeacher.status as TeacherStatus) || 'active'}
+                            onChange={(e) => handleUpdateStatus(activeTeacher.id, e.target.value as TeacherStatus)}
+                            disabled={isUpdatingTeacherStatus || !engineReady}
+                            className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white disabled:opacity-50"
+                            title="Change status"
+                          >
+                            {(Object.keys(STATUS_LABELS) as TeacherStatus[]).map(s => (
+                              <option key={s} value={s}>
+                                {STATUS_LABELS[s]}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => openEditModal(activeTeacher)}
+                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="Edit Teacher"
+                          >
+                            <Edit size={18} />
+                          </button>
+                          <button
+                            onClick={() => openDeleteModal(activeTeacher)}
+                            className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete Teacher"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Details Body */}
+                  <div className="p-6 flex-1 overflow-y-auto space-y-8">
+                    {/* Contact Information */}
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+                        <Info size={16} className="text-gray-400" />
+                        Contact Information
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                          <Mail size={18} className="text-gray-400 mt-0.5" />
+                          <div>
+                            <p className="text-xs text-gray-500 font-medium">Email Address</p>
+                            <p className="text-sm text-gray-900 font-medium break-all">{activeTeacher.email || 'N/A'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                          <Phone size={18} className="text-gray-400 mt-0.5" />
+                          <div>
+                            <p className="text-xs text-gray-500 font-medium">Phone Number</p>
+                            <p className="text-sm text-gray-900 font-medium">{activeTeacher.phone || 'N/A'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Subjects */}
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+                        <BookOpen size={16} className="text-gray-400" />
+                        Subjects Taught
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {activeTeacher.subjects && activeTeacher.subjects.length > 0 ? (
+                          activeTeacher.subjects.map((subject: string, idx: number) => (
+                            <span
+                              key={idx}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium border border-blue-100"
+                            >
+                              {subject}
+                            </span>
+                          ))
+                        ) : (
+                          <p className="text-sm text-gray-500 italic">No subjects assigned yet.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Class Assignments */}
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+                        <Briefcase size={16} className="text-gray-400" />
+                        Class Assignments
+                      </h3>
+                      {assignmentsByClass.length > 0 ? (
+                        <div className="space-y-3">
+                          {assignmentsByClass.map((clsEntry) => {
+                            const classObj = classes.find((c) => c.id === clsEntry.classId);
+                            const className = classObj?.name || clsEntry.className || 'Unknown Class';
+                            return (
+                              <div
+                                key={clsEntry.classId}
+                                className="flex flex-col p-4 border border-gray-200 rounded-xl bg-white hover:border-blue-300 transition-colors gap-3"
+                              >
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="flex items-start gap-3">
+                                    <div className="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0">
+                                      <BookOpen size={20} />
+                                    </div>
+                                    <div>
+                                      <h4 className="font-semibold text-gray-900 text-sm">{className}</h4>
+                                      {clsEntry.isFormTeacher && (
+                                        <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full border border-purple-100">
+                                          <Star size={10} /> Form Teacher
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {isUserAdmin && (
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        onClick={() => openTransferModal(activeTeacher, clsEntry.classId, className)}
+                                        disabled={!engineReady}
+                                        className="px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                                        title="Transfer to another class"
+                                      >
+                                        <ArrowRightLeft size={14} /> Transfer
+                                      </button>
+                                      <button
+                                        onClick={() => handleRemoveAssignment(activeTeacher.id, clsEntry.classId)}
+                                        disabled={!engineReady}
+                                        className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                                        title="Remove from this class"
+                                      >
+                                        <UserMinus size={14} /> Remove
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Per-subject rows */}
+                                <div className="flex flex-col gap-1.5 pl-1">
+                                  {clsEntry.subjectDetails.map((s) => {
+                                    const isDelegate = s.relation === 'delegate';
+                                    const roleLabel = ROLE_LABELS[s.roleType] || s.roleType;
+                                    const roleCls =
+                                      ROLE_BADGE_CLASSES[s.roleType] || 'bg-gray-100 text-gray-700 border-gray-200';
+                                    const pending = isDelegate && s.delegationState === 'pending';
+
+                                    return (
+                                      <div key={s.assignmentId} className="flex flex-wrap items-center gap-2 text-xs text-gray-700">
+                                        <span className="font-medium text-gray-800">{s.subject}</span>
+
+                                        <span
+                                          className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold uppercase tracking-wider ${roleCls}`}
+                                        >
+                                          {roleLabel}
+                                        </span>
+
+                                        {/* Delegate: whom they cover + window */}
+                                        {isDelegate && s.ownerTeacherName && (
+                                          <span className="text-[11px] text-gray-500">covering {s.ownerTeacherName}</span>
+                                        )}
+                                        {isDelegate && pending && s.startDate && (
+                                          <span className="inline-flex items-center gap-1 text-[11px] text-blue-600">
+                                            <Clock size={11} />
+                                            Starts {formatShortDate(s.startDate)}
+                                          </span>
+                                        )}
+                                        {isDelegate && s.endDate && (
+                                          <span className="inline-flex items-center gap-1 text-[11px] text-gray-500">
+                                            <Clock size={11} />
+                                            Until {formatShortDate(s.endDate)}
+                                          </span>
+                                        )}
+
+                                        {/* Owner: covered by someone (live or scheduled) */}
+                                        {s.isCovered && (
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-yellow-50 text-yellow-700 border border-yellow-200 text-[10px] font-semibold">
+                                            {s.delegationState === 'pending' ? 'Cover scheduled' : 'Covered'} by{' '}
+                                            {s.coveredByTeacherName}
+                                            {s.coveredUntil ? ` until ${formatShortDate(s.coveredUntil)}` : ''}
+                                          </span>
+                                        )}
+
+                                        {/* Who can enter grades/attendance right now */}
+                                        {!s.canOperate && (
+                                          <span
+                                            className="inline-flex items-center gap-1 text-[10px] text-gray-500"
+                                            title="Can't enter grades or attendance right now"
+                                          >
+                                            <Lock size={10} /> read-only
+                                          </span>
+                                        )}
+
+                                        {/* Actions */}
+                                        {isUserAdmin && isDelegate && (
+                                          <button
+                                            onClick={() =>
+                                              handleEndCoverClick({
+                                                id: s.assignmentId,
+                                                teacherId: activeTeacher.id,
+                                                teacherName: activeTeacher.name,
+                                                classId: clsEntry.classId,
+                                                className,
+                                                subject: s.subject,
+                                                normalizedSubjectId: s.normalizedSubjectId,
+                                                isFormTeacher: s.isFormTeacher,
+                                                roleType: s.roleType,
+                                                status: s.status,
+                                                startDate: s.startDate ?? undefined,
+                                                endDate: s.endDate ?? null,
+                                              } as TeacherAssignment)
+                                            }
+                                            disabled={isEndingAssignment || !engineReady}
+                                            className="ml-auto inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-md transition-colors disabled:opacity-50"
+                                            title={s.roleType === 'tp' ? 'End TP and hand back' : 'End this cover'}
+                                          >
+                                            <UserCog size={12} /> {s.roleType === 'tp' ? 'Hand back' : 'End cover'}
+                                          </button>
+                                        )}
+
+                                        {isUserAdmin && !isDelegate && s.isCovered && (
+                                          <button
+                                            onClick={() => handleEndDelegationOnOwnedSlot(s, className)}
+                                            disabled={isEndingAssignment || !engineReady}
+                                            className="ml-auto inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors disabled:opacity-50"
+                                            title="End the cover and give control back to this teacher"
+                                          >
+                                            <RotateCcw size={12} /> {s.coveredByRole === 'tp' ? 'Hand back' : 'End cover'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="text-center p-6 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                          <p className="text-sm text-gray-500">No class assignments yet.</p>
+                          {isUserAdmin && (
+                            <button
+                              onClick={() => openAssignmentModal(activeTeacher)}
+                              disabled={!engineReady}
+                              className="mt-3 text-sm font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1.5 mx-auto disabled:opacity-50"
+                            >
+                              <UserPlus size={16} /> Assign to a Class
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Details Footer */}
+                  {isUserAdmin && (
+                    <div className="p-4 border-t border-gray-200 bg-gray-50 flex flex-wrap gap-2 justify-end">
+                      <button
+                        onClick={() => openAssignmentModal(activeTeacher)}
+                        disabled={!engineReady}
+                        className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+                      >
+                        <UserPlus size={16} /> Assign to Class
+                      </button>
+                      <button
+                        onClick={() => handleBulkRemoveClick(activeTeacher)}
+                        disabled={!engineReady}
+                        className="px-4 py-2 bg-white text-gray-700 border border-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2 disabled:opacity-50"
+                      >
+                        <Layers size={16} /> Bulk Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm h-[600px] lg:h-[calc(100vh-280px)] flex flex-col items-center justify-center p-8 text-center">
+                  <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                    <Users size={40} className="text-gray-400" />
+                  </div>
+                  <h3 className="text-xl font-semibold text-gray-900 mb-2">No Teacher Selected</h3>
+                  <p className="text-gray-500 max-w-sm">
+                    Select a teacher from the list on the left to view their profile, assignments and actions.
+                  </p>
+                </div>
               )}
             </div>
-          )}
+          </div>
 
+          {/* Footer info */}
           {filteredTeachers.length > 0 && (
-            <div className="mt-6 text-xs sm:text-sm text-gray-500 text-center sm:text-left">
+            <div className="mt-6 text-xs sm:text-sm text-gray-500 text-center lg:text-left">
               Showing {filteredTeachers.length} of {teachers?.length || 0} teachers
               {searchTerm && ` matching "${searchTerm}"`}
               {statusFilter !== 'all' && ` • ${statusFilter.replace('_', ' ')} status`}
@@ -1301,6 +1768,12 @@ export default function TeacherManagement() {
         currentSubject={currentSubject}
         assignAsFormTeacher={assignAsFormTeacher}
         isAssigning={isAssigningTeacher}
+        roleType={coverRoleType}
+        startDate={coverStartDate}
+        endDate={coverEndDate}
+        onRoleTypeChange={setCoverRoleType}
+        onStartDateChange={setCoverStartDate}
+        onEndDateChange={setCoverEndDate}
         onTeacherChange={setSelectedTeacher}
         onClassChange={setSelectedClassId}
         onSubjectChange={setCurrentSubject}
@@ -1373,6 +1846,15 @@ export default function TeacherManagement() {
         onClose={resetModalState}
         onDownload={handleDownloadClick}
         isDownloading={false}
+      />
+
+      <OverlappingSlotsModal
+        isOpen={showOverlappingSlots}
+        slots={overlappingSlots}
+        isLoading={isLoadingOverlapping}
+        isResolving={isResolvingSlotConflict}
+        onClose={() => setShowOverlappingSlots(false)}
+        onResolve={handleResolveOverlap}
       />
     </>
   );

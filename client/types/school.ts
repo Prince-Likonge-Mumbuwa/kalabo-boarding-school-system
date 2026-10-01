@@ -1,28 +1,34 @@
 // ==================== LEARNER TYPE WITH ENHANCED FIELDS ====================
 export interface Learner {
   id: string;
-  
+
   // Core Identification
   studentId: string;
   studentIndex: number; // Sequential number within class (1, 2, 3...)
   classPrefix: string; // e.g., "G10B", "F3A"
-  
+
   // Personal Information
   fullName: string; // Primary name field
   preferredName?: string; // Optional preferred/nickname
-  birthYear: number; // Year of birth
-  age: number; // Calculated from birthYear - make it required, not optional
-  gender: 'male' | 'female'; // Made required (no longer optional)
-  
+
+  // ✅ PRIMARY: Date of birth (ISO "YYYY-MM-DD") — source of truth
+  dateOfBirth: string;
+
+  // ⚠️ DERIVED: Kept for backward compatibility, filters, stats
+  birthYear: number; // Derived from dateOfBirth
+  age: number;       // Derived from dateOfBirth
+
+  gender: 'male' | 'female'; // Required
+
   // Address Information
   address: string; // Full address as single string
-  
+
   // Guardian Information
   guardian: string; // Primary guardian name
   guardianPhone: string; // Primary guardian phone (with +26 prefix handling)
   alternativeGuardian?: string; // Secondary/backup guardian
   alternativeGuardianPhone?: string; // Secondary guardian phone
-  
+
   // Sponsor Information
   sponsor: string; // Sponsor name (e.g., "Government Bursary", "Self", "NGO")
   sponsorshipDetails?: {
@@ -35,7 +41,7 @@ export interface Learner {
     contactPhone?: string;
     contactEmail?: string;
   };
-  
+
   // Academic Information
   classId: string;
   className: string;
@@ -46,23 +52,23 @@ export interface Learner {
   enrollmentDate: Date;
   previousSchool?: string;
   previousGrade?: string;
-  
+
   // Health & Special Needs
   medicalNotes?: string;
   allergies?: string[]; // Array of allergies
-  
+
   // System Fields
   status: 'active' | 'transferred' | 'graduated' | 'archived';
   createdBy?: string;
   createdAt?: Date;
   updatedAt?: Date;
-  
+
   // Transfer/Graduation tracking
   graduationYear?: number;
   transferredAt?: Date;
   transferredToClass?: string;
   archivedAt?: Date;
-  
+
   // Backward compatibility fields (kept for existing code)
   name?: string; // Maps to fullName
   parentPhone?: string; // Maps to guardianPhone
@@ -73,13 +79,17 @@ export interface CSVLearnerData {
   // Required fields
   fullName: string;
   gender: 'male' | 'female';
-  birthYear: number;
+
+  // ✅ NEW PRIMARY: Prefer dateOfBirth; falls back to legacy birthYear
+  dateOfBirth?: string; // Preferred: ISO "YYYY-MM-DD"
+  birthYear?: number;   // Legacy fallback
+
   address: string;
   guardian: string;
   guardianPhone: string;
   sponsor: string;
   dateOfFirstEntry: string; // YYYY-MM-DD format
-  
+
   // Optional fields
   preferredName?: string;
   alternativeGuardian?: string;
@@ -87,7 +97,7 @@ export interface CSVLearnerData {
   previousSchool?: string;
   medicalNotes?: string;
   allergies?: string; // Comma-separated list
-  
+
   // System fields (not in CSV but used internally)
   classId?: string; // Will be added programmatically
   className?: string; // For reference
@@ -102,26 +112,26 @@ export interface Teacher {
   department?: string;
   subjects?: string[];
   assignedClasses?: string[];
-  
+
   // Form teacher info
   isFormTeacher?: boolean;
   assignedClassId?: string;
   assignedClassName?: string;
-  
+
   // Employment details
   employmentDate?: Date;
   status?: 'active' | 'inactive' | 'on_leave' | 'transferred';
   qualifications?: string[];
   specialization?: string;
-  
-  // SIGNUP FIELDS - Add these to fix the TypeScript errors
+
+  // SIGNUP FIELDS
   nrc?: string; // National Registration Card
   tsNumber?: string; // Teaching Service Number
   employeeNumber?: string; // Employee Number
-  dateOfBirth?: string; // Date of birth
+  dateOfBirth?: string; // ISO "YYYY-MM-DD"
   dateOfFirstAppointment?: string; // First appointment date
   dateOfCurrentAppointment?: string; // Current appointment date
-  
+
   // System fields
   createdBy?: string;
   createdAt?: Date;
@@ -138,11 +148,11 @@ export interface Class {
   section: string;
   students: number;
   teachers: string[];
-  
+
   // Form teacher
   formTeacherId?: string;
   formTeacherName?: string;
-  
+
   // Gender statistics
   genderStats?: {
     boys: number;
@@ -151,12 +161,12 @@ export interface Class {
     boysPercentage: number;
     girlsPercentage: number;
   };
-  
+
   // Class progression
   isActive: boolean;
   createdDate?: Date;
   nextYearClassId?: string; // For auto-promotion
-  
+
   // System fields
   archived?: boolean;
   archivedAt?: Date;
@@ -165,7 +175,35 @@ export interface Class {
   updatedAt?: Date;
 }
 
-// ==================== TEACHER ASSIGNMENT INTERFACE ====================
+// ==================== TEACHER ASSIGNMENT TYPES ====================
+
+/**
+ * What role the teacher plays on the (class, subject) slot.
+ *  - 'substantive': the permanent / primary teacher for the slot.
+ *  - 'tp':          teacher on Teaching Practice, temporarily covering.
+ *  - 'leave-cover': teacher temporarily covering a substantive on leave.
+ */
+export type AssignmentRoleType = 'substantive' | 'tp' | 'leave-cover';
+
+/**
+ * Lifecycle of an assignment.
+ *  - 'active':    currently the effective teacher for the slot.
+ *  - 'suspended': substantive temporarily replaced by a cover; will reactivate.
+ *  - 'ended':     historical record; no longer effective.
+ */
+export type AssignmentStatus = 'active' | 'suspended' | 'ended';
+
+/**
+ * Why an assignment ended. Null while active or suspended.
+ */
+export type AssignmentEndReason =
+  | 'replaced'
+  | 'expired'
+  | 'handover'
+  | 'removed'
+  | 'cancelled'
+  | null;
+
 export interface TeacherAssignment {
   id: string;
   teacherId: string;
@@ -176,6 +214,17 @@ export interface TeacherAssignment {
   subject: string;
   normalizedSubjectId?: string; // Normalized subject for matching
   isFormTeacher: boolean;
+
+  // ── Temporal / role fields ──────────────────────────────────────
+  roleType: AssignmentRoleType;
+  status: AssignmentStatus;
+  startDate?: Date;
+  endDate?: Date | null;
+  coversTeacherId?: string | null;
+  coversAssignmentId?: string | null;
+  endReason?: AssignmentEndReason;
+
+  // System timestamps
   assignedAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;
@@ -190,10 +239,11 @@ export interface CSVImportData {
   parentPhone?: string;
   classId?: string;
   className?: string;
-  
+
   // New fields
   fullName?: string;
-  birthYear?: number;
+  dateOfBirth?: string; // ✅ ISO "YYYY-MM-DD" (preferred)
+  birthYear?: number;   // ⚠️ Legacy fallback
   address?: string;
   guardian?: string;
   guardianPhone?: string;
@@ -217,7 +267,7 @@ export interface DashboardStats {
   totalTeachers: number;
   activeTeachers: number;
   teachersByDepartment: Record<string, number>;
-  
+
   // Gender statistics
   genderStats?: {
     totalBoys: number;
@@ -226,12 +276,12 @@ export interface DashboardStats {
     boysPercentage: number;
     girlsPercentage: number;
   };
-  
+
   // Academic stats
   averagePassRate?: number;
   examsGraded?: number;
   totalExams?: number;
-  
+
   // Sponsorship stats
   sponsorshipStats?: {
     totalSponsored: number;
@@ -255,12 +305,12 @@ export interface User {
   profileImage?: string;
   schoolId?: string;
   isActive: boolean;
-  
+
   // For teachers
   subjects?: string[];
   department?: string;
   assignedClasses?: string[];
-  
+
   // For parents
   childrenIds?: string[]; // Learner IDs linked to this parent
 }
@@ -386,8 +436,15 @@ export interface LearnerFilterOptions {
   gender?: 'male' | 'female';
   sponsor?: string;
   sponsorType?: SponsorType;
+
+  // ⚠️ Kept for backward compatibility — still filterable via derived birthYear
   birthYearFrom?: number;
   birthYearTo?: number;
+
+  // ✅ NEW: DOB range filtering (preferred going forward)
+  dateOfBirthFrom?: string; // ISO "YYYY-MM-DD"
+  dateOfBirthTo?: string;   // ISO "YYYY-MM-DD"
+
   status?: 'active' | 'transferred' | 'graduated' | 'archived';
   enrollmentDateFrom?: Date;
   enrollmentDateTo?: Date;
@@ -397,4 +454,15 @@ export interface LearnerFilterOptions {
 export interface TeacherStatusUpdate {
   teacherId: string;
   status: 'active' | 'inactive' | 'on_leave' | 'transferred';
+}
+
+// ==================== DATE OF BIRTH HELPERS (TYPE-LEVEL) ====================
+/**
+ * Lightweight DOB info shape used by UI components that only need
+ * display values without loading the full Learner record.
+ */
+export interface DateOfBirthInfo {
+  dateOfBirth: string; // ISO "YYYY-MM-DD"
+  birthYear: number;   // Derived
+  age: number;         // Derived
 }

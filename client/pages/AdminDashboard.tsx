@@ -1,12 +1,26 @@
 // @/pages/AdminDashboard.tsx - OPTIMIZED FOR MOBILE RESPONSIVENESS
+// v2.0.0 — Replaced "Generate Reports" with "Send Announcement" (SMS to parents)
+
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
 import { useResultsAnalytics } from '@/hooks/useResults';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { Users, BookOpen, GraduationCap, TrendingUp, Plus, BarChart3, FileText, ChevronRight, RefreshCw } from 'lucide-react';
+import {
+  Users,
+  BookOpen,
+  GraduationCap,
+  TrendingUp,
+  Plus,
+  BarChart3,
+  Megaphone,        // ← replaces FileText
+  ChevronRight,
+  RefreshCw,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
+
+import { AnnouncementModal } from '@/components/AnnouncementModal';   // ← new import
 
 // ===== Skeleton Loaders - Optimized for mobile =====
 const MetricSkeleton = () => (
@@ -39,14 +53,14 @@ const ActionButtonSkeleton = () => (
 );
 
 // ===== Metric Card Component - Fluid sizing =====
-const MetricCard = ({ 
-  label, 
-  value, 
-  icon: Icon, 
-  description, 
+const MetricCard = ({
+  label,
+  value,
+  icon: Icon,
+  description,
   color,
-  isLoading 
-}: { 
+  isLoading,
+}: {
   label: string;
   value: string | number;
   icon: React.ElementType;
@@ -55,7 +69,7 @@ const MetricCard = ({
   isLoading?: boolean;
 }) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
-  
+
   const colorClasses = {
     blue: {
       bg: 'bg-gradient-to-br from-blue-50 to-indigo-50',
@@ -63,7 +77,7 @@ const MetricCard = ({
       iconColor: 'text-blue-600',
       valueColor: 'text-blue-600',
       border: 'border-blue-200',
-      hover: 'hover:border-blue-300'
+      hover: 'hover:border-blue-300',
     },
     purple: {
       bg: 'bg-gradient-to-br from-purple-50 to-pink-50',
@@ -71,7 +85,7 @@ const MetricCard = ({
       iconColor: 'text-purple-600',
       valueColor: 'text-purple-600',
       border: 'border-purple-200',
-      hover: 'hover:border-purple-300'
+      hover: 'hover:border-purple-300',
     },
     green: {
       bg: 'bg-gradient-to-br from-green-50 to-emerald-50',
@@ -79,7 +93,7 @@ const MetricCard = ({
       iconColor: 'text-green-600',
       valueColor: 'text-green-600',
       border: 'border-green-200',
-      hover: 'hover:border-green-300'
+      hover: 'hover:border-green-300',
     },
     amber: {
       bg: 'bg-gradient-to-br from-amber-50 to-orange-50',
@@ -87,18 +101,20 @@ const MetricCard = ({
       iconColor: 'text-amber-600',
       valueColor: 'text-amber-600',
       border: 'border-amber-200',
-      hover: 'hover:border-amber-300'
-    }
+      hover: 'hover:border-amber-300',
+    },
   };
 
   const style = colorClasses[color];
 
   return (
-    <div className={`
-      bg-white rounded-xl border border-gray-200 p-4 sm:p-5
-      hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5
-      ${style.hover} h-full flex flex-col
-    `}>
+    <div
+      className={`
+        bg-white rounded-xl border border-gray-200 p-4 sm:p-5
+        hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5
+        ${style.hover} h-full flex flex-col
+      `}
+    >
       <div className="flex items-start justify-between flex-1">
         <div className="flex-1 min-w-0 pr-2">
           <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1 truncate">
@@ -112,28 +128,23 @@ const MetricCard = ({
             </p>
           )}
         </div>
-        <div className={`
-          p-2 sm:p-2.5 rounded-lg flex-shrink-0
-          ${style.iconBg} ${style.iconColor}
-        `}>
+        <div className={`p-2 sm:p-2.5 rounded-lg flex-shrink-0 ${style.iconBg} ${style.iconColor}`}>
           <Icon size={isMobile ? 18 : 20} />
         </div>
       </div>
-      <p className="text-xs text-gray-500 mt-2 sm:mt-3 truncate">
-        {description}
-      </p>
+      <p className="text-xs text-gray-500 mt-2 sm:mt-3 truncate">{description}</p>
     </div>
   );
 };
 
 // ===== Quick Action Button - Fluid sizing =====
-const QuickActionButton = ({ 
-  onClick, 
-  icon: Icon, 
-  title, 
-  description, 
-  color 
-}: { 
+const QuickActionButton = ({
+  onClick,
+  icon: Icon,
+  title,
+  description,
+  color,
+}: {
   onClick: () => void;
   icon: React.ElementType;
   title: string;
@@ -141,26 +152,26 @@ const QuickActionButton = ({
   color: 'blue' | 'green' | 'indigo';
 }) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
-  
+
   const colorClasses = {
     blue: {
       borderHover: 'hover:border-blue-400',
       bgHover: 'hover:bg-blue-50',
       iconBg: 'bg-blue-50 text-blue-600',
-      ring: 'focus:ring-blue-500'
+      ring: 'focus:ring-blue-500',
     },
     green: {
       borderHover: 'hover:border-green-400',
       bgHover: 'hover:bg-green-50',
       iconBg: 'bg-green-50 text-green-600',
-      ring: 'focus:ring-green-500'
+      ring: 'focus:ring-green-500',
     },
     indigo: {
       borderHover: 'hover:border-indigo-400',
       bgHover: 'hover:bg-indigo-50',
       iconBg: 'bg-indigo-50 text-indigo-600',
-      ring: 'focus:ring-indigo-500'
-    }
+      ring: 'focus:ring-indigo-500',
+    },
   };
 
   const style = colorClasses[color];
@@ -183,9 +194,7 @@ const QuickActionButton = ({
         <p className="font-semibold text-gray-900 text-sm sm:text-base mb-0.5 sm:mb-1">
           {title}
         </p>
-        <p className="text-gray-500 text-xs sm:text-sm leading-tight">
-          {description}
-        </p>
+        <p className="text-gray-500 text-xs sm:text-sm leading-tight">{description}</p>
       </div>
     </button>
   );
@@ -202,15 +211,18 @@ export default function AdminDashboard() {
   const [lastLoadTime, setLastLoadTime] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // State for announcement modal
+  const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
+
   // Use dashboard stats hook for classes, teachers, learners
   const { stats, isLoading: statsLoading, refreshStats } = useDashboardStats();
 
   // Use results analytics for school-wide pass rate
   const currentYear = new Date().getFullYear();
-  const { 
-    analytics, 
+  const {
+    analytics,
     isLoading: analyticsLoading,
-    refetch: refetchAnalytics
+    refetch: refetchAnalytics,
   } = useResultsAnalytics({
     term: 'Term 1',
     year: currentYear,
@@ -220,6 +232,8 @@ export default function AdminDashboard() {
   const isLoading = initialLoad && (statsLoading || analyticsLoading);
 
   // Quick actions configuration
+  // NOTE: "Generate Reports" was moved off the dashboard — the Report Cards
+  // page is still reachable from the sidebar. Its slot now hosts Announce.
   const quickActions = [
     {
       id: 'create-class',
@@ -227,7 +241,7 @@ export default function AdminDashboard() {
       description: 'Add new class',
       icon: Plus,
       color: 'blue' as const,
-      onClick: () => navigate('/dashboard/admin/classes?action=create')
+      onClick: () => navigate('/dashboard/admin/classes?action=create'),
     },
     {
       id: 'view-analyses',
@@ -235,15 +249,15 @@ export default function AdminDashboard() {
       description: 'School performance',
       icon: BarChart3,
       color: 'green' as const,
-      onClick: () => navigate('/dashboard/admin/results-analysis')
+      onClick: () => navigate('/dashboard/admin/results-analysis'),
     },
     {
-      id: 'generate-reports',
-      title: 'Generate Reports',
-      description: 'Report cards',
-      icon: FileText,
+      id: 'send-announcement',
+      title: 'Announce',
+      description: 'Message parents',
+      icon: Megaphone,
       color: 'indigo' as const,
-      onClick: () => navigate('/dashboard/admin/report-cards')
+      onClick: () => setShowAnnouncementModal(true),
     },
   ];
 
@@ -287,12 +301,9 @@ export default function AdminDashboard() {
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
     setLastLoadTime(new Date());
-    
-    await Promise.all([
-      refreshStats(),
-      refetchAnalytics()
-    ]);
-    
+
+    await Promise.all([refreshStats(), refetchAnalytics()]);
+
     setIsRefreshing(false);
   };
 
@@ -304,13 +315,13 @@ export default function AdminDashboard() {
   }, [isLoading, initialLoad]);
 
   // Determine grid columns based on screen size
-  const metricGridCols = isMobile ? 'grid-cols-2' : (isTablet ? 'grid-cols-2' : 'grid-cols-4');
-  const actionGridCols = 'grid-cols-3'; // Always 3 columns for actions
+  const metricGridCols = isMobile ? 'grid-cols-2' : isTablet ? 'grid-cols-2' : 'grid-cols-4';
+  const actionGridCols = 'grid-cols-3';
 
   return (
     <DashboardLayout activeTab="dashboard">
       <div className="min-h-screen bg-gray-50 p-3 sm:p-4 md:p-6 lg:p-8">
-        {/* ===== Header Section - Fluid spacing ===== */}
+        {/* ===== Header Section ===== */}
         <div className="mb-4 sm:mb-6 md:mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
             <div className="min-w-0">
@@ -321,8 +332,7 @@ export default function AdminDashboard() {
                 Welcome back, {user?.fullName?.split(' ')[0] || 'Admin'}!
               </p>
             </div>
-            
-            {/* Last updated and refresh - Stack on mobile */}
+
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
               <div className="text-xs sm:text-sm text-gray-500 bg-white px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg border border-gray-200 whitespace-nowrap">
                 {isMobile ? 'Updated: ' : 'Last updated: '}
@@ -333,8 +343,8 @@ export default function AdminDashboard() {
                 disabled={isRefreshing}
                 className={`
                   inline-flex items-center justify-center gap-1.5 sm:gap-2
-                  text-xs sm:text-sm text-blue-600 hover:text-blue-800 font-medium 
-                  bg-blue-50 hover:bg-blue-100 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg 
+                  text-xs sm:text-sm text-blue-600 hover:text-blue-800 font-medium
+                  bg-blue-50 hover:bg-blue-100 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg
                   transition-colors disabled:opacity-50 disabled:cursor-not-allowed
                 `}
               >
@@ -347,34 +357,29 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* ===== Key Metrics Section - Fluid grid ===== */}
+        {/* ===== Key Metrics Section ===== */}
         <div className="mb-6 sm:mb-8 md:mb-10">
           <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-900 mb-3 sm:mb-4">
             Key Metrics
           </h2>
-          
-          {/* Responsive grid - 2 columns on mobile, 4 on desktop */}
+
           <div className={`grid ${metricGridCols} gap-2 sm:gap-3 md:gap-4`}>
-            {isLoading ? (
-              // Show skeleton loaders
-              Array(4).fill(0).map((_, i) => <MetricSkeleton key={i} />)
-            ) : (
-              // Render actual metric cards
-              metricConfigs.map((metric) => (
-                <MetricCard
-                  key={metric.key}
-                  label={metric.label}
-                  value={metric.value}
-                  icon={metric.icon}
-                  description={metric.description}
-                  color={metric.color}
-                />
-              ))
-            )}
+            {isLoading
+              ? Array(4).fill(0).map((_, i) => <MetricSkeleton key={i} />)
+              : metricConfigs.map((metric) => (
+                  <MetricCard
+                    key={metric.key}
+                    label={metric.label}
+                    value={metric.value}
+                    icon={metric.icon}
+                    description={metric.description}
+                    color={metric.color}
+                  />
+                ))}
           </div>
         </div>
 
-        {/* ===== Quick Actions Section - Fluid grid ===== */}
+        {/* ===== Quick Actions Section ===== */}
         <div>
           <div className="flex items-center justify-between mb-3 sm:mb-4">
             <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-900">
@@ -389,34 +394,40 @@ export default function AdminDashboard() {
             </button>
           </div>
 
-          {/* Always 3 columns, but adjust gap based on screen size */}
           <div className={`grid ${actionGridCols} gap-2 sm:gap-3 md:gap-4`}>
-            {isLoading ? (
-              // Show skeleton loaders
-              Array(3).fill(0).map((_, i) => <ActionButtonSkeleton key={i} />)
-            ) : (
-              // Render actual quick action buttons
-              quickActions.map((action) => (
-                <QuickActionButton
-                  key={action.id}
-                  onClick={action.onClick}
-                  icon={action.icon}
-                  title={action.title}
-                  description={action.description}
-                  color={action.color}
-                />
-              ))
-            )}
+            {isLoading
+              ? Array(3).fill(0).map((_, i) => <ActionButtonSkeleton key={i} />)
+              : quickActions.map((action) => (
+                  <QuickActionButton
+                    key={action.id}
+                    onClick={action.onClick}
+                    icon={action.icon}
+                    title={action.title}
+                    description={action.description}
+                    color={action.color}
+                  />
+                ))}
           </div>
         </div>
 
-        {/* ===== Footer note - Optional ===== */}
+        {/* ===== Footer ===== */}
         <div className="mt-6 sm:mt-8 md:mt-10 pt-4 sm:pt-6 border-t border-gray-200">
           <p className="text-xs text-gray-500 text-center sm:text-left">
             Data updates automatically every 5 minutes. Last full sync: {lastLoadTime.toLocaleString()}
           </p>
         </div>
       </div>
+
+      {/* ===== Announcement Modal ===== */}
+      <AnnouncementModal
+        isOpen={showAnnouncementModal}
+        onClose={() => setShowAnnouncementModal(false)}
+        senderName={user?.fullName || 'Admin'}
+        senderUid={user?.uid || ''}
+        onSuccess={(summary) => {
+          console.log('Announcement sent:', summary);
+        }}
+      />
     </DashboardLayout>
   );
 }
