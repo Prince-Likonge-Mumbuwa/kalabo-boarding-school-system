@@ -1,6 +1,10 @@
 // POST /sendSingleSms
 // Body: { studentId, term, year }
 // Writes PENDING doc → dispatches to AT synchronously → returns actual status.
+//
+// Every response carries:
+//   • studentDocumentId — Firestore `learners` doc ID (always present)
+//   • messageId         — Firestore `messages` doc ID (only when the doc was created)
 
 const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
@@ -26,12 +30,18 @@ exports.sendSingleSms = onRequest(
     try {
       const { studentId, term, year } = req.body;
       if (!studentId || !term || !year) {
-        return res.status(400).json({ success: false, error: 'Missing studentId, term, or year' });
+        return res.status(400).json({
+          success: false,
+          error: 'Missing studentId, term, or year',
+        });
       }
 
       const student = await resolveStudent(studentId);
       if (!student) {
-        return res.status(404).json({ success: false, error: `Student not found: ${studentId}` });
+        return res.status(404).json({
+          success: false,
+          error: `Student not found: ${studentId}`,
+        });
       }
 
       const sd = student.data;
@@ -39,12 +49,22 @@ exports.sendSingleSms = onRequest(
 
       const rawPhone = sd.guardianPhone || sd.parentPhone || sd.phone || sd.contactNumber;
       if (!rawPhone) {
-        return res.status(400).json({ success: false, error: 'No guardian phone number on file', studentName });
+        return res.status(400).json({
+          success: false,
+          error: 'No guardian phone number on file',
+          studentName,
+          studentDocumentId: student.documentId,
+        });
       }
 
       const validated = validateZambianNumber(rawPhone);
       if (!validated) {
-        return res.status(400).json({ success: false, error: `Invalid phone number: ${rawPhone}`, studentName });
+        return res.status(400).json({
+          success: false,
+          error: `Invalid phone number: ${rawPhone}`,
+          studentName,
+          studentDocumentId: student.documentId,
+        });
       }
 
       let classData = null;
@@ -60,11 +80,21 @@ exports.sendSingleSms = onRequest(
         .limit(1).get();
 
       if (hasResults.empty) {
-        return res.status(400).json({ success: false, error: 'No results available for this term/year', studentName });
+        return res.status(400).json({
+          success: false,
+          error: 'No results available for this term/year',
+          studentName,
+          studentDocumentId: student.documentId,
+        });
       }
 
       const message = await formatSMSMessage(
-        student.documentId, student.customId, term, year, sd, classData
+        student.documentId,
+        student.customId,
+        term,
+        year,
+        sd,
+        classData
       );
 
       // Write the message doc
@@ -84,7 +114,8 @@ exports.sendSingleSms = onRequest(
         studentName,
         guardianPhone: validated.number,
         carrier: validated.carrier,
-        term, year,
+        term,
+        year,
         type: 'single',
         campaignId: null,
 
@@ -92,11 +123,20 @@ exports.sendSingleSms = onRequest(
         updatedAt: FieldValue.serverTimestamp(),
         sentAt: null,
         deliveredAt: null,
-        deliveryReport: { status: null, phoneNumber: null, failureReason: null, updatedAt: null },
+        deliveryReport: {
+          status: null,
+          phoneNumber: null,
+          failureReason: null,
+          updatedAt: null,
+        },
       });
 
       // Dispatch to Africa's Talking
-      const result = await dispatchMessage(ref.id, { AT_API_KEY, AT_USERNAME, AT_SENDER_ID });
+      const result = await dispatchMessage(ref.id, {
+        AT_API_KEY,
+        AT_USERNAME,
+        AT_SENDER_ID,
+      });
 
       if (result.sent) {
         return res.json({
@@ -107,18 +147,23 @@ exports.sendSingleSms = onRequest(
           carrier: validated.carrier,
           status: 'sent',
           messageId: ref.id,
+          studentDocumentId: student.documentId,
         });
       }
 
       return res.status(500).json({
         success: false,
-        error: result.error || 'Africa\'s Talking rejected the message',
+        error: result.error || "Africa's Talking rejected the message",
         studentName,
         messageId: ref.id,
+        studentDocumentId: student.documentId,
       });
     } catch (err) {
       console.error('sendSingleSms:', err);
-      return res.status(500).json({ success: false, error: err.message || 'Failed to send SMS' });
+      return res.status(500).json({
+        success: false,
+        error: err.message || 'Failed to send SMS',
+      });
     }
   }
 );

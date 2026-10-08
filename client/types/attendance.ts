@@ -1,198 +1,135 @@
+// @/types/attendance.ts
 import { Timestamp } from 'firebase/firestore';
 
 export type AttendanceStatus = 'present' | 'absent' | 'late' | 'excused';
-export type AttendanceType = 'daily' | 'periodic';
+export type SessionKind = 'daily' | 'periodic';
 
-// Base interface with common fields
-export interface BaseAttendanceRecord {
+export interface AttendanceSession {
   id: string;
-  studentId: string;
-  studentName: string;
   classId: string;
   className: string;
   date: string;
-  status: AttendanceStatus;
-  excuseReason?: string;
+  kind: SessionKind;
+  subject?: string;
+  period?: number;
   markedBy: string;
   markedByName: string;
-  timestamp: Timestamp | Date;
-  updatedAt?: Timestamp | Date;
-  studentGender?: 'male' | 'female';
-  attendanceType: AttendanceType;
-}
-
-// Daily roll call
-export interface DailyAttendanceRecord extends BaseAttendanceRecord {
-  attendanceType: 'daily';
-  rollCallTime?: string;
-}
-
-// Periodic attendance
-export interface PeriodicAttendanceRecord extends BaseAttendanceRecord {
-  attendanceType: 'periodic';
-  subject: string;
-  period: number; // 1-8
-  lessonStartTime?: string;
-  lessonEndTime?: string;
-}
-
-// Union type for all attendance records
-export type AttendanceRecord = DailyAttendanceRecord | PeriodicAttendanceRecord;
-
-export interface DailyAttendance {
-  id: string;
-  classId: string;
-  className: string;
-  date: string;
-  records: AttendanceRecord[];
+  markedAt: Timestamp | Date;
+  roster: Record<string, AttendanceStatus>;
+  excuseReasons?: Record<string, string>;
   summary: {
     total: number;
     present: number;
     absent: number;
     late: number;
     excused: number;
-    boysPresent: number;
-    girlsPresent: number;
-    boysAbsent: number;
-    girlsAbsent: number;
   };
-  lastUpdated: Timestamp | Date;
-  updatedBy: string;
+  schemaVersion: 1;
 }
 
-export interface AttendanceFilters {
-  classId?: string;
-  startDate?: string;
-  endDate?: string;
-  status?: AttendanceStatus;
-  studentId?: string;
-  attendanceType?: AttendanceType;
-  subject?: string;
-  period?: number;
-  teacherId?: string;
+export function makeSessionId(
+  classId: string,
+  date: string,
+  kind: SessionKind,
+  period?: number,
+  normalizedSubject?: string,
+): string {
+  if (kind === 'daily') return `${classId}_${date}_daily`;
+  if (period === undefined || period === null) {
+    throw new Error(`makeSessionId: periodic session requires a period (${classId} ${date})`);
+  }
+  if (!normalizedSubject) {
+    throw new Error(`makeSessionId: periodic session requires a subject (${classId} ${date} p${period})`);
+  }
+  return `${classId}_${date}_p${period}_${normalizedSubject}`;
 }
 
-export interface AttendanceStats {
-  date: string;
-  present: number;
-  absent: number;
-  late: number;
-  excused: number;
-  total: number;
-  attendanceRate: number;
+export function computeSessionSummary(
+  roster: Record<string, AttendanceStatus>,
+): AttendanceSession['summary'] {
+  let present = 0, absent = 0, late = 0, excused = 0;
+  for (const s of Object.values(roster)) {
+    if (s === 'present') present++;
+    else if (s === 'absent') absent++;
+    else if (s === 'late') late++;
+    else if (s === 'excused') excused++;
+  }
+  return { total: present + absent + late + excused, present, absent, late, excused };
 }
 
-export interface StudentAttendanceSummary {
-  studentId: string;
-  studentName: string;
-  gender?: 'male' | 'female';
-  totalDays: number;
-  present: number;
-  absent: number;
-  late: number;
-  excused: number;
-  attendanceRate: number;
-  last30Days: {
-    present: number;
-    absent: number;
-    late: number;
-    excused: number;
-  };
-}
-
-// New types for analytics
-export interface LateArrival {
-  studentId: string;
-  studentName: string;
-  className: string;
-  date: string;
-  dailyStatus: AttendanceStatus;
-  firstPeriodStatus: AttendanceStatus;
-  timeDetected?: string;
-}
-
-export interface SubjectTruancy {
-  studentId: string;
-  studentName: string;
-  className: string;
-  subject: string;
-  teacherName: string;
-  totalSessions: number;
-  attended: number;
-  missed: number;
-  attendanceRate: number;
-  trend: 'improving' | 'declining' | 'stable';
-}
-
-export interface TeacherActivity {
-  teacherId: string;
-  teacherName: string;
+export interface AttendanceDailyRollup {
+  id: string;
   classId: string;
   className: string;
-  subject?: string;
   date: string;
-  timeRecorded: string;
-  attendanceType: AttendanceType;
-  studentsMarked: number;
-}
-
-export interface RiskAnalysis {
-  studentId: string;
-  studentName: string;
-  className: string;
-  gender?: 'male' | 'female';
-  dailyStats: {
+  daily?: {
     total: number;
     present: number;
     absent: number;
     late: number;
     excused: number;
     rate: number;
+    boysPresent: number;
+    girlsPresent: number;
+    boysAbsent: number;
+    girlsAbsent: number;
   };
-  subjectStats: Array<{
-    subject: string;
-    teacherName: string;
-    totalSessions: number;
-    present: number;
-    absent: number;
-    rate: number;
-    trend: 'improving' | 'declining' | 'stable';
-  }>;
-  ditchingIncidents: Array<{
-    date: string;
-    subject: string;
-    teacher: string;
-    period: number;
-  }>;
+  periodicTotals: {
+    sessionCount: number;
+    byPeriod: Record<number, { present: number; absent: number; late: number; excused: number; total: number }>;
+    bySubject: Record<string, { present: number; absent: number; late: number; excused: number; total: number }>;
+    distinctTeachers: string[];
+  };
   lateArrivals: Array<{
+    studentId: string;
+    studentName: string;
     date: string;
     firstPeriodSubject: string;
-    firstPeriodTeacher: string;
-    arrivalTime?: string;
+    timeDetected?: string;
   }>;
-  riskLevel: 'high' | 'medium' | 'low';
-  riskFactors: string[];
-  consecutiveAbsences: number;
+  subjectAlerts: Array<{
+    studentId: string;
+    studentName: string;
+    subject: string;
+    rate: number;
+    missed: number;
+    total: number;
+  }>;
+  updatedAt: Timestamp | Date;
+  schemaVersion: 1;
 }
 
-export interface TeacherPeriodicSummary {
-  teacherId: string;
-  teacherName: string;
-  classId: string;
-  className: string;
-  subject: string;
-  period: number;
-  date: string;
-  totalStudents: number;
+export function makeDailyRollupId(classId: string, date: string): string {
+  return `${classId}_${date}`;
+}
+
+export interface WindowStats {
+  total: number;
   present: number;
   absent: number;
   late: number;
   excused: number;
-  timeRecorded: string;
+  rate: number;
 }
 
-export interface FullPeriodicData {
-  byPeriod: Record<number, PeriodicAttendanceRecord[]>;
-  bySubject: Record<string, PeriodicAttendanceRecord[]>;
-  teachers: Set<string>;
+export interface StudentAttendanceIndex {
+  studentId: string;
+  studentName: string;
+  classId: string;
+  className: string;
+  last7Days: WindowStats;
+  last30Days: WindowStats;
+  term: WindowStats;
+  riskLevel: 'high' | 'medium' | 'low';
+  riskFactors: string[];
+  consecutiveAbsences: number;
+  lastAbsentDate: string | null;
+  recentDitching: Array<{ date: string; subject: string; period: number }>;
+  recentLate: Array<{ date: string; firstPeriodSubject: string }>;
+  updatedAt: Timestamp | Date;
+  schemaVersion: 1;
+}
+
+export function makeEmptyWindowStats(): WindowStats {
+  return { total: 0, present: 0, absent: 0, late: 0, excused: 0, rate: 0 };
 }

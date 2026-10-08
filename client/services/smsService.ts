@@ -1,7 +1,8 @@
 // @/services/smsService.ts — wired to Firebase Cloud Functions backend
-// Version 3.1.0 — adds announcement sends (all parents / one parent)
-//   - previewAnnouncement() : local cost estimate before sending
-//   - sendAnnouncement()    : posts to /sendAnnouncement endpoint
+// Version 3.3.0
+//   - Cost corrected to ZMW 0.24 per segment (Africa's Talking Zambia)
+//   - Adds messageId + studentDocumentId to bulk + announcement results/failures
+//   - Adds bulkSendAllClasses() for cross-class bulk sends
 
 import {
   resultsService,
@@ -42,12 +43,21 @@ export interface BulkSendResponse {
     phoneNumber: string;
     carrier: string;
     status: string;
+    /** Firestore `messages` doc ID. */
+    messageId?: string;
+    /** Firestore `learners` doc ID — used for editing phone on retry. */
+    studentDocumentId?: string;
+    /** Per-student segment info. */
     segments?: SMSSegmentInfo;
   }>;
   failedList: Array<{
     studentId: string;
     studentName?: string;
     reason: string;
+    /** Firestore `messages` doc ID — present when the doc was created. */
+    messageId?: string;
+    /** Firestore `learners` doc ID — used for editing phone on retry. */
+    studentDocumentId?: string;
   }>;
   summary?: {
     skippedNoPhone: number;
@@ -61,6 +71,40 @@ export interface BulkSendResponse {
     averagePerMessage: number;
     encoding: 'GSM-7' | 'UCS-2' | 'mixed';
     totalCostZmw: number;
+  };
+}
+
+// ==================== BULK ALL CLASSES TYPES ====================
+
+export interface BulkAllClassesResult {
+  success: boolean;
+  total: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  classBreakdown: Array<{
+    classId: string;
+    className: string;
+    total: number;
+    sent: number;
+    failed: number;
+    skipped: number;
+    error?: string;
+  }>;
+  failedList: Array<{
+    studentId: string;
+    studentName: string;
+    className: string;
+    reason: string;
+    messageId?: string;
+    /** Firestore `learners` doc ID — used for editing phone on retry. */
+    studentDocumentId?: string;
+  }>;
+  costEstimate?: {
+    totalSegments: number;
+    totalCostZmw: number;
+    averagePerMessage: number;
+    encoding: 'GSM-7' | 'UCS-2' | 'mixed';
   };
 }
 
@@ -136,12 +180,20 @@ export interface AnnouncementSendResponse {
     phoneNumber: string;
     carrier: string;
     status: string;
+    /** Firestore `messages` doc ID. */
+    messageId?: string;
+    /** Firestore `learners` doc ID. */
+    studentDocumentId?: string;
     segments?: SMSSegmentInfo;
   }>;
   failedList: Array<{
     studentId: string;
     studentName: string;
     reason: string;
+    /** Firestore `messages` doc ID. */
+    messageId?: string;
+    /** Firestore `learners` doc ID. */
+    studentDocumentId?: string;
   }>;
   summary: {
     skippedNoPhone: number;
@@ -171,9 +223,10 @@ export interface AnnouncementPreview {
 
 /**
  * Cost per SMS segment in ZMW (Africa's Talking Zambia rates).
- * Update when AT pricing changes. Used only for client-side estimates.
+ * Update when AT pricing changes. Used only for client-side estimates —
+ * the actual billing comes from AT.
  */
-const COST_PER_SEGMENT_ZMW = 0.48;
+const COST_PER_SEGMENT_ZMW = 0.24;
 
 // ==================== FALLBACK FORMATTER ====================
 
@@ -412,7 +465,7 @@ export const smsService = {
     }
   },
 
-  // ==================== BULK SEND ====================
+  // ==================== BULK SEND (ONE CLASS) ====================
 
   bulkSendClass: async (
     classId: string,
@@ -526,14 +579,117 @@ export const smsService = {
     }
   },
 
-  // ==================== ANNOUNCEMENT PREVIEW ====================
+  // ==================== BULK SEND — ALL CLASSES ====================
 
   /**
-   * Local-only preview of an announcement. No API call, no Firestore reads.
-   * Computes segments + cost from the raw message and recipient count.
+   * Send results SMS to every active learner across multiple classes.
+   * Runs sequentially (Africa's Talking rate limits + progress feedback).
    *
-   * Use in the modal to show "This will send N SMS segments = ZMW X".
+   * Each class is sent via bulkSendClass(); results are merged into one
+   * aggregate report. Failures carry their Firestore messageId AND
+   * studentDocumentId so the UI can offer per-row retry + phone editing.
    */
+  bulkSendAllClasses: async (
+    term: string,
+    year: number,
+    classes: Array<{ id: string; name: string }>,
+    onProgress?: (current: number, total: number, className: string) => void
+  ): Promise<BulkAllClassesResult> => {
+    const classBreakdown: BulkAllClassesResult['classBreakdown'] = [];
+    const failedList: BulkAllClassesResult['failedList'] = [];
+
+    let totalSent = 0;
+    let totalFailed = 0;
+    let totalSkipped = 0;
+    let totalRecipients = 0;
+    let totalSegments = 0;
+    let totalCost = 0;
+
+    for (let i = 0; i < classes.length; i++) {
+      const cls = classes[i];
+      onProgress?.(i + 1, classes.length, cls.name);
+
+      try {
+        const r = await smsService.bulkSendClass(cls.id, term, year);
+
+        classBreakdown.push({
+          classId: cls.id,
+          className: cls.name,
+          total: r.total,
+          sent: r.sent,
+          failed: r.failed,
+          skipped: r.summary?.skippedNoResults ?? 0,
+        });
+
+        totalSent += r.sent;
+        totalFailed += r.failed;
+        totalSkipped += r.summary?.skippedNoResults ?? 0;
+        totalRecipients += r.total;
+
+        r.failedList.forEach(f => {
+          failedList.push({
+            studentId: f.studentId,
+            studentName: f.studentName || 'Unknown',
+            className: cls.name,
+            reason: f.reason,
+            messageId: f.messageId,
+            studentDocumentId: f.studentDocumentId,
+          });
+        });
+
+        if (r.costEstimate) {
+          totalSegments += r.costEstimate.totalSegments;
+          totalCost += r.costEstimate.totalCostZmw;
+        }
+      } catch (err: any) {
+        console.error(`bulkSendAllClasses → ${cls.name} failed:`, err);
+
+        classBreakdown.push({
+          classId: cls.id,
+          className: cls.name,
+          total: 0,
+          sent: 0,
+          failed: 0,
+          skipped: 0,
+          error: err.message || 'Class send failed',
+        });
+
+        failedList.push({
+          studentId: '—',
+          studentName: cls.name,
+          className: cls.name,
+          reason: err.message || 'Class send failed',
+        });
+
+        totalFailed += 1;
+      }
+    }
+
+    return {
+      success: true,
+      total: totalRecipients,
+      sent: totalSent,
+      failed: totalFailed,
+      skipped: totalSkipped,
+      classBreakdown,
+      failedList,
+      costEstimate:
+        totalSegments > 0
+          ? {
+              totalSegments,
+              totalCostZmw: totalCost,
+              averagePerMessage:
+                totalRecipients > 0
+                  ? Math.round(totalSegments / totalRecipients)
+                  : 0,
+              encoding: 'GSM-7',
+            }
+          : undefined,
+    };
+  },
+
+  // ==================== ANNOUNCEMENT PREVIEW ====================
+
   previewAnnouncement: (message: string, recipientCount: number): AnnouncementPreview => {
     try {
       const trimmed = (message || '').trim();
@@ -576,17 +732,6 @@ export const smsService = {
 
   // ==================== ANNOUNCEMENT SEND ====================
 
-  /**
-   * Send a free-form SMS to parents.
-   *
-   * target = { type: 'all' }                        → every active learner's guardian
-   * target = { type: 'student', studentId: '...' }  → one learner's guardian
-   *
-   * The `studentId` can be either the custom ID (e.g. "G12A_001") or the
-   * Firestore document ID. The backend resolves both.
-   *
-   * Backend: /sendAnnouncement
-   */
   sendAnnouncement: async (params: {
     message: string;
     target: AnnouncementTarget;
@@ -599,7 +744,6 @@ export const smsService = {
         throw new Error('Message is required');
       }
 
-      // Compute segments client-side so we can attach them to the response
       const segments = getSmsSegments(trimmed);
 
       console.log(
@@ -635,7 +779,6 @@ export const smsService = {
         `(failed: ${data.failed})`
       );
 
-      // Attach segment info + cost estimate to each result
       const resultsWithSegments = (data.results || []).map((r: any) => ({
         ...r,
         segments,
@@ -674,7 +817,7 @@ export const smsService = {
 
   getSMSLogs: async (studentId: string): Promise<SMSLog[]> => {
     console.warn(
-      `getSMSLogs(${studentId}): logs are now in Firestore 'sms_logs'.`
+      `getSMSLogs(${studentId}): logs are now in Firestore 'messages'.`
     );
     return [];
   },

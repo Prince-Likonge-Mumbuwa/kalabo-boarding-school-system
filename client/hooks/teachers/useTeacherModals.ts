@@ -119,16 +119,24 @@ export const useTeacherModals = () => {
     setActiveModal('teachers-preview');
   };
 
-  // ── NEW: end-assignment modal ───────────────────────────────────
+  // ── End-assignment modal ────────────────────────────────────────
+  // NOTE: not currently wired up — TeacherManagement.tsx opens the
+  // end-cover confirmation via openConfirmationModal directly. Kept for
+  // completeness and corrected so its wording matches the slot engine
+  // (the primary teacher keeps ownership; only authority reverts).
   const openEndAssignmentModal = (assignment: TeacherAssignment) => {
+    const isTp = assignment.roleType === 'tp';
     setAssignmentToEnd(assignment);
     setModalData({
       teacher: selectedTeacher || undefined,
       assignmentId: assignment.id,
       action: 'assignment-end',
-      title: 'End Cover Assignment',
-      message: `End ${assignment.teacherName}'s ${assignment.roleType} assignment for ${assignment.subject} in ${assignment.className}? The substantive teacher will be reactivated if suspended.`,
-      confirmText: 'End Cover',
+      title: isTp ? 'End Teaching Practice' : 'End Cover',
+      message:
+        `End ${assignment.teacherName}'s ${assignment.roleType} assignment for ` +
+        `${assignment.subject} in ${assignment.className}? The primary teacher gets ` +
+        `control back immediately.`,
+      confirmText: isTp ? 'Hand Back' : 'End Cover',
       cancelText: 'Cancel',
     });
     setActiveModal('confirm');

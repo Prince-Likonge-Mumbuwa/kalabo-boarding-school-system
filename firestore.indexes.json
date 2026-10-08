@@ -1,6 +1,73 @@
 {
   "indexes": [
     {
+      "collectionGroup": "attendance_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "classId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "classId", "order": "ASCENDING" },
+        { "fieldPath": "kind", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "classId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" },
+        { "fieldPath": "kind", "order": "ASCENDING" }
+      ]
+    },
+
+    {
+      "collectionGroup": "attendance_daily",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "date", "order": "ASCENDING" },
+        { "fieldPath": "classId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_daily",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "classId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+
+    {
+      "collectionGroup": "attendance_student_index",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "classId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_student_index",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "riskLevel", "order": "ASCENDING" },
+        { "fieldPath": "classId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_student_index",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "riskLevel", "order": "ASCENDING" }
+      ]
+    },
+
+    {
       "collectionGroup": "learners",
       "queryScope": "COLLECTION",
       "fields": [
@@ -49,7 +116,6 @@
         { "fieldPath": "fullName", "order": "ASCENDING" }
       ]
     },
-
     {
       "collectionGroup": "learners",
       "queryScope": "COLLECTION",
@@ -166,7 +232,6 @@
         { "fieldPath": "year", "order": "ASCENDING" }
       ]
     },
-
     {
       "collectionGroup": "results",
       "queryScope": "COLLECTION",

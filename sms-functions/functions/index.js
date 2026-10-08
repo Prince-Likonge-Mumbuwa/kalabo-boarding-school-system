@@ -18,3 +18,9 @@ exports.atDeliveryReportWebhook = require('./src/http/deliveryReportWebhook').at
 // Scheduled retry worker
 exports.retryFailedSMSWorker = require('./src/scheduled/retryWorker').retryFailedSMSWorker;
 exports.sendAnnouncement = require('./src/http/sendAnnouncement').sendAnnouncement;
+exports.getSmsHistory = require('./getSmsHistory').getSmsHistory;
+exports.retrySms     = require('./retrySms').retrySms;
+
+// ── Attendance ────────────────────────────────────────────────────────
+exports.onSessionWritten    = require('./src/attendance/triggers').onSessionWritten;
+exports.rebuildStudentIndex = require('./src/attendance/triggers').rebuildStudentIndex;

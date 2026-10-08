@@ -533,8 +533,29 @@ export const AssignmentModal: React.FC<{
               {isCoverRole && (
                 <p className="mt-2 text-xs text-rose-700 flex items-start gap-1.5">
                   <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
-                  The current substantive teacher will be suspended. When this cover
-                  ends, they will be reactivated.
+                  <span>
+                    {assignAsFormTeacher ? (
+                      <>
+                        While this cover is active, this teacher holds{' '}
+                        <span className="font-medium">operational authority</span> for the
+                        form-teacher slot. The primary form teacher keeps the role and takes
+                        over automatically at the end date.
+                      </>
+                    ) : roleType === 'tp' ? (
+                      <>
+                        This is a teaching practice placement. While active, the TP teacher
+                        has operational authority. Authority returns to the primary teacher
+                        automatically at the end date.
+                      </>
+                    ) : (
+                      <>
+                        While this cover is active, the primary teacher keeps ownership.
+                        They will be shown as <span className="font-medium">covered</span> on
+                        their dashboard and cannot act on the class. Authority returns to
+                        them automatically at the end date.
+                      </>
+                    )}
+                  </span>
                 </p>
               )}
             </div>

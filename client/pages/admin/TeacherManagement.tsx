@@ -5,7 +5,7 @@ import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useAuth } from '@/hooks/useAuth';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Search,
   Filter,
@@ -325,7 +325,7 @@ export default function TeacherManagement() {
   const activeTeacher = filteredTeachers.find(t => t.id === selectedTeacherId) || null;
 
   // ==================== SHARED ERROR TOAST ====================
-  const toastError = (title: string, error: any, fallback: string) => {
+  const toastError = useCallback((title: string, error: any, fallback: string) => {
     console.error(title, error);
     addToast({
       type: 'error',
@@ -333,9 +333,10 @@ export default function TeacherManagement() {
       message: error?.message || fallback,
       duration: 6000,
     });
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addToast]);
 
-  const requireAdmin = (what: string): boolean => {
+  const requireAdmin = useCallback((what: string): boolean => {
     if (isUserAdmin) return true;
     addToast({
       type: 'error',
@@ -343,7 +344,8 @@ export default function TeacherManagement() {
       message: `Only administrators can ${what}`,
     });
     return false;
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUserAdmin, addToast]);
 
   // ==================== ONE-TIME MIGRATION ====================
   const handleMigrate = async () => {
@@ -546,6 +548,18 @@ export default function TeacherManagement() {
       return;
     }
 
+    // Defensive: prove what we're about to send. If this ever logs
+    // role: 'substantive' when the admin picked a cover, the modal
+    // isn't wiring role state — inspect AssignmentModal's props.
+    console.log('[assign] sending', {
+      roleType: coverRoleType,
+      isDelegate,
+      startDate: startDate?.toISOString(),
+      endDate: endDate?.toISOString(),
+      subjects: selectedSubjects,
+      isFormTeacher: assignAsFormTeacher,
+    });
+
     try {
       if (selectedSubjects.length > 0) {
         // The hook assigns subjects and (if ticked) the Form Teacher role as separate slots.
@@ -619,35 +633,43 @@ export default function TeacherManagement() {
   };
 
   // Explicit args — avoids reading stale modal state right after setState.
-  const removeFormTeacherRole = async (teacher: Teacher, classId: string) => {
-    try {
-      await removeTeacherSubject({ teacherId: teacher.id, classId, subject: 'Form Teacher' });
-      addToast({
-        type: 'success',
-        title: 'Form Teacher Removed',
-        message: `${teacher.name} is no longer Form Teacher of this class.`,
-        duration: 4000,
-      });
-      resetModalState();
-    } catch (error: any) {
-      toastError('Update Failed', error, 'Failed to remove form teacher status');
-    }
-  };
+  const removeFormTeacherRole = useCallback(
+    async (teacher: Teacher, classId: string) => {
+      try {
+        await removeTeacherSubject({ teacherId: teacher.id, classId, subject: 'Form Teacher' });
+        addToast({
+          type: 'success',
+          title: 'Form Teacher Removed',
+          message: `${teacher.name} is no longer Form Teacher of this class.`,
+          duration: 4000,
+        });
+        resetModalState();
+      } catch (error: any) {
+        toastError('Update Failed', error, 'Failed to remove form teacher status');
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [removeTeacherSubject, addToast, resetModalState, toastError]
+  );
 
-  const removeFromClass = async (teacher: Teacher, classId: string, className?: string) => {
-    try {
-      await removeTeacherFromClass({ teacherId: teacher.id, classId });
-      addToast({
-        type: 'success',
-        title: 'Teacher Removed',
-        message: `${teacher.name} has been removed from ${className || 'the class'}. Any running cover continues until its end date.`,
-        duration: 5000,
-      });
-      resetModalState();
-    } catch (error: any) {
-      toastError('Remove Failed', error, 'Failed to remove teacher');
-    }
-  };
+  const removeFromClass = useCallback(
+    async (teacher: Teacher, classId: string, className?: string) => {
+      try {
+        await removeTeacherFromClass({ teacherId: teacher.id, classId });
+        addToast({
+          type: 'success',
+          title: 'Teacher Removed',
+          message: `${teacher.name} has been removed from ${className || 'the class'}. Any running cover continues until its end date.`,
+          duration: 5000,
+        });
+        resetModalState();
+      } catch (error: any) {
+        toastError('Remove Failed', error, 'Failed to remove teacher');
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [removeTeacherFromClass, addToast, resetModalState, toastError]
+  );
 
   const handleRemoveAssignment = (teacherId: string, classId: string) => {
     if (!requireAdmin('remove teacher assignments')) return;
@@ -748,12 +770,15 @@ export default function TeacherManagement() {
   };
 
   // ── Owner row: end the cover / TP that is covering THIS teacher ──
-  const handleEndDelegationOnOwnedSlot = (s: {
-    slotId: string | null;
-    subject: string;
-    coveredByTeacherName: string | null;
-    coveredByRole: string | null;
-  }, className: string) => {
+  const handleEndDelegationOnOwnedSlot = (
+    s: {
+      slotId: string | null;
+      subject: string;
+      coveredByTeacherName: string | null;
+      coveredByRole: string | null;
+    },
+    className: string
+  ) => {
     if (!requireAdmin('end cover assignments')) return;
     if (!activeTeacher || !s.slotId) return;
 
@@ -839,7 +864,7 @@ export default function TeacherManagement() {
     if (success) resetModalState();
   };
 
-  const handleConfirmAction = async () => {
+  const handleConfirmAction = useCallback(async () => {
     const data: any = modalData;
     if (!data) return;
 
@@ -957,7 +982,21 @@ export default function TeacherManagement() {
       default:
         resetModalState();
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    modalData,
+    updateTeacherStatus,
+    getUncoveredSlots,
+    returnTeacherToDuty,
+    removeFromClass,
+    removeFormTeacherRole,
+    endAssignment,
+    endDelegation,
+    handBackTp,
+    addToast,
+    toastError,
+    resetModalState,
+  ]);
 
   // ==================== RENDER ====================
   if (teachersError || classesError) {

@@ -1,21 +1,30 @@
 // components/attendance/CompactStats.tsx
 import React from 'react';
-import { 
-  UserCheck, 
-  UserX, 
-  Clock, 
+import {
+  UserCheck,
+  UserX,
+  Clock,
   AlertCircle,
   TrendingUp,
   TrendingDown,
-  Minus
+  Minus,
 } from 'lucide-react';
 
-interface CompactStatsProps {
+// ============================================================================
+// TYPES
+// ============================================================================
+
+export interface CompactStatsProps {
   present: number;
   absent: number;
   late: number;
   excused: number;
   total: number;
+
+  /**
+   * Optional comparison point. When present, each stat can show a trend chip.
+   * Ignored unless `showTrends` is true.
+   */
   previousPeriod?: {
     present: number;
     absent: number;
@@ -23,9 +32,86 @@ interface CompactStatsProps {
     excused: number;
     total: number;
   };
+
+  /** Turn on the trend chips. Default: false. */
   showTrends?: boolean;
+
+  /**
+   * Which metric the "rate" reads.
+   *   'present'  → present / total         (raw present share)
+   *   'rate'     → (present + late) / total (attendance rate)
+   *
+   * Default: 'rate'. The name "rate" matches the rest of the codebase
+   * (getDailyStats, getSchoolAttendanceSummary, rollup.daily.rate).
+   */
+  rateMode?: 'present' | 'rate';
+
+  /** Visual density. Default: 'default'. */
+  variant?: 'default' | 'compact';
+
   className?: string;
 }
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+/**
+ * Direction of "good" for each stat.
+ * Present going up is good. Absent/Late/Excused going up is bad.
+ * Used to pick the right color for the trend arrow.
+ */
+type GoodDirection = 'up' | 'down';
+
+const STAT_CONFIG: Record<
+  'Present' | 'Absent' | 'Late' | 'Excused',
+  { goodDirection: GoodDirection }
+> = {
+  Present: { goodDirection: 'up' },
+  Absent: { goodDirection: 'down' },
+  Late: { goodDirection: 'down' },
+  Excused: { goodDirection: 'down' },
+};
+
+interface TrendInfo {
+  Icon: typeof TrendingUp;
+  className: string;
+  label: string;
+}
+
+/**
+ * Compute a trend chip for a stat. Returns null when there's no baseline to
+ * compare against, or when the change is within a neutral band.
+ *
+ * The neutral band is ±5 percentage points of *relative* change. This means
+ * "present went from 20 → 21" is neutral, but "absent went from 2 → 8" is a
+ * clear signal.
+ */
+function computeTrend(
+  current: number,
+  previous: number,
+  goodDirection: GoodDirection,
+): TrendInfo | null {
+  if (previous === 0) return null;
+
+  const diff = ((current - previous) / previous) * 100;
+  if (Math.abs(diff) < 5) {
+    return { Icon: Minus, className: 'text-gray-400', label: 'stable' };
+  }
+
+  const isUp = diff > 0;
+  const isGood = (isUp && goodDirection === 'up') || (!isUp && goodDirection === 'down');
+
+  return {
+    Icon: isUp ? TrendingUp : TrendingDown,
+    className: isGood ? 'text-green-600' : 'text-red-600',
+    label: `${isUp ? '+' : ''}${diff.toFixed(0)}%`,
+  };
+}
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
 
 export const CompactStats: React.FC<CompactStatsProps> = ({
   present,
@@ -35,122 +121,143 @@ export const CompactStats: React.FC<CompactStatsProps> = ({
   total,
   previousPeriod,
   showTrends = false,
-  className = ''
+  rateMode = 'rate',
+  variant = 'default',
+  className = '',
 }) => {
-  // Calculate percentages
+  // ── Percentages ────────────────────────────────────────────────────
+  // The "Present" card shows the *attendance rate* when rateMode='rate'
+  // (matches the rest of the codebase), otherwise the raw present share.
+  const presentDisplay =
+    rateMode === 'rate' && total > 0 ? ((present + late) / total) * 100 : total > 0 ? (present / total) * 100 : 0;
+
   const presentPercent = total > 0 ? (present / total) * 100 : 0;
   const absentPercent = total > 0 ? (absent / total) * 100 : 0;
   const latePercent = total > 0 ? (late / total) * 100 : 0;
   const excusedPercent = total > 0 ? (excused / total) * 100 : 0;
 
-  // Calculate trends if previous period data is available
-  const getTrend = (current: number, previous: number) => {
-    if (!previousPeriod || previous === 0) return null;
-    const diff = ((current - previous) / previous) * 100;
-    if (Math.abs(diff) < 5) return { icon: Minus, color: 'text-gray-400', value: 'stable' };
-    return {
-      icon: diff > 0 ? TrendingUp : TrendingDown,
-      color: diff > 0 ? 'text-green-500' : 'text-red-500',
-      value: `${diff > 0 ? '+' : ''}${diff.toFixed(0)}%`
-    };
-  };
+  // ── Trend chips ────────────────────────────────────────────────────
+  const canShowTrends = showTrends && !!previousPeriod;
 
+  const presentTrend = canShowTrends
+    ? computeTrend(present, previousPeriod.present, STAT_CONFIG.Present.goodDirection)
+    : null;
+  const absentTrend = canShowTrends
+    ? computeTrend(absent, previousPeriod.absent, STAT_CONFIG.Absent.goodDirection)
+    : null;
+  const lateTrend = canShowTrends
+    ? computeTrend(late, previousPeriod.late, STAT_CONFIG.Late.goodDirection)
+    : null;
+  const excusedTrend = canShowTrends
+    ? computeTrend(excused, previousPeriod.excused, STAT_CONFIG.Excused.goodDirection)
+    : null;
+
+  // ── Card data ──────────────────────────────────────────────────────
   const stats = [
     {
+      key: 'present' as const,
       label: 'Present',
       value: present,
-      percent: presentPercent,
-      icon: UserCheck,
+      percent: presentDisplay,
+      barPercent: presentPercent,
+      Icon: UserCheck,
       color: 'text-green-600',
       bg: 'bg-green-100',
-      trend: showTrends && previousPeriod 
-        ? getTrend(present, previousPeriod.present)
-        : null
+      barColor: 'bg-green-500',
+      trend: presentTrend,
     },
     {
+      key: 'absent' as const,
       label: 'Absent',
       value: absent,
       percent: absentPercent,
-      icon: UserX,
+      barPercent: absentPercent,
+      Icon: UserX,
       color: 'text-red-600',
       bg: 'bg-red-100',
-      trend: showTrends && previousPeriod 
-        ? getTrend(absent, previousPeriod.absent)
-        : null
+      barColor: 'bg-red-500',
+      trend: absentTrend,
     },
     {
+      key: 'late' as const,
       label: 'Late',
       value: late,
       percent: latePercent,
-      icon: Clock,
+      barPercent: latePercent,
+      Icon: Clock,
       color: 'text-yellow-600',
       bg: 'bg-yellow-100',
-      trend: showTrends && previousPeriod 
-        ? getTrend(late, previousPeriod.late)
-        : null
+      barColor: 'bg-yellow-500',
+      trend: lateTrend,
     },
     {
+      key: 'excused' as const,
       label: 'Excused',
       value: excused,
       percent: excusedPercent,
-      icon: AlertCircle,
+      barPercent: excusedPercent,
+      Icon: AlertCircle,
       color: 'text-purple-600',
       bg: 'bg-purple-100',
-      trend: showTrends && previousPeriod 
-        ? getTrend(excused, previousPeriod.excused)
-        : null
-    }
+      barColor: 'bg-purple-500',
+      trend: excusedTrend,
+    },
   ];
+
+  const dense = variant === 'compact';
 
   return (
     <div className={`grid grid-cols-2 sm:grid-cols-4 gap-2 ${className}`}>
       {stats.map(stat => (
         <div
-          key={stat.label}
-          className="bg-white rounded-lg border border-gray-200 p-2 hover:shadow-sm transition-shadow"
+          key={stat.key}
+          className={`bg-white rounded-lg border border-gray-200 hover:shadow-sm transition-shadow ${
+            dense ? 'p-1.5' : 'p-2'
+          }`}
         >
-          {/* Header with icon and label */}
+          {/* Header: label + icon */}
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] sm:text-xs font-medium text-gray-500 truncate">
               {stat.label}
             </span>
             <div className={`p-1 rounded-full ${stat.bg} flex-shrink-0`}>
-              <stat.icon size={10} className={`sm:w-3 sm:h-3 ${stat.color}`} />
+              <stat.Icon size={10} className={`sm:w-3 sm:h-3 ${stat.color}`} />
             </div>
           </div>
 
-          {/* Main value */}
-          <div className="flex items-baseline justify-between">
-            <span className="text-sm sm:text-base lg:text-lg font-bold text-gray-900">
+          {/* Value + percent */}
+          <div className="flex items-baseline justify-between gap-1">
+            <span
+              className={`font-bold text-gray-900 ${
+                dense ? 'text-xs sm:text-sm' : 'text-sm sm:text-base lg:text-lg'
+              }`}
+            >
               {stat.value}
             </span>
-            <span className="text-[10px] sm:text-xs text-gray-500">
+            <span className="text-[10px] sm:text-xs text-gray-500 tabular-nums">
               {stat.percent.toFixed(0)}%
             </span>
           </div>
 
-          {/* Trend indicator (if enabled) */}
-          {showTrends && stat.trend && (
+          {/* Trend chip */}
+          {canShowTrends && stat.trend && (
             <div className="mt-1 flex items-center gap-0.5">
-              <stat.trend.icon size={10} className={stat.trend.color} />
-              <span className={`text-[8px] sm:text-[10px] ${stat.trend.color}`}>
-                {stat.trend.value}
+              <stat.trend.Icon size={10} className={stat.trend.className} />
+              <span className={`text-[8px] sm:text-[10px] ${stat.trend.className}`}>
+                {stat.trend.label}
               </span>
             </div>
           )}
 
-          {/* Mini progress bar (visible on larger screens) */}
-          <div className="hidden sm:block mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full ${
-                stat.label === 'Present' ? 'bg-green-500' :
-                stat.label === 'Absent' ? 'bg-red-500' :
-                stat.label === 'Late' ? 'bg-yellow-500' :
-                'bg-purple-500'
-              }`}
-              style={{ width: `${stat.percent}%` }}
-            />
-          </div>
+          {/* Mini progress bar (larger screens only) */}
+          {!dense && (
+            <div className="hidden sm:block mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full ${stat.barColor}`}
+                style={{ width: `${Math.min(stat.barPercent, 100)}%` }}
+              />
+            </div>
+          )}
         </div>
       ))}
 
@@ -158,44 +265,66 @@ export const CompactStats: React.FC<CompactStatsProps> = ({
       <div className="col-span-2 sm:hidden mt-1">
         <div className="bg-blue-50 rounded-lg px-3 py-1.5 flex items-center justify-between">
           <span className="text-xs font-medium text-blue-700">Total Students</span>
-          <span className="text-sm font-bold text-blue-800">{total}</span>
+          <span className="text-sm font-bold text-blue-800 tabular-nums">{total}</span>
         </div>
       </div>
     </div>
   );
 };
 
-// Alternative horizontal layout for smaller spaces
-export const CompactStatsHorizontal: React.FC<CompactStatsProps> = ({
+// ============================================================================
+// HORIZONTAL VARIANT
+// ============================================================================
+
+export interface CompactStatsHorizontalProps {
+  present: number;
+  absent: number;
+  late: number;
+  excused: number;
+  total: number;
+  className?: string;
+}
+
+export const CompactStatsHorizontal: React.FC<CompactStatsHorizontalProps> = ({
   present,
   absent,
   late,
   excused,
   total,
-  className = ''
+  className = '',
 }) => {
   return (
     <div className={`flex flex-wrap items-center gap-3 ${className}`}>
       <div className="flex items-center gap-1">
         <div className="w-2 h-2 rounded-full bg-green-500" />
-        <span className="text-xs text-gray-600">P: {present}</span>
+        <span className="text-xs text-gray-600">
+          P: <span className="tabular-nums">{present}</span>
+        </span>
       </div>
       <div className="flex items-center gap-1">
         <div className="w-2 h-2 rounded-full bg-red-500" />
-        <span className="text-xs text-gray-600">A: {absent}</span>
+        <span className="text-xs text-gray-600">
+          A: <span className="tabular-nums">{absent}</span>
+        </span>
       </div>
       <div className="flex items-center gap-1">
         <div className="w-2 h-2 rounded-full bg-yellow-500" />
-        <span className="text-xs text-gray-600">L: {late}</span>
+        <span className="text-xs text-gray-600">
+          L: <span className="tabular-nums">{late}</span>
+        </span>
       </div>
       <div className="flex items-center gap-1">
         <div className="w-2 h-2 rounded-full bg-purple-500" />
-        <span className="text-xs text-gray-600">E: {excused}</span>
+        <span className="text-xs text-gray-600">
+          E: <span className="tabular-nums">{excused}</span>
+        </span>
       </div>
       <div className="flex items-center gap-1 ml-auto">
         <span className="text-xs font-medium text-gray-700">Total:</span>
-        <span className="text-sm font-bold text-blue-600">{total}</span>
+        <span className="text-sm font-bold text-blue-600 tabular-nums">{total}</span>
       </div>
     </div>
   );
 };
+
+export default CompactStats;
