@@ -1,10 +1,9 @@
 // @/pages/admin/ReportCards.tsx
-// Version 3.1.0 - SMS cost preview integrated:
-//                  - Single send: cost shown in success toast
-//                  - Bulk send: preflight confirm dialog shows
-//                    ready count, avg length, encoding, segments, ZMW cost
-//                  - Post-send toast shows actual cost from costEstimate
-//                  - Uses CBC-aligned subject codes via smsService v3.0.0
+// Version 3.2.0 - SMS History tab + Bulk All Classes dialog
+//   - Cost corrected to ZMW 0.24 per segment (via smsService constant)
+//   - Two tabs: Report Cards | SMS History
+//   - New "Bulk All Classes" button → BulkSendDialog
+//   - SMS History panel with filters + per-row and bulk retry
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -38,10 +37,13 @@ import {
   FileSpreadsheet,
   MessageCircle,
   Send,
+  History,
 } from 'lucide-react';
 
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { smsService } from '@/services/smsService';
+import SmsHistoryPanel from '@/components/SmsHistoryPanel';
+import BulkSendDialog from '@/components/BulkSendDialog';
 
 // ==================== TYPES ====================
 interface SubjectProgress {
@@ -924,6 +926,10 @@ export default function ReportCards() {
   const [isDownloadingMatrix, setIsDownloadingMatrix] = useState(false);
   const [isDeletingReport, setIsDeletingReport] = useState(false);
 
+  // Tab + bulk-all state
+  const [activeTab, setActiveTab] = useState<'cards' | 'history'>('cards');
+  const [showBulkAllDialog, setShowBulkAllDialog] = useState(false);
+
   // SMS States
   const [sendingSMS, setSendingSMS] = useState<string | null>(null);
   const [smsResults, setSmsResults] = useState<{ [key: string]: { status: 'success' | 'error'; message?: string } }>({});
@@ -1152,7 +1158,6 @@ export default function ReportCards() {
   }, [refetch, cacheKeyFor]);
 
   // ---------- SMS handlers ----------
-  // Single-student send: builds preview client-side, sends, then reports cost.
   const handleSendSMS = async (studentId: string, studentName: string) => {
     if (!selectedTerm || !selectedYear) {
       addToast('warning', 'Missing Info', 'Please select a term and year first');
@@ -1167,7 +1172,6 @@ export default function ReportCards() {
     }
     setSendingSMS(studentId);
     try {
-      // Build preview first (client-side, no network) so we can log cost
       const preview = await smsService.previewStudentSMS(studentId, selectedTerm, selectedYear);
       if (preview.success) {
         console.log(
@@ -1183,7 +1187,7 @@ export default function ReportCards() {
 
         const costLine = result.segments
           ? `\n${result.segments.length} chars · ${result.segments.encoding} · ` +
-            `${result.segments.segments} SMS · ZMW ${(result.segments.segments * 0.48).toFixed(2)}`
+            `${result.segments.segments} SMS · ZMW ${(result.segments.segments * smsService.COST_PER_SEGMENT_ZMW).toFixed(2)}`
           : '';
 
         addToast(
@@ -1202,7 +1206,7 @@ export default function ReportCards() {
     }
   };
 
-  // Bulk send: preflight preview → confirm with exact cost → send → report actuals.
+  // Bulk send (single class): preflight preview → confirm → send → report.
   const handleBulkSend = async () => {
     if (!selectedClass || !selectedTerm || !selectedYear) {
       addToast('warning', 'Missing Info', 'Select class, term, and year');
@@ -1213,7 +1217,6 @@ export default function ReportCards() {
       return;
     }
 
-    // ---- Preflight preview (no network send) ----
     let preview;
     try {
       preview = await smsService.previewClassSMS(selectedClass, selectedTerm, selectedYear);
@@ -1255,7 +1258,6 @@ export default function ReportCards() {
 
       let msg = `Sent: ${result.sent} | Failed: ${result.failed} | Total: ${result.total}`;
 
-      // Surface actual cost from the response
       if (result.costEstimate) {
         msg +=
           `\nCost: ZMW ${result.costEstimate.totalCostZmw.toFixed(2)} ` +
@@ -1450,6 +1452,31 @@ export default function ReportCards() {
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Tab switcher */}
+              <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+                <button
+                  onClick={() => setActiveTab('cards')}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                    activeTab === 'cards'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Report Cards
+                </button>
+                <button
+                  onClick={() => setActiveTab('history')}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-colors flex items-center gap-1 ${
+                    activeTab === 'history'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <History size={12} />
+                  SMS History
+                </button>
+              </div>
+
               {selectedClass && students.length > 0 && configuredExamTypes.length > 0 && (
                 <>
                   <button onClick={handleDownloadAllReportCards} disabled={isDownloadingAll} className="flex items-center gap-1 sm:gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-xs sm:text-sm">
@@ -1460,11 +1487,31 @@ export default function ReportCards() {
                   </button>
                 </>
               )}
+
+              {/* Bulk All Classes */}
+              <button
+                onClick={() => setShowBulkAllDialog(true)}
+                disabled={isBulkSending}
+                className="flex items-center gap-1 sm:gap-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-xs sm:text-sm"
+                title="Send results to ALL classes"
+              >
+                <MessageCircle size={16} />
+                <span className="hidden sm:inline">Bulk All Classes</span>
+              </button>
+
               <button onClick={() => refetch()} className="p-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"><RefreshCw size={isMobile ? 16 : 18} className={isFetching ? 'animate-spin' : ''} /></button>
             </div>
           </div>
 
-          {!selectedClass ? (
+          {activeTab === 'history' ? (
+            <SmsHistoryPanel
+              classId={selectedClass}
+              term={selectedTerm}
+              year={selectedYear}
+              addToast={addToast}
+              onRetryComplete={refetch}
+            />
+          ) : !selectedClass ? (
             <div className="bg-white rounded-xl border border-gray-200 p-6 sm:p-8 text-center">
               <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-blue-100 rounded-full mb-3"><BookOpen className="text-blue-600" size={isMobile ? 24 : 32} /></div>
               <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1">Select a Class</h3>
@@ -1532,6 +1579,16 @@ export default function ReportCards() {
         configuredExamTypes={configuredExamTypes}
         onDelete={handleDeleteReport}
         isDeleting={isDeletingReport}
+      />
+
+      <BulkSendDialog
+        isOpen={showBulkAllDialog}
+        onClose={() => setShowBulkAllDialog(false)}
+        classes={classOptions}
+        term={selectedTerm}
+        year={selectedYear}
+        onComplete={refetch}
+        addToast={addToast}
       />
 
       {toasts.length > 0 && (

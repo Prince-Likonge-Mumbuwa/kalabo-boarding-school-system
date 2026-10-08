@@ -1,6 +1,12 @@
 // POST /bulkSendSms
 // Body: { classId, term, year }
 // Loads active learners → writes PENDING docs → dispatches each inline.
+//
+// Success and failure entries both carry:
+//   • messageId          — Firestore `messages` doc ID (absent on pre-flight skips)
+//   • studentDocumentId  — Firestore `learners` doc ID (always present)
+// so the UI can retry individual sends and, for phone-number failures,
+// offer inline editing of the guardian phone.
 
 const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
@@ -72,14 +78,24 @@ exports.bulkSendSms = onRequest(
 
         const rawPhone = sd.guardianPhone || sd.parentPhone || sd.phone || sd.contactNumber;
         if (!rawPhone) {
-          failedList.push({ studentId: customId, studentName: name, reason: 'No phone number' });
+          failedList.push({
+            studentId: customId,
+            studentName: name,
+            reason: 'No phone number',
+            studentDocumentId: docId,
+          });
           skippedPhone++;
           continue;
         }
 
         const validated = validateZambianNumber(rawPhone);
         if (!validated) {
-          failedList.push({ studentId: customId, studentName: name, reason: 'Invalid phone number' });
+          failedList.push({
+            studentId: customId,
+            studentName: name,
+            reason: 'Invalid phone number',
+            studentDocumentId: docId,
+          });
           continue;
         }
 
@@ -90,7 +106,12 @@ exports.bulkSendSms = onRequest(
           .limit(1).get();
 
         if (hasResults.empty) {
-          failedList.push({ studentId: customId, studentName: name, reason: 'No results available' });
+          failedList.push({
+            studentId: customId,
+            studentName: name,
+            reason: 'No results available',
+            studentDocumentId: docId,
+          });
           skippedResults++;
           continue;
         }
@@ -131,16 +152,31 @@ exports.bulkSendSms = onRequest(
           if (result.sent) {
             sent++;
             results.push({
-              studentId: customId, studentName: name,
-              phoneNumber: validated.number, carrier: validated.carrier,
+              studentId: customId,
+              studentName: name,
+              phoneNumber: validated.number,
+              carrier: validated.carrier,
               status: 'sent',
+              messageId: ref.id,
+              studentDocumentId: docId,
             });
           } else {
-            failedList.push({ studentId: customId, studentName: name, reason: result.error || 'Send failed' });
+            failedList.push({
+              studentId: customId,
+              studentName: name,
+              reason: result.error || 'Send failed',
+              messageId: ref.id,
+              studentDocumentId: docId,
+            });
           }
         } catch (err) {
           console.error(`Format error ${customId}:`, err);
-          failedList.push({ studentId: customId, studentName: name, reason: err.message });
+          failedList.push({
+            studentId: customId,
+            studentName: name,
+            reason: err.message,
+            studentDocumentId: docId,
+          });
         }
       }
 
