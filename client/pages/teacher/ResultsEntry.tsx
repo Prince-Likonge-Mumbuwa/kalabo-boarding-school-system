@@ -3,6 +3,7 @@
 // Fixed: Progress bar now reflects total entries entered vs total expected
 // Added: Bulk results entry (paste from Excel / upload CSV) via BulkResultsEntryModal
 // Fixed: Enter / Arrow-Down now moves to the next learner (input refs are registered)
+// Fixed: Term state is now strongly typed as TermName (matches useExamConfig expectations)
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -26,6 +27,8 @@ import {
 import { useAuth } from '@/hooks/useAuth';
 import { useResults, useSubjectCompletion } from '@/hooks/useResults';
 import { useExamConfig } from '@/hooks/useExamConfig';
+// FIX: import TermName from canonical source so `term` state can be strongly typed
+import type { TermName } from '@/types/exam';
 import { learnerService } from '@/services/schoolService';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
@@ -47,7 +50,7 @@ interface SavedDraft {
   className: string;
   subject: string;
   examType: 'week4' | 'week8' | 'endOfTerm';
-  term: string;
+  term: TermName;              // FIX: was `string`
   year: number;
   totalMarks: number;
   results: StudentResultInput[];
@@ -113,6 +116,11 @@ interface ToastState {
 }
 
 // ==================== HELPER FUNCTIONS ====================
+// FIX: single source of truth for term options — keeps the <select> in sync
+// with the TermName union. Add a fourth term here and TypeScript will ask you
+// to update TermName too.
+const TERM_OPTIONS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
+
 const getAvailableExamTypes = (config: any) => {
   if (!config?.examTypes) return [];
   
@@ -577,7 +585,7 @@ interface MarksPDFPreviewProps {
   classInfo: ClassInfo | null;
   subject: string;
   examType: 'week4' | 'week8' | 'endOfTerm';
-  term: string;
+  term: TermName;              // FIX: was `string`
   year: number;
   totalMarks: number;
   onDownload: () => void;
@@ -1084,7 +1092,8 @@ export default function ResultsEntry() {
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
   const [examType, setExamType] = useState<'week4' | 'week8' | 'endOfTerm'>('week4');
-  const [term, setTerm] = useState('Term 1');
+  // FIX: typed as TermName so it can be passed to useExamConfig (ExamConfigFilters.term)
+  const [term, setTerm] = useState<TermName>('Term 1');
   const [year, setYear] = useState(new Date().getFullYear());
   
   // Data State
@@ -1124,6 +1133,7 @@ export default function ResultsEntry() {
   // Hooks
   const { classes, isLoading: loadingClasses } = useSchoolClasses({ isActive: true });
   const { assignments, getSubjectsForClass, isFormTeacherForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.uid);
+  // FIX: term is now TermName — matches ExamConfigFilters.term. No more TS2322.
   const { configs: examConfigs, isLoading: loadingExamConfig } = useExamConfig({ year, term });
   const { saveResults, isSaving, checkExisting, isCheckingExisting, deleteResults, isDeleting } = useResults();
   
@@ -1378,7 +1388,7 @@ export default function ResultsEntry() {
         className: selectedClassData.name,
         subject: selectedSubject,
         examType,
-        term,
+        term,                // TermName is assignable to TermName — no cast needed
         year,
         totalMarks,
         results: students.map(s => ({ ...s })),
@@ -1636,6 +1646,7 @@ export default function ResultsEntry() {
     setSelectedClass(draft.classId);
     setSelectedSubject(draft.subject);
     setExamType(draft.examType);
+    // FIX: draft.term is now TermName — no cast needed
     setTerm(draft.term);
     setYear(draft.year);
     setStudents(draft.results);
@@ -2042,14 +2053,15 @@ export default function ResultsEntry() {
                 </label>
                 <select
                   value={term}
+                  // FIX: cast to TermName — the three <option> values are exactly the union
                   onChange={e => {
-                    setTerm(e.target.value);
+                    setTerm(e.target.value as TermName);
                   }}
                   className="w-full px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm bg-white"
                 >
-                  <option value="Term 1">Term 1</option>
-                  <option value="Term 2">Term 2</option>
-                  <option value="Term 3">Term 3</option>
+                  {TERM_OPTIONS.map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
                 </select>
               </div>
               <div className="min-w-0">

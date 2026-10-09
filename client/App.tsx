@@ -13,7 +13,7 @@ import Landing from "./pages/Landing";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
 import ForgotPassword from "./pages/ForgotPassword";
-import ParentPortal from "./pages/ParentPortal";   // ← NEW
+import ParentPortal from "./pages/ParentPortal";
 
 // Admin Pages
 import AdminDashboard from "./pages/AdminDashboard";
@@ -21,9 +21,10 @@ import AttendanceOverview from "./pages/admin/AttendanceOverview";
 import ClassManagement from "./pages/admin/ClassManagement";
 import TeacherManagement from "./pages/admin/TeacherManagement";
 import ExamManagement from "./pages/admin/ExamManagement";
+import ResultsEntryMonitor from "./pages/admin/ResultsEntryMonitor";
 import ReportCards from "./pages/admin/ReportCards";
 import AdminResultsAnalysis from "./pages/admin/AdminResultsAnalysis";
-import SbaSchoolOverview from "./pages/admin/SbaSchoolOverview";   // ← NEW
+import SbaSchoolOverview from "./pages/admin/SbaSchoolOverview";
 
 // Teacher Pages
 import TeacherDashboard from "./pages/TeacherDashboard";
@@ -31,7 +32,8 @@ import AttendanceTracking from "./pages/teacher/AttendanceTracking";
 import ResultsEntry from "./pages/teacher/ResultsEntry";
 import TeacherResultsAnalysis from "./pages/teacher/TeacherResultsAnalysis";
 import MyClass from "@/pages/teacher/MyClass";
-import SbaEntry from "./pages/teacher/SbaEntry";   // ← NEW
+import SbaEntry from "./pages/teacher/SbaEntry";
+import MyTimetable from "./pages/teacher/MyTimetable";   // ← NEW
 
 // Settings Page (works for both admin and teacher)
 import Settings from "./pages/Settings";
@@ -54,7 +56,7 @@ const App = () => (
             <Route path="/signin" element={<SignIn />} />
             <Route path="/signup" element={<SignUp />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
-            <Route path="/parent-portal" element={<ParentPortal />} />   {/* ← NEW */}
+            <Route path="/parent-portal" element={<ParentPortal />} />
 
             {/* ==================== ADMIN ROUTES ==================== */}
             <Route path="/dashboard/admin" element={
@@ -69,6 +71,10 @@ const App = () => (
               </ProtectedRoute>
             } />
 
+            {/*
+              Attendance Overview also hosts the timetable admin tabs:
+              Periods, Holidays, and Approvals. No separate route needed.
+            */}
             <Route path="/dashboard/admin/attendance-overview" element={
               <ProtectedRoute allowedRoles={['admin']}>
                 <AttendanceOverview />
@@ -84,6 +90,15 @@ const App = () => (
             <Route path="/dashboard/admin/exams" element={
               <ProtectedRoute allowedRoles={['admin']}>
                 <ExamManagement />
+              </ProtectedRoute>
+            } />
+
+            {/* Admin Results Entry Monitor — standalone feature */}
+            {/* Shows, per teacher, who has entered what and what is missing. */}
+            {/* Reads directly from class_slots + results, not from exam configs. */}
+            <Route path="/dashboard/admin/results-monitor" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <ResultsEntryMonitor />
               </ProtectedRoute>
             } />
 
@@ -124,6 +139,14 @@ const App = () => (
             <Route path="/dashboard/teacher/my-class" element={
               <ProtectedRoute allowedRoles={['teacher']}>
                 <MyClass />
+              </ProtectedRoute>
+            } />
+
+            {/* My Timetable — weekly grid, submitted for admin approval.
+                Cover teachers see the owner's periods automatically. */}
+            <Route path="/dashboard/teacher/my-timetable" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <MyTimetable />
               </ProtectedRoute>
             } />
 
