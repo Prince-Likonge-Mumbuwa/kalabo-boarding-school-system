@@ -2,7 +2,7 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Calendar,
   Plus,
@@ -10,7 +10,6 @@ import {
   X,
   Edit,
   Trash2,
-  Check,
   AlertCircle,
   Loader2,
   Copy,
@@ -18,14 +17,10 @@ import {
   BookOpen,
   Ban,
   CheckCircle,
-  XCircle,
   ChevronDown,
-  Filter,
-  Monitor,
-  ChevronUp
 } from 'lucide-react';
 import { useExamConfig } from '@/hooks/useExamConfig';
-import { AdminResultsMonitor } from '@/components/admin/AdminResultsMonitor';
+import type { ExamConfig, ExamConfigInput, TermName } from '@/types/exam';
 
 // Exam types
 const EXAM_TYPES = [
@@ -36,49 +31,43 @@ const EXAM_TYPES = [
 
 type ExamType = 'week4' | 'week8' | 'endOfTerm';
 
-interface ExamConfig {
-  id: string;
-  term: string;
-  year: number;
-  examTypes: {
-    week4: boolean;
-    week8: boolean;
-    endOfTerm: boolean;
-  };
-  week4Date?: string;
-  week8Date?: string;
-  endOfTermDate?: string;
-  week4TotalMarks?: number;
-  week8TotalMarks?: number;
-  endOfTermTotalMarks?: number;
-  isActive: boolean;
-  createdAt?: Date;
-  updatedAt?: Date;
-}
-
-interface TermConfig {
-  term: string;
+interface TermGroup {
+  term: TermName;
   year: number;
   configs: ExamConfig[];
+}
+
+interface ExamFormData {
+  term: TermName;
+  year: number;
+  week4: boolean;
+  week8: boolean;
+  endOfTerm: boolean;
+  week4Date: string;
+  week8Date: string;
+  endOfTermDate: string;
+  week4TotalMarks: number;
+  week8TotalMarks: number;
+  endOfTermTotalMarks: number;
 }
 
 export default function ExamManagement() {
   const { user } = useAuth();
   const isUserAdmin = user?.userType === 'admin';
   const isMobile = useMediaQuery('(max-width: 640px)');
-  
+
   // State
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-  const [selectedTerm, setSelectedTerm] = useState<string>('Term 1');
+  const [selectedTerm, setSelectedTerm] = useState<TermName>('Term 1');
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [editingConfig, setEditingConfig] = useState<ExamConfig | null>(null);
   const [copyFromYear, setCopyFromYear] = useState<number | ''>('');
-  const [copyFromTerm, setCopyFromTerm] = useState<string>('');
+  const [copyFromTerm, setCopyFromTerm] = useState<TermName | ''>('');
   const [showCopyModal, setShowCopyModal] = useState(false);
-  const [showMonitor, setShowMonitor] = useState(true); // State to toggle monitor visibility
-  
+  // REMOVED: showMonitor state (monitor now lives at /dashboard/admin/results-monitor)
+
   // Form state
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<ExamFormData>({
     term: 'Term 1',
     year: new Date().getFullYear(),
     week4: true,
@@ -107,21 +96,23 @@ export default function ExamManagement() {
   // Filter configs for selected term
   const currentConfig = useMemo(() => {
     if (!configs) return null;
-    return configs.find((c: ExamConfig) => c.term === selectedTerm) || null;
+    return configs.find(c => c.term === selectedTerm) || null;
   }, [configs, selectedTerm]);
 
   // Group configs by term for display
-  const groupedConfigs = useMemo(() => {
+  const groupedConfigs = useMemo<TermGroup[]>(() => {
     if (!configs) return [];
-    
-    const terms = ['Term 1', 'Term 2', 'Term 3'];
+
+    const terms: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
     return terms.map(term => {
-      const termConfigs = configs.filter((c: ExamConfig) => c.term === term);
+      const termConfigs = configs.filter(c => c.term === term);
       return {
         term,
         year: selectedYear,
-        configs: termConfigs.sort((a: ExamConfig, b: ExamConfig) => 
-          new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+        configs: termConfigs.sort(
+          (a, b) =>
+            new Date(b.createdAt ?? 0).getTime() -
+            new Date(a.createdAt ?? 0).getTime()
         )
       };
     });
@@ -134,7 +125,10 @@ export default function ExamManagement() {
   }, []);
 
   // Handle form change
-  const handleFormChange = (field: string, value: any) => {
+  const handleFormChange = <K extends keyof ExamFormData>(
+    field: K,
+    value: ExamFormData[K]
+  ) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -188,7 +182,7 @@ export default function ExamManagement() {
     }
 
     try {
-      const configData = {
+      const configData: ExamConfigInput = {
         term: formData.term,
         year: formData.year,
         examTypes: {
@@ -202,7 +196,8 @@ export default function ExamManagement() {
         week4TotalMarks: formData.week4 ? formData.week4TotalMarks : undefined,
         week8TotalMarks: formData.week8 ? formData.week8TotalMarks : undefined,
         endOfTermTotalMarks: formData.endOfTerm ? formData.endOfTermTotalMarks : undefined,
-        isActive: true
+        isActive: true,
+        createdBy: user?.uid
       };
 
       if (editingConfig) {
@@ -252,12 +247,12 @@ export default function ExamManagement() {
 
     try {
       await copyConfigs({
-        fromYear: copyFromYear as number,
+        fromYear: copyFromYear,
         fromTerm: copyFromTerm,
         toYear: selectedYear,
         toTerm: selectedTerm
       });
-      
+
       alert(`Configuration copied from ${copyFromTerm} ${copyFromYear} to ${selectedTerm} ${selectedYear} successfully!`);
       setShowCopyModal(false);
       setCopyFromYear('');
@@ -272,7 +267,7 @@ export default function ExamManagement() {
   // Get status badge
   const getStatusBadge = (config: ExamConfig) => {
     const activeCount = Object.values(config.examTypes).filter(Boolean).length;
-    
+
     if (activeCount === 0) {
       return <span className="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-medium">No Exams</span>;
     }
@@ -308,7 +303,7 @@ export default function ExamManagement() {
   return (
     <DashboardLayout activeTab="exams">
       <div className="min-h-screen bg-gray-50/80 p-3 sm:p-6 lg:p-8 transition-all duration-200">
-        
+
         {/* Header */}
         <div className="mb-6 sm:mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -320,7 +315,7 @@ export default function ExamManagement() {
                 Configure which tests are conducted each term. This controls the number of windows in Results Entry.
               </p>
             </div>
-            
+
             {/* Actions */}
             <div className="flex items-center gap-2 sm:gap-3">
               <button
@@ -337,7 +332,7 @@ export default function ExamManagement() {
                 <Copy size={isMobile ? 18 : 16} />
                 {!isMobile && 'Copy from Previous'}
               </button>
-              
+
               <button
                 onClick={() => {
                   resetForm();
@@ -359,52 +354,8 @@ export default function ExamManagement() {
           </div>
         </div>
 
-        {/* ==================== RESULTS MONITOR SECTION ==================== */}
-        <div className="mb-8">
-          {/* Monitor Toggle Header */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Monitor size={20} className="text-blue-600" />
-              <h2 className="text-lg font-semibold text-gray-900">Results Entry Monitor</h2>
-              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Live</span>
-            </div>
-            <button
-              onClick={() => setShowMonitor(!showMonitor)}
-              className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 transition-colors"
-            >
-              {showMonitor ? (
-                <>
-                  <ChevronUp size={16} />
-                  <span>Hide</span>
-                </>
-              ) : (
-                <>
-                  <ChevronDown size={16} />
-                  <span>Show</span>
-                </>
-              )}
-            </button>
-          </div>
-          
-          {/* Monitor Content */}
-          {showMonitor && (
-            <div className="animate-in slide-in-from-top-2 duration-300">
-              <AdminResultsMonitor term={selectedTerm} year={selectedYear} />
-            </div>
-          )}
-        </div>
-
-        {/* Separator Line */}
-        <div className="relative mb-8">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-200"></div>
-          </div>
-          <div className="relative flex justify-center">
-            <span className="bg-gray-50/80 px-3 py-1 text-xs text-gray-400 rounded-full">
-              Exam Configuration
-            </span>
-          </div>
-        </div>
+        {/* REMOVED: Results Monitor section — the monitor now lives at
+            /dashboard/admin/results-monitor as its own page. */}
 
         {/* Filters */}
         <div className="mb-6 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
@@ -415,7 +366,7 @@ export default function ExamManagement() {
               <select
                 value={selectedYear}
                 onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                className="w-full pl-10 pr-8 py-2.5 border border-gray-300 rounded-lg 
+                className="w-full pl-10 pr-8 py-2.5 border border-gray-300 rounded-lg
                          focus:ring-2 focus:ring-blue-500 focus:border-transparent
                          appearance-none bg-white cursor-pointer text-sm
                          hover:border-gray-400 transition-colors"
@@ -434,8 +385,8 @@ export default function ExamManagement() {
               <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
               <select
                 value={selectedTerm}
-                onChange={(e) => setSelectedTerm(e.target.value)}
-                className="w-full pl-10 pr-8 py-2.5 border border-gray-300 rounded-lg 
+                onChange={(e) => setSelectedTerm(e.target.value as TermName)}
+                className="w-full pl-10 pr-8 py-2.5 border border-gray-300 rounded-lg
                          focus:ring-2 focus:ring-blue-500 focus:border-transparent
                          appearance-none bg-white cursor-pointer text-sm
                          hover:border-gray-400 transition-colors"
@@ -490,7 +441,7 @@ export default function ExamManagement() {
                 {/* Config Cards */}
                 {configs.length > 0 ? (
                   <div className="divide-y divide-gray-200">
-                    {configs.map((config: ExamConfig, index: number) => (
+                    {configs.map((config, index) => (
                       <div key={config.id} className="p-4 sm:p-6 hover:bg-gray-50 transition-colors">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                           {/* Left side - Config info */}
@@ -500,9 +451,9 @@ export default function ExamManagement() {
                                 Version {configs.length - index}
                               </span>
                               {getStatusBadge(config)}
-                              {index === 0 && (
+                              {config.isCurrentTerm && (
                                 <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
-                                  Current
+                                  Current Term
                                 </span>
                               )}
                             </div>
@@ -513,8 +464,8 @@ export default function ExamManagement() {
                                 <div
                                   key={type.id}
                                   className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${
-                                    config.examTypes[type.id] 
-                                      ? 'bg-green-50 text-green-700' 
+                                    config.examTypes[type.id]
+                                      ? 'bg-green-50 text-green-700'
                                       : 'bg-gray-50 text-gray-400'
                                   }`}
                                 >
@@ -541,6 +492,13 @@ export default function ExamManagement() {
                                 <span>EOT: {new Date(config.endOfTermDate).toLocaleDateString()}</span>
                               )}
                             </div>
+
+                            {/* Term window from service-derived fields */}
+                            {config.termStartDate && config.termEndDate && (
+                              <div className="text-xs text-gray-500">
+                                Term window: {config.termStartDate.toLocaleDateString()} – {config.termEndDate.toLocaleDateString()}
+                              </div>
+                            )}
 
                             {/* Timestamps */}
                             <div className="text-xs text-gray-400">
@@ -598,10 +556,10 @@ export default function ExamManagement() {
             setShowConfigModal(false);
             resetForm();
           }} />
-          
+
           <div className="flex min-h-full items-center justify-center p-3 sm:p-4">
             <div className="relative bg-white rounded-2xl w-full max-w-2xl shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
-              
+
               {/* Header */}
               <div className="p-5 sm:p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
                 <div className="flex items-start justify-between gap-3">
@@ -627,7 +585,7 @@ export default function ExamManagement() {
 
               {/* Body */}
               <div className="p-5 sm:p-6 space-y-6">
-                
+
                 {/* Term & Year */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -636,7 +594,7 @@ export default function ExamManagement() {
                     </label>
                     <select
                       value={formData.term}
-                      onChange={(e) => handleFormChange('term', e.target.value)}
+                      onChange={(e) => handleFormChange('term', e.target.value as TermName)}
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                     >
                       <option value="Term 1">Term 1</option>
@@ -697,8 +655,8 @@ export default function ExamManagement() {
                               </label>
                               <input
                                 type="date"
-                                value={formData[`${type.id}Date` as keyof typeof formData] as string}
-                                onChange={(e) => handleFormChange(`${type.id}Date`, e.target.value)}
+                                value={formData[`${type.id}Date` as keyof ExamFormData] as string}
+                                onChange={(e) => handleFormChange(`${type.id}Date` as keyof ExamFormData, e.target.value as never)}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                               />
                             </div>
@@ -710,8 +668,8 @@ export default function ExamManagement() {
                               </label>
                               <input
                                 type="number"
-                                value={formData[`${type.id}TotalMarks` as keyof typeof formData] as number}
-                                onChange={(e) => handleFormChange(`${type.id}TotalMarks`, parseInt(e.target.value) || 100)}
+                                value={formData[`${type.id}TotalMarks` as keyof ExamFormData] as number}
+                                onChange={(e) => handleFormChange(`${type.id}TotalMarks` as keyof ExamFormData, (parseInt(e.target.value) || 100) as never)}
                                 min="1"
                                 max="500"
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
@@ -772,11 +730,11 @@ export default function ExamManagement() {
       {showCopyModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={() => setShowCopyModal(false)} />
-          
+
           <div className="flex min-h-full items-center justify-center p-3 sm:p-4">
             <div className="relative bg-white rounded-2xl w-full max-w-md shadow-2xl p-6">
               <h2 className="text-xl font-bold text-gray-900 mb-4">Copy Configuration</h2>
-              
+
               <div className="space-y-4">
                 <p className="text-sm text-gray-600">
                   Copy exam configuration from another term/year to {selectedTerm} {selectedYear}
@@ -806,7 +764,7 @@ export default function ExamManagement() {
                   </label>
                   <select
                     value={copyFromTerm}
-                    onChange={(e) => setCopyFromTerm(e.target.value)}
+                    onChange={(e) => setCopyFromTerm(e.target.value as TermName | '')}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                   >
                     <option value="">Select term...</option>

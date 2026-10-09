@@ -135,3 +135,55 @@ export interface ExamConfigIdentity {
   term: TermName;
   year: number;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exam activity — single source of truth
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The three exam types the app knows about. */
+export type ExamType = 'week4' | 'week8' | 'endOfTerm';
+
+/**
+ * The one and only rule for "is this exam active for this term?".
+ *
+ * An exam is active when BOTH:
+ *   1. `examTypes[examType] === true` — the admin enabled the checkbox, AND
+ *   2. `*TotalMarks > 0`               — a positive mark budget exists.
+ *
+ * The second condition exists because a config that says "week4 enabled"
+ * with `week4TotalMarks: 0` is a half-written config: no marks can be
+ * entered, so no window should appear in the teacher's results-entry page
+ * or the admin's monitor. Treating it as inactive keeps the two views in
+ * lockstep.
+ *
+ * Both the results-entry page and the results monitor MUST call this so
+ * they can never disagree about which exam windows are live.
+ */
+export function isExamActive(
+  config: ExamConfig | undefined | null,
+  examType: ExamType
+): boolean {
+  if (!config) return false;
+  if (config.isActive === false) return false;
+  if (config.examTypes?.[examType] !== true) return false;
+
+  const marks =
+    examType === 'week4'
+      ? config.week4TotalMarks
+      : examType === 'week8'
+      ? config.week8TotalMarks
+      : config.endOfTermTotalMarks;
+
+  return (marks ?? 0) > 0;
+}
+
+/**
+ * Convenience: the list of active exam types for a config, in canonical
+ * order. Returns `[]` if the config is missing or fully inactive.
+ */
+export function getActiveExamTypes(
+  config: ExamConfig | undefined | null
+): ExamType[] {
+  const all: ExamType[] = ['week4', 'week8', 'endOfTerm'];
+  return all.filter(t => isExamActive(config, t));
+}

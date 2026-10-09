@@ -17,6 +17,7 @@ import {
   Calendar,
   GraduationCap,
   ClipboardCheck,
+  Activity,
 } from 'lucide-react';
 
 // Union of all navigable tab ids — keeps activeTab type-safe across pages.
@@ -27,9 +28,11 @@ type ActiveTab =
   | 'teachers'
   | 'attendance'
   | 'exams'
+  | 'results-monitor'
   | 'results'
   | 'reports'
   | 'my-class'
+  | 'my-timetable'      // ← NEW
   | 'analysis'
   | 'sba'
   | 'sba-overview'
@@ -56,8 +59,12 @@ export function DashboardLayout({ children, activeTab = 'dashboard' }: Dashboard
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard/admin' },
     { id: 'classes', label: 'Class Management', icon: BookOpen, path: '/dashboard/admin/classes' },
     { id: 'teachers', label: 'Teachers', icon: Users, path: '/dashboard/admin/teachers' },
+    // Timetable management (Periods / Holidays / Approvals) lives inside
+    // this page as sub-tabs, so no extra admin nav item is needed here.
     { id: 'attendance', label: 'Attendance Overview', icon: CalendarCheck, path: '/dashboard/admin/attendance-overview' },
     { id: 'exams', label: 'Exam Management', icon: Calendar, path: '/dashboard/admin/exams' },
+    // NEW: standalone Results Entry Monitor — who has entered what, per term.
+    { id: 'results-monitor', label: 'Results Monitor', icon: Activity, path: '/dashboard/admin/results-monitor' },
     { id: 'results', label: 'Results Analysis', icon: BarChart3, path: '/dashboard/admin/results-analysis' },
     { id: 'reports', label: 'Report Cards', icon: FileText, path: '/dashboard/admin/report-cards' },
     { id: 'sba-overview', label: 'SBA Overview', icon: ClipboardCheck, path: '/dashboard/admin/sba-overview' },
@@ -66,6 +73,8 @@ export function DashboardLayout({ children, activeTab = 'dashboard' }: Dashboard
   const teacherMenuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard/teacher' },
     { id: 'my-class', label: 'My Class', icon: GraduationCap, path: '/dashboard/teacher/my-class' },
+    // NEW: teacher's weekly timetable (per-class grid, submit for approval)
+    { id: 'my-timetable', label: 'My Timetable', icon: Calendar, path: '/dashboard/teacher/my-timetable' },
     { id: 'attendance', label: 'Attendance Tracking', icon: Clock, path: '/dashboard/teacher/attendance' },
     { id: 'results', label: 'Results Entry', icon: PenTool, path: '/dashboard/teacher/results-entry' },
     { id: 'analysis', label: 'Results Analysis', icon: BarChart3, path: '/dashboard/teacher/results-analysis' },

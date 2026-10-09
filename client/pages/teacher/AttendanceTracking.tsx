@@ -1,4 +1,29 @@
 // @/pages/teacher/AttendanceTracking.tsx
+//
+// ============================================================================
+//  TEACHER — ATTENDANCE TRACKING
+// ============================================================================
+//
+//  CHANGES FOR THE TIMETABLE FEATURE
+//  ─────────────────────────────────
+//  The period picker is now driven by the teacher's timetable instead of a
+//  hardcoded 1..8 list:
+//
+//    • Periodic mode: periods come from `useTodayTimetable(uid)` — only the
+//      periods THIS teacher actually operates today, one row per period with
+//      its subject already attached. The subject field is read-only.
+//    • A "current period" chip pre-selects the period the teacher is in right
+//      now, so the common case is one click.
+//    • A holiday banner appears on public/school holidays and disables
+//      periodic marking.
+//    • A "no timetable yet" state explains what to do when nothing is
+//      scheduled for today.
+//
+//  Daily Roll Call is untouched except for the same holiday block.
+//  Marking, bulk actions, excuse modal, delete flow, and export are all
+//  unchanged. The service contract (markSession / deleteSession) is the same.
+// ============================================================================
+
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/DashboardLayout';
@@ -18,9 +43,19 @@ import {
   useDeleteSession,
   buildLastStatusMap,
 } from '@/hooks/useAttendanceSession';
+
+// ── Timetable integration ──────────────────────────────────────────
+import {
+  useTodayTimetable,
+  useCurrentPeriod,
+  useHolidayCovering,
+} from '@/hooks/useTimetable';
+import type { ResolvedTimetableEntry } from '@/types/timetable';
+
 import { CompactStats } from '@/components/attendance/CompactStats';
 import { PeriodicOverview } from '@/components/attendance/PeriodicOverview';
 import { RiskAnalyticsTab } from '@/components/attendance/RiskAnalyticsTab';
+import { HolidayBanner } from '@/components/timetable/TimetableShared';
 import { exportAttendanceRecords, type AttendanceExportRow } from '@/utils/exportUtils';
 import { formatLocalYMD } from '@/services/schoolService';
 import {
@@ -29,6 +64,7 @@ import {
   Search, Users, Save, Loader2,
   UserCheck, UserX, Sun, BookOpen, GraduationCap,
   Download, BarChart3, Calendar, Trash2,
+  Info,
 } from 'lucide-react';
 
 type AttendanceMode = 'daily' | 'periodic';
@@ -168,18 +204,30 @@ export default function AttendanceTracking() {
 
   const { assignments = [], isLoading: loadingAssignments } = useTeacherAssignments(user?.uid);
 
+  // ── Timetable: today's schedule + current period + holiday check ──
+  const todayTimetableQ = useTodayTimetable();
+  const currentPeriodQ = useCurrentPeriod();
+  const holidayQ = useHolidayCovering(selectedDate);
+
+  const isHoliday = !!holidayQ.data;
+
+  // Entries the teacher is scheduled to teach today — grouped by class.
+  const todayByClass = useMemo(() => {
+    const rows = todayTimetableQ.data ?? [];
+    const map = new Map<string, ResolvedTimetableEntry[]>();
+    for (const r of rows) {
+      const arr = map.get(r.entry.classId) ?? [];
+      arr.push(r);
+      map.set(r.entry.classId, arr);
+    }
+    // Sort each class's periods ascending.
+    for (const arr of map.values()) {
+      arr.sort((a, b) => a.entry.periodIndex - b.entry.periodIndex);
+    }
+    return map;
+  }, [todayTimetableQ.data]);
+
   // ── Effective Form Teacher classes (via the assignment engine) ─────
-  //
-  // `useTeacherClasses` reads `formTeacherId` from the class doc, which is
-  // the OFFICIAL form teacher — the owner of the `form-teacher` slot.
-  // When a TP or cover teacher is the live delegate on that slot, the
-  // engine's `resolveAuthority` gives them operational authority, but the
-  // class doc still points at the owner.
-  //
-  // `getOperationalViewForTeacher` returns one row per slot the teacher is
-  // attached to, with `canOperate` = "you are the effective operator right
-  // now". Filtering to form-teacher slots gives the set of classes where
-  // the current user can do the Daily Roll Call — regardless of owner/TP/cover.
   const operationalViewQuery = useQuery({
     queryKey: ['operational_view', user?.uid],
     queryFn: () => assignmentEngine.getOperationalViewForTeacher(user!.uid),
@@ -202,9 +250,6 @@ export default function AttendanceTracking() {
       teacherClasses.map(tc => ({
         id: tc.classId,
         name: tc.className,
-        // Effective form teacher for the CURRENT user, including live TP
-        // and cover delegates. Falls back to the server-provided flag if
-        // the engine hasn't loaded yet.
         isFormTeacher:
           effectiveFTClassIds.has(tc.classId) || tc.isFormTeacher === true,
         subjects: tc.subjects.map(s => s.subject),
@@ -218,20 +263,28 @@ export default function AttendanceTracking() {
   );
   const isFormTeacher = !!formTeacherClass;
 
-  // ── Available classes for the current mode ────────────────────────
+  // ── Available classes ─────────────────────────────────────────────
+  //
+  // Periodic mode now derives its class list from today's timetable —
+  // only classes where the teacher has at least one scheduled period.
+  // This keeps the UI honest: no class appears that has nothing to mark.
   const availableClasses = useMemo(() => {
-    if (mode === 'daily') return formTeacherClass ? [formTeacherClass] : [];
-    const classIds = new Set(assignments.map(a => a.classId));
+    if (mode === 'daily') {
+      return formTeacherClass ? [formTeacherClass] : [];
+    }
+    const classIds = new Set<string>();
+    for (const clsId of todayByClass.keys()) classIds.add(clsId);
     return classes.filter(cls => classIds.has(cls.id));
-  }, [mode, formTeacherClass, classes, assignments]);
+  }, [mode, formTeacherClass, classes, todayByClass]);
 
-  // ── Available subjects for the selected class in periodic mode ────
-  const availableSubjects = useMemo(() => {
-    if (mode !== 'periodic' || !selectedClass || !user?.uid) return [];
-    return assignments
-      .filter(a => a.teacherId === user.uid && a.classId === selectedClass)
-      .map(a => a.subject);
-  }, [mode, selectedClass, assignments, user?.uid]);
+  // ── Available timetable entries for the selected class in periodic mode ──
+  //
+  // A teacher should only be able to pick periods they actually operate.
+  // The list is already scoped that way by useTodayTimetable.
+  const availableEntries = useMemo(() => {
+    if (mode !== 'periodic' || !selectedClass) return [];
+    return todayByClass.get(selectedClass) ?? [];
+  }, [mode, selectedClass, todayByClass]);
 
   const { learners, isLoading: loadingLearners } = useSchoolLearners(selectedClass);
 
@@ -246,16 +299,49 @@ export default function AttendanceTracking() {
     }
   }, [availableClasses, selectedClass]);
 
+  // When the class changes (or the timetable loads), pick a default period.
+  //
+  // Priority:
+  //   1. If the teacher is currently teaching something in THIS class,
+  //      preselect that period.
+  //   2. Otherwise pick the first scheduled period for the class.
   useEffect(() => {
     if (mode !== 'periodic') return;
-    if (availableSubjects.length === 0) {
-      if (selectedSubject) setSelectedSubject('');
+    if (availableEntries.length === 0) {
+      if (selectedPeriod !== '') setSelectedPeriod('');
+      if (selectedSubject !== '') setSelectedSubject('');
       return;
     }
-    if (!availableSubjects.includes(selectedSubject)) {
-      setSelectedSubject(availableSubjects[0]);
+
+    const currentInThisClass =
+      currentPeriodQ.data &&
+      currentPeriodQ.data.entry.classId === selectedClass
+        ? currentPeriodQ.data
+        : null;
+
+    const preferred = currentInThisClass ?? availableEntries[0];
+    const periodStr = String(preferred.entry.periodIndex);
+
+    // Only overwrite if the current selection is invalid.
+    const stillValid = availableEntries.some(
+      e => String(e.entry.periodIndex) === selectedPeriod,
+    );
+    if (!stillValid || currentInThisClass) {
+      setSelectedPeriod(periodStr);
+      setSelectedSubject(preferred.entry.subject);
     }
-  }, [mode, availableSubjects, selectedSubject]);
+  }, [mode, availableEntries, selectedPeriod, selectedSubject, selectedClass, currentPeriodQ.data]);
+
+  // Sync the subject from the chosen period.
+  useEffect(() => {
+    if (mode !== 'periodic') return;
+    const chosen = availableEntries.find(
+      e => String(e.entry.periodIndex) === selectedPeriod,
+    );
+    if (chosen && chosen.entry.subject !== selectedSubject) {
+      setSelectedSubject(chosen.entry.subject);
+    }
+  }, [mode, availableEntries, selectedPeriod, selectedSubject]);
 
   // ── Session hooks ──────────────────────────────────────────────────
   const sessionPeriod = mode === 'periodic' ? parseInt(selectedPeriod) : undefined;
@@ -325,7 +411,7 @@ export default function AttendanceTracking() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [studentsWithAttendance, searchTerm, statusFilter]);
 
-  // ── Per-student dirty set (only students whose status differs from saved) ──
+  // ── Per-student dirty set ──────────────────────────────────────────
   const dirtyStudentIds = useMemo(() => {
     const saved = sessionQuery.data?.roster ?? {};
     const s = new Set<string>();
@@ -393,6 +479,7 @@ export default function AttendanceTracking() {
   // ── Handler: save ──────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     if (!selectedClass || !user?.uid) return;
+    if (mode === 'periodic' && (!selectedPeriod || !selectedSubject)) return;
 
     setIsSubmitting(true);
     try {
@@ -412,7 +499,6 @@ export default function AttendanceTracking() {
         markedByName: user.fullName || 'Teacher',
       });
 
-      // Await the refetch so markClean() reflects the fresh data.
       await invalidateSessionCaches({
         classId: selectedClass,
         date: selectedDate,
@@ -473,7 +559,9 @@ export default function AttendanceTracking() {
   const handleRefresh = useCallback(() => {
     sessionQuery.refetch();
     recentQuery.refetch();
-  }, [sessionQuery, recentQuery]);
+    todayTimetableQ.refetch();
+    currentPeriodQ.refetch();
+  }, [sessionQuery, recentQuery, todayTimetableQ, currentPeriodQ]);
 
   // ── Handler: export ────────────────────────────────────────────────
   const handleExport = useCallback(() => {
@@ -508,6 +596,22 @@ export default function AttendanceTracking() {
   const isLoading =
     loadingClasses || loadingLearners || loadingAssignments || sessionQuery.isLoading;
 
+  // ── Chosen timetable entry (for the "current period" chip + subject) ──
+  const chosenEntry = useMemo(() => {
+    if (mode !== 'periodic') return null;
+    return (
+      availableEntries.find(
+        e => String(e.entry.periodIndex) === selectedPeriod,
+      ) ?? null
+    );
+  }, [mode, availableEntries, selectedPeriod]);
+
+  const currentPeriodEntry =
+    currentPeriodQ.data &&
+    currentPeriodQ.data.entry.classId === selectedClass
+      ? currentPeriodQ.data
+      : null;
+
   // ── Error state ────────────────────────────────────────────────────
   if (classesError) {
     return (
@@ -528,7 +632,7 @@ export default function AttendanceTracking() {
     );
   }
 
-  // ── Empty state ────────────────────────────────────────────────────
+  // ── Empty state: no classes at all ────────────────────────────────
   if (!loadingClasses && classes.length === 0) {
     return (
       <DashboardLayout activeTab="attendance">
@@ -589,8 +693,13 @@ export default function AttendanceTracking() {
             isFormTeacher={isFormTeacher}
           />
 
+          {/* Holiday banner — blocks marking for the whole page */}
+          {isHoliday && holidayQ.data && (
+            <HolidayBanner holiday={holidayQ.data} />
+          )}
+
           {/* Filters */}
-          {activeTab === 'mark' && (
+          {activeTab === 'mark' && !isHoliday && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <button
                 onClick={() => setShowMobileFilters(!showMobileFilters)}
@@ -633,30 +742,44 @@ export default function AttendanceTracking() {
                   {mode === 'periodic' ? (
                     <>
                       <select
-                        value={selectedSubject}
-                        onChange={e => setSelectedSubject(e.target.value)}
+                        value={selectedPeriod}
+                        onChange={e => {
+                          const p = e.target.value;
+                          setSelectedPeriod(p);
+                          const entry = availableEntries.find(
+                            x => String(x.entry.periodIndex) === p,
+                          );
+                          if (entry) setSelectedSubject(entry.entry.subject);
+                        }}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
-                        disabled={availableSubjects.length === 0}
+                        disabled={availableEntries.length === 0}
                       >
-                        <option value="">Select Subject</option>
-                        {availableSubjects.map(subject => (
-                          <option key={subject} value={subject}>
-                            {subject}
-                          </option>
-                        ))}
+                        {availableEntries.length === 0 ? (
+                          <option value="">No periods scheduled today</option>
+                        ) : (
+                          availableEntries.map(entry => (
+                            <option
+                              key={`${entry.entry.dayOfWeek}-${entry.entry.periodIndex}`}
+                              value={String(entry.entry.periodIndex)}
+                            >
+                              {entry.period?.name ?? `P${entry.entry.periodIndex}`}
+                              {' · '}
+                              {entry.entry.subject}
+                              {entry.period ? ` (${entry.period.startTime}–${entry.period.endTime})` : ''}
+                              {entry.isCoveredNow ? ' [cover]' : ''}
+                            </option>
+                          ))
+                        )}
                       </select>
 
-                      <select
-                        value={selectedPeriod}
-                        onChange={e => setSelectedPeriod(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
-                      >
-                        {[1, 2, 3, 4, 5, 6, 7, 8].map(p => (
-                          <option key={p} value={p}>
-                            Period {p}
-                          </option>
-                        ))}
-                      </select>
+                      <input
+                        type="text"
+                        value={selectedSubject || ''}
+                        placeholder="Subject (from timetable)"
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-lg text-xs sm:text-sm text-gray-700"
+                        title="Determined by the timetable"
+                      />
                     </>
                   ) : (
                     <>
@@ -694,12 +817,53 @@ export default function AttendanceTracking() {
                   <p className="text-[10px] sm:text-xs text-gray-500">
                     {mode === 'daily'
                       ? 'Daily roll call — mark each student present/absent/late for the day'
-                      : `Periodic attendance — marking ${selectedSubject || 'subject'} during period ${selectedPeriod}`}
+                      : chosenEntry
+                      ? `Periodic attendance — ${chosenEntry.entry.subject} · ${chosenEntry.entry.className} · period ${chosenEntry.entry.periodIndex}`
+                      : 'Select a period to mark'}
                   </p>
                 </div>
               </div>
             </div>
           )}
+
+          {/* Current period chip in periodic mode */}
+          {activeTab === 'mark' &&
+            !isHoliday &&
+            mode === 'periodic' &&
+            currentPeriodEntry && (
+              <div className="flex items-center gap-2 text-xs sm:text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                <Clock size={14} />
+                <span>
+                  You are scheduled to teach{' '}
+                  <span className="font-semibold">
+                    {currentPeriodEntry.entry.subject}
+                  </span>{' '}
+                  in {currentPeriodEntry.entry.className} right now (
+                  {currentPeriodEntry.period?.name ?? `P${currentPeriodEntry.entry.periodIndex}`}).
+                </span>
+              </div>
+            )}
+
+          {/* No timetable for this class today — periodic mode */}
+          {activeTab === 'mark' &&
+            !isHoliday &&
+            mode === 'periodic' &&
+            selectedClass &&
+            availableEntries.length === 0 &&
+            todayTimetableQ.isSuccess && (
+              <div className="flex items-start gap-3 text-xs sm:text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-3 py-3">
+                <Info size={16} className="text-gray-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium text-gray-900">
+                    No scheduled periods for you in this class today.
+                  </p>
+                  <p className="text-gray-600 mt-0.5">
+                    Submit your timetable from <span className="font-medium">My Timetable</span>{' '}
+                    if this looks wrong. Marking is disabled for this class.
+                  </p>
+                </div>
+              </div>
+            )}
 
           <CompactStats
             present={stats.present}
@@ -717,7 +881,7 @@ export default function AttendanceTracking() {
             <span className="text-base font-bold text-blue-800">{stats.total}</span>
           </div>
 
-          {activeTab === 'mark' && (
+          {activeTab === 'mark' && !isHoliday && (
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 {draft.dirty && (
@@ -783,7 +947,7 @@ export default function AttendanceTracking() {
             </div>
           )}
 
-          {activeTab === 'mark' && (
+          {activeTab === 'mark' && !isHoliday && (
             isLoading ? (
               <div className="flex items-center justify-center py-12 bg-white rounded-xl border border-gray-200">
                 <Loader2 size={24} className="animate-spin text-blue-600" />
@@ -991,7 +1155,7 @@ export default function AttendanceTracking() {
           )}
         </div>
 
-        {selectedStudents.size > 0 && activeTab === 'mark' && (
+        {selectedStudents.size > 0 && activeTab === 'mark' && !isHoliday && (
           <div className="fixed bottom-3 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-2xl border border-gray-200 p-2 w-[calc(100%-24px)] sm:w-auto z-50">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs sm:text-sm font-medium text-gray-700 px-2">
