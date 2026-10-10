@@ -883,7 +883,7 @@ function drawFooter(
 
   // Legend
   currentY -= 15;
-  const legend1 = 'ABS = Absent | NC = Not Conducted | — = No Data | Grd = Grade | Avg = Average %';
+  const legend1 = 'ABS = Absent | NC = Not Conducted | — = Pending | Grd = Grade | Avg = Average %';
   const legend1Width = font.widthOfTextAtSize(legend1, 7);
   page.drawText(legend1, {
     x: (width - legend1Width) / 2,

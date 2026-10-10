@@ -49,6 +49,9 @@ import {
   approveSubmission,
   rejectSubmission,
   getPendingSubmissions,
+  getMySubmissions,
+  getSchoolDayBoard,
+  getClashContext,
   getCoverageForDate,
   getCoverageForTeachers,
   formatLocalYMD,
@@ -100,6 +103,9 @@ export const timetableKeys = {
     ['timetable', 'slot', slotId, term, year] as const,
 
   pendingSubmissions: () => ['timetable', 'pending'] as const,
+  mySubmissions: (teacherId: string, term: TermName, year: number) =>
+    ['timetable', 'my-submissions', teacherId, term, year] as const,
+  dayBoard: (dateYMD: string) => ['timetable', 'day-board', dateYMD] as const,
   coverage: (dateYMD: string) => ['timetable', 'coverage', dateYMD] as const,
   teacherCoverage: (dateYMD: string) =>
     ['timetable', 'coverage-teachers', dateYMD] as const,
@@ -161,6 +167,21 @@ export function useDeletePeriod() {
   return useMutation({
     mutationFn: (periodId: string) => deletePeriod(periodId),
     onSuccess: () => invalidateTimetableCaches(qc),
+  });
+}
+
+/** Make the year's schedule exactly the school's bell (moves rows/registers). */
+export function useResetToSchoolBell() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (academicYear: number) => {
+      const { resetToSchoolBell } = await import('@/services/timetableDataCheck');
+      return resetToSchoolBell(academicYear);
+    },
+    onSuccess: () => {
+      invalidateTimetableCaches(qc);
+      qc.invalidateQueries({ queryKey: ['attendance_sessions'] });
+    },
   });
 }
 
@@ -302,34 +323,64 @@ export function useClassTimetable(
  * holidays. Re-fetches at midnight so a teacher who leaves the tab open
  * overnight sees fresh data.
  */
-export function useTodayTimetable(at?: Date) {
+export function useTodayTimetable(dateYMD?: string) {
   const { user } = useAuth();
-  const dateYMD = formatLocalYMD(at ?? new Date());
+  const date = dateYMD ?? formatLocalYMD(new Date());
 
   return useQuery<ResolvedTimetableEntry[]>({
-    queryKey: timetableKeys.todayTimetable(user?.uid ?? '', dateYMD),
-    queryFn: () => getTodayTimetableForTeacher(user!.uid, at ?? new Date()),
+    queryKey: timetableKeys.todayTimetable(user?.uid ?? '', date),
+    // Cover is worked out at each period's start on that date.
+    queryFn: () => getTodayTimetableForTeacher(user!.uid, new Date(`${date}T12:00:00`)),
     enabled: !!user?.uid,
     staleTime: 60_000,
-    refetchInterval: 60_000,
+    refetchInterval: 5 * 60_000,
   });
 }
 
 /**
  * The period the teacher is *in* right now. Recomputes each minute.
- * Null between periods, on breaks, on holidays, on weekends.
  */
-export function useCurrentPeriod(at?: Date) {
+export function useCurrentPeriod() {
   const { user } = useAuth();
-  const now = at ?? new Date();
-  // Bucket by minute so the query key changes each minute and the cache
-  // refetches at the right cadence without a setInterval.
+  const now = new Date();
   const minuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
 
   return useQuery<ResolvedTimetableEntry | null>({
     queryKey: timetableKeys.currentPeriod(user?.uid ?? '', minuteKey),
-    queryFn: () => getCurrentPeriod(user!.uid, now),
+    queryFn: () => getCurrentPeriod(user!.uid, new Date()),
     enabled: !!user?.uid,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+
+/** The teacher's own pending / rejected submissions this term. */
+export function useMySubmissions(term: TermName, year: number) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: timetableKeys.mySubmissions(user?.uid ?? '', term, year),
+    queryFn: () => getMySubmissions(user!.uid, term, year),
+    enabled: !!user?.uid,
+    staleTime: 30_000,
+  });
+}
+
+/** Live rows of my classes and of everyone teaching my subjects (for clash locks). */
+export function useClashContext(slotIds: string[], term: TermName, year: number) {
+  const key = [...slotIds].sort().join(',');
+  return useQuery({
+    queryKey: ['timetable', 'clash-context', key, term, year],
+    queryFn: () => getClashContext(slotIds, term, year),
+    enabled: slotIds.length > 0,
+    staleTime: 60_000,
+  });
+}
+
+/** Admin: every class's lessons for a date with who teaches and register status. */
+export function useSchoolDayBoard(dateYMD: string) {
+  return useQuery({
+    queryKey: timetableKeys.dayBoard(dateYMD),
+    queryFn: () => getSchoolDayBoard(dateYMD, new Date()),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
@@ -401,13 +452,14 @@ export function useApproveSubmission() {
 
 export function useRejectSubmission() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   return useMutation<
     RejectTimetableResult,
     Error,
     { submissionId: string; reason: string }
   >({
     mutationFn: ({ submissionId, reason }) =>
-      rejectSubmission(submissionId, reason),
+      rejectSubmission(submissionId, reason, user?.uid ?? null),
     onSuccess: () => invalidateTimetableCaches(qc),
   });
 }

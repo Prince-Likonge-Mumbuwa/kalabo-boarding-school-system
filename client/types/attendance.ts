@@ -12,6 +12,10 @@ export interface AttendanceSession {
   kind: SessionKind;
   subject?: string;
   period?: number;
+  /** Subject key of the class slot, e.g. 'MATH' (newer registers). */
+  normalizedSubject?: string;
+  /** class_slots id — the subject (periodic) or form class (daily). */
+  slotId?: string;
   markedBy: string;
   markedByName: string;
   markedAt: Timestamp | Date;

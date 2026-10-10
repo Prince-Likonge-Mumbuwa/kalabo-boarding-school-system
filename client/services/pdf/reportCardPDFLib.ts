@@ -82,6 +82,7 @@ export async function generateReportCardPDF(
 
   const textDark = rgb(0.08, 0.16, 0.28);
   const textMuted = rgb(0.34, 0.41, 0.53);
+  const provisionalAmber = rgb(0.75, 0.42, 0.0);
 
   const border = rgb(0.78, 0.86, 0.94);
 
@@ -443,7 +444,23 @@ export async function generateReportCardPDF(
         primaryBlue
       );
 
-      y -= 18;
+      y -= report.isProvisional ? 12 : 18;
+    }
+
+    /* Provisional: some subjects still have marks pending */
+
+    if (report.isProvisional) {
+      const pending = (report.totalSubjects ?? 0) - (report.completedSubjects ?? 0);
+      drawCenteredText(
+        page,
+        `PROVISIONAL — ${pending} subject${pending === 1 ? '' : 's'} still awaiting marks`,
+        y,
+        boldFont,
+        8.5,
+        provisionalAmber
+      );
+
+      y -= 14;
     }
 
     /* ========================================================
@@ -952,7 +969,7 @@ export async function generateReportCardPDF(
     });
 
     page.drawText(
-      'ABS = Absent     |     NC = Not Conducted     |     X = Incomplete',
+      'ABS = Absent   |   NC = Not Conducted   |   - = Pending (not yet entered)   |   X = Incomplete',
       {
         x: margin + 42,
         y,

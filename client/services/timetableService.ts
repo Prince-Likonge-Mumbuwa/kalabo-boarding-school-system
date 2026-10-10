@@ -14,11 +14,16 @@
 //  timetable_entries when a cover, TP, or new owner is assigned — the
 //  delegate/owner simply inherits the slot's periods automatically.
 //
-//  Approval workflow:
-//    submitTimetable()   → writes rows with status 'pending'
-//    approveSubmission() → transactionally promotes to 'active',
-//                          archives the previous 'active' rows
-//    rejectSubmission()  → marks pending rows 'rejected' with a reason
+//  One row = one subject in one period on one day. Doubles and triples
+//  are worked out at read time (timetableModel.groupIntoBlocks).
+//
+//  Approval workflow (timetable_submissions/{id}):
+//    submitTimetable()   → a submission doc + 'pending' rows. It covers a
+//                          set of subjects (scopeSlotIds). Blocked on clashes.
+//    approveSubmission() → re-checks clashes, then in one transaction
+//                          archives EVERY live row of those subjects and
+//                          makes the new rows live (moves/removals work).
+//    rejectSubmission()  → rows + doc 'rejected' with a reason
 //
 //  Only 'active' rows drive MyTimetable, the attendance picker, and
 //  coverage reporting.
@@ -40,9 +45,24 @@ import {
   DocumentData,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { normalizeSubjectName } from '@/services/resultsService';
 import type { TermName } from '@/utils/academicTerm';
 import { getCurrentAcademicTerm } from '@/utils/academicTerm';
 import * as engine from '@/services/assignmentEngine';
+import {
+  bellOrder,
+  blockingConflicts,
+  checkClashes,
+  dayName,
+  legacyDoubleOrders,
+  lessonPeriods,
+  MAX_LESSON_PERIODS,
+  SCHOOL_BELL,
+  SCHOOL_DAY_START,
+  SCHOOL_DAY_END,
+  type ClashContext,
+  type RowLike,
+} from '@/services/timetableModel';
 
 import type {
   Period,
@@ -53,6 +73,7 @@ import type {
   TimetableEntryStatus,
   ResolvedTimetableEntry,
   TimetableConflict,
+  TimetableSubmission,
   CoverageRow,
   TeacherCoverageRow,
   PendingSubmission,
@@ -67,6 +88,7 @@ import type {
 const PERIODS = 'periods';
 const HOLIDAYS = 'school_holidays';
 const ENTRIES = 'timetable_entries';
+const SUBMISSIONS = 'timetable_submissions';
 const USERS = 'users';
 
 // ==================== DATE / TIME HELPERS ====================
@@ -83,6 +105,11 @@ function toWeekday1to5(d: Date): 1 | 2 | 3 | 4 | 5 | null {
   const dow = d.getDay(); // 0=Sun..6=Sat
   if (dow === 0 || dow === 6) return null;
   return dow as 1 | 2 | 3 | 4 | 5;
+}
+
+/** The moment a period starts on a given local date. */
+function periodStartOn(dateYMD: string, period: Period | null | undefined): Date {
+  return new Date(`${dateYMD}T${period?.startTime ?? '12:00'}:00`);
 }
 
 /** 'HH:mm' → minutes since midnight. */
@@ -161,6 +188,7 @@ function mapEntry(id: string, d: DocumentData): TimetableEntry {
     dayOfWeek: d.dayOfWeek ?? 1,
     periodIndex: d.periodIndex ?? 1,
     isDouble: d.isDouble === true,
+    venue: d.venue ?? null,
     status: (d.status as TimetableEntryStatus) ?? 'active',
 
     // Batch id is denormalized onto the entry by submitTimetable() so
@@ -193,7 +221,10 @@ export async function listPeriods(
   );
   const rows = snap.docs.map(d => mapPeriod(d.id, d.data()));
   const filtered = opts.includeInactive ? rows : rows.filter(p => p.isActive);
-  return filtered.sort((a, b) => a.order - b.order);
+  // Time order: breaks (order 0) sit between the lessons they separate.
+  return filtered.sort(
+    (a, b) => hhmmToMinutes(a.startTime) - hhmmToMinutes(b.startTime) || a.order - b.order,
+  );
 }
 
 export async function getPeriodById(periodId: string): Promise<Period | null> {
@@ -207,13 +238,23 @@ export async function getPeriodById(periodId: string): Promise<Period | null> {
  */
 export async function upsertPeriod(draft: PeriodDraft): Promise<string> {
   if (!draft.name.trim()) throw new Error('Period name is required.');
-  if (draft.order < 1) throw new Error('Period order must be ≥ 1.');
   if (hhmmToMinutes(draft.endTime) <= hhmmToMinutes(draft.startTime)) {
     throw new Error('End time must be after start time.');
   }
+  if (
+    hhmmToMinutes(draft.startTime) < hhmmToMinutes(SCHOOL_DAY_START) ||
+    hhmmToMinutes(draft.endTime) > hhmmToMinutes(SCHOOL_DAY_END)
+  ) {
+    throw new Error(`The school day runs ${SCHOOL_DAY_START}–${SCHOOL_DAY_END}. Nothing can be scheduled outside it.`);
+  }
+  // Lessons are numbered 1..8; breaks, lunch and assembly are not periods.
+  const order = draft.kind === 'lesson' ? draft.order : 0;
+  if (draft.kind === 'lesson' && !(Number.isInteger(order) && order >= 1 && order <= MAX_LESSON_PERIODS)) {
+    throw new Error(`A lesson's period number must be 1 to ${MAX_LESSON_PERIODS}.`);
+  }
 
   const payload = {
-    order: draft.order,
+    order,
     name: draft.name.trim(),
     startTime: draft.startTime,
     endTime: draft.endTime,
@@ -224,14 +265,30 @@ export async function upsertPeriod(draft: PeriodDraft): Promise<string> {
   };
 
   if (draft.id) {
+    // Timetable rows and registers point at a period by its `order`.
+    // Renumbering it, or turning a lesson into a break, would silently move
+    // or hide every lesson in that period.
+    const before = await getPeriodById(draft.id);
+    if (before && before.kind === 'lesson' && (before.order !== order || draft.kind !== 'lesson')) {
+      const used = await getDocs(
+        query(collection(db, ENTRIES), where('periodIndex', '==', before.order), where('status', 'in', ['active', 'pending'])),
+      );
+      const inYear = used.docs.filter(d => d.data().year === draft.academicYear);
+      if (inYear.length > 0) {
+        throw new Error(
+          `${inYear.length} lesson(s) are timetabled in ${before.name}. Change its times or name instead, ` +
+            `or have teachers move those lessons first.`,
+        );
+      }
+    }
     await updateDoc(doc(db, PERIODS, draft.id), payload);
     return draft.id;
   }
 
-  // Reject duplicate `order` within the same academic year.
+  // Each lesson number once per academic year.
   const existing = await listPeriods(draft.academicYear, { includeInactive: true });
-  if (existing.some(p => p.order === draft.order)) {
-    throw new Error(`Period #${draft.order} already exists for ${draft.academicYear}.`);
+  if (draft.kind === 'lesson' && existing.some(p => p.kind === 'lesson' && p.order === order)) {
+    throw new Error(`Period ${order} already exists for ${draft.academicYear}.`);
   }
 
   const ref = doc(collection(db, PERIODS));
@@ -248,9 +305,10 @@ export async function deletePeriod(periodId: string): Promise<void> {
   const period = await getPeriodById(periodId);
   if (!period) return;
 
-  const refs = await getDocs(
-    query(collection(db, ENTRIES), where('periodIndex', '==', period.order)),
-  );
+  // Breaks are not periods: nothing refers to them.
+  const refs = period.kind === 'lesson'
+    ? await getDocs(query(collection(db, ENTRIES), where('periodIndex', '==', period.order)))
+    : { empty: true, size: 0 };
   if (!refs.empty) {
     throw new Error(
       `Cannot delete: ${refs.size} timetable entr${refs.size === 1 ? 'y' : 'ies'} ` +
@@ -262,35 +320,25 @@ export async function deletePeriod(periodId: string): Promise<void> {
 }
 
 /**
- * Seed a sensible default bell schedule for a year. Idempotent: skips
- * periods whose `order` already exists for that year.
- *
- * Eight-lesson day with two breaks and a lunch:
- *   P1..P2 | Break | P3..P4 | Lunch | P5..P8
+ * Seed the school bell schedule for an empty year: P1–P4 07:20–10:00,
+ * Break 10:00–10:20, P5–P8 10:20–13:00. Idempotent: skips lessons whose
+ * number exists and breaks whose name exists. To correct an existing
+ * schedule use applySchoolBell (Timetable data check / Periods tab).
  */
 export async function seedDefaultPeriods(academicYear: number): Promise<number> {
-  const defaults: Omit<PeriodDraft, 'academicYear'>[] = [
-    { order: 1, name: 'P1',    startTime: '07:30', endTime: '08:20', kind: 'lesson', isActive: true },
-    { order: 2, name: 'P2',    startTime: '08:20', endTime: '09:10', kind: 'lesson', isActive: true },
-    { order: 3, name: 'Break', startTime: '09:10', endTime: '09:30', kind: 'break',  isActive: true },
-    { order: 4, name: 'P3',    startTime: '09:30', endTime: '10:20', kind: 'lesson', isActive: true },
-    { order: 5, name: 'P4',    startTime: '10:20', endTime: '11:10', kind: 'lesson', isActive: true },
-    { order: 6, name: 'Lunch', startTime: '11:10', endTime: '12:00', kind: 'lunch',  isActive: true },
-    { order: 7, name: 'P5',    startTime: '12:00', endTime: '12:50', kind: 'lesson', isActive: true },
-    { order: 8, name: 'P6',    startTime: '12:50', endTime: '13:40', kind: 'lesson', isActive: true },
-    { order: 9, name: 'P7',    startTime: '13:40', endTime: '14:30', kind: 'lesson', isActive: true },
-    { order: 10, name: 'P8',   startTime: '14:30', endTime: '15:20', kind: 'lesson', isActive: true },
-  ];
+  const defaults: Omit<PeriodDraft, 'academicYear'>[] = SCHOOL_BELL.map(r => ({ ...r, isActive: true }));
 
   const existing = await listPeriods(academicYear, { includeInactive: true });
-  const takenOrders = new Set(existing.map(p => p.order));
-  const toWrite = defaults.filter(d => !takenOrders.has(d.order));
+  const toWrite = defaults.filter(d =>
+    d.kind === 'lesson'
+      ? !existing.some(p => p.kind === 'lesson' && p.order === d.order)
+      : !existing.some(p => p.kind !== 'lesson' && p.name.toLowerCase() === d.name.toLowerCase()),
+  );
   if (toWrite.length === 0) return 0;
 
   const batch = writeBatch(db);
   for (const d of toWrite) {
-    const ref = doc(collection(db, PERIODS));
-    batch.set(ref, {
+    batch.set(doc(collection(db, PERIODS)), {
       ...d,
       academicYear,
       createdAt: serverTimestamp(),
@@ -387,10 +435,28 @@ export async function getHolidayCovering(
 async function getEntriesByFilter(
   filters: Array<{ field: string; value: unknown }>,
 ): Promise<TimetableEntry[]> {
-  // Build the query dynamically. All call sites pass ≤ 3 equality filters.
   const constraints = filters.map(f => where(f.field, '==', f.value));
   const snap = await getDocs(query(collection(db, ENTRIES), ...constraints));
   return snap.docs.map(d => mapEntry(d.id, d.data()));
+}
+
+/**
+ * Old rows may say `isDouble: true` (one row = two periods). Expand them
+ * into one row per period so every reader sees the same shape. The added
+ * row's id is `<id>#2`; the data check makes this permanent.
+ */
+export function expandLegacyDoubles(entries: TimetableEntry[], periods: Period[]): TimetableEntry[] {
+  const out: TimetableEntry[] = [];
+  for (const e of entries) {
+    if (!e.isDouble) {
+      out.push(e);
+      continue;
+    }
+    const orders = legacyDoubleOrders(e.periodIndex, periods);
+    out.push({ ...e, isDouble: false });
+    if (orders[1] !== undefined) out.push({ ...e, id: `${e.id}#2`, periodIndex: orders[1], isDouble: false });
+  }
+  return out;
 }
 
 /** All entries (any status) for a slot in a term. */
@@ -404,30 +470,23 @@ export async function getEntriesForSlot(
     { field: 'term', value: term },
     { field: 'year', value: year },
   ]);
-  return rows.sort(
-    (a, b) => a.dayOfWeek - b.dayOfWeek || a.periodIndex - b.periodIndex,
-  );
+  return rows.sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.periodIndex - b.periodIndex);
 }
 
-/** Entries for one teacher (owner OR delegate), status-filterable. */
-async function getEntriesForTeacherSlots(
-  teacherId: string,
+/** Entries of these slots in a term with the given status (raw, not expanded). */
+async function entriesForSlots(
+  slotIds: string[],
   term: TermName,
   year: number,
   status: TimetableEntryStatus,
 ): Promise<TimetableEntry[]> {
-  const slotsView = await engine.getSlotsForTeacher(teacherId);
-  const slotIds = Array.from(new Set(slotsView.map(s => s.slot.id)));
-  if (slotIds.length === 0) return [];
-
-  // Firestore 'in' is capped at 30 — chunk.
+  const ids = Array.from(new Set(slotIds));
   const results: TimetableEntry[] = [];
-  for (let i = 0; i < slotIds.length; i += 30) {
-    const chunk = slotIds.slice(i, i + 30);
+  for (let i = 0; i < ids.length; i += 30) {
     const snap = await getDocs(
       query(
         collection(db, ENTRIES),
-        where('slotId', 'in', chunk),
+        where('slotId', 'in', ids.slice(i, i + 30)),
         where('term', '==', term),
         where('year', '==', year),
         where('status', '==', status),
@@ -438,25 +497,35 @@ async function getEntriesForTeacherSlots(
   return results;
 }
 
+/** Bulk-fetch slot docs by id. Uses `in` chunks of 30. */
+async function getSlotsByIds(ids: string[]): Promise<Map<string, engine.ClassSlot>> {
+  const out = new Map<string, engine.ClassSlot>();
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  for (let i = 0; i < unique.length; i += 30) {
+    const snap = await getDocs(
+      query(collection(db, 'class_slots'), where('__name__', 'in', unique.slice(i, i + 30))),
+    );
+    for (const d of snap.docs) out.set(d.id, engine.mapSlot(d.id, d.data()));
+  }
+  return out;
+}
+
+async function getPeriodMap(academicYear: number): Promise<{ periods: Period[]; map: Map<number, Period> }> {
+  const periods = await listPeriods(academicYear);
+  // Only lessons carry a period number (breaks are order 0).
+  return { periods, map: new Map(lessonPeriods(periods).map(p => [p.order, p])) };
+}
+
 // ==================== READ-TIME RESOLUTION ====================
 
-/**
- * Resolve authority for a single entry. Uses the entry's slot to decide
- * who teaches right now (owner, live cover, or live TP). This is the glue
- * that makes covers auto-adjust with zero timetable writes.
- */
-async function resolveEntry(
+/** Resolve who teaches this row at `at` (owner, live cover or live TP). */
+export function resolveRow(
   entry: TimetableEntry,
   slot: engine.ClassSlot | null,
   periodMap: Map<number, Period>,
-  now: Date,
-): Promise<ResolvedTimetableEntry> {
-  const authority = engine.resolveAuthority(slot, now);
-  const isCoveredNow =
-    authority.delegationState === 'live' &&
-    authority.operatorRole !== 'owner' &&
-    authority.operatorRole != null;
-
+  at: Date,
+): ResolvedTimetableEntry {
+  const authority = engine.resolveAuthority(slot, at);
   return {
     entry,
     ownerTeacherId: slot?.ownerTeacherId ?? null,
@@ -466,121 +535,80 @@ async function resolveEntry(
     operatorRole: authority.operatorRole,
     delegationState: authority.delegationState,
     delegateUntil: authority.delegateUntil,
-    isCoveredNow,
+    isCoveredNow:
+      authority.delegationState === 'live' &&
+      authority.operatorRole != null &&
+      authority.operatorRole !== 'owner',
     period: periodMap.get(entry.periodIndex) ?? null,
   };
 }
 
-/** Bulk-fetch slot docs by id. Uses `in` chunks of 30. */
-async function getSlotsByIds(ids: string[]): Promise<Map<string, engine.ClassSlot>> {
-  const out = new Map<string, engine.ClassSlot>();
-  if (ids.length === 0) return out;
-  for (let i = 0; i < ids.length; i += 30) {
-    const chunk = ids.slice(i, i + 30);
-    const snap = await getDocs(
-      query(collection(db, 'class_slots'), where('__name__', 'in', chunk)),
-    );
-    for (const d of snap.docs) {
-      out.set(d.id, engine.mapSlot(d.id, d.data()));
-    }
-  }
-  return out;
-}
-
-/** Bulk-fetch periods for a year, indexed by order. */
-async function getPeriodMap(academicYear: number): Promise<Map<number, Period>> {
-  const periods = await listPeriods(academicYear);
-  const map = new Map<number, Period>();
-  for (const p of periods) map.set(p.order, p);
-  return map;
-}
+const sortRows = (rows: ResolvedTimetableEntry[]) =>
+  rows.sort(
+    (a, b) =>
+      a.entry.dayOfWeek - b.entry.dayOfWeek ||
+      a.entry.periodIndex - b.entry.periodIndex ||
+      a.entry.className.localeCompare(b.entry.className),
+  );
 
 // ==================== PUBLIC READS ====================
 
 /**
- * MyTimetable: every ACTIVE entry the teacher is attached to via a slot
- * (owner OR delegate), resolved with live authority.
- *
- * A cover teacher gets the same rows as the owner, automatically.
+ * Every live row the teacher is attached to (owner, or cover/TP live at
+ * `at`). An owner keeps sight of their rows while covered.
  */
 export async function getTimetableForTeacher(
   teacherId: string,
   term: TermName,
   year: number,
-  now: Date = new Date(),
+  at: Date = new Date(),
 ): Promise<ResolvedTimetableEntry[]> {
-  const entries = await getEntriesForTeacherSlots(teacherId, term, year, 'active');
-  if (entries.length === 0) return [];
-
-  const slotIds = Array.from(new Set(entries.map(e => e.slotId)));
-  const [slotMap, periodMap] = await Promise.all([
-    getSlotsByIds(slotIds),
+  const attached = await engine.getSlotsForTeacher(teacherId);
+  const slotIds = attached.map(s => s.slot.id);
+  if (slotIds.length === 0) return [];
+  const [raw, { periods, map }] = await Promise.all([
+    entriesForSlots(slotIds, term, year, 'active'),
     getPeriodMap(year),
   ]);
-
+  const slotMap = new Map(attached.map(s => [s.slot.id, s.slot]));
   const rows: ResolvedTimetableEntry[] = [];
-  for (const e of entries) {
+  for (const e of expandLegacyDoubles(raw, periods)) {
     const slot = slotMap.get(e.slotId) ?? null;
-    // Only include entries the teacher is *currently* authorised on OR
-    // still owns (owner keeps sight of their periods even while covered).
     const isOwner = slot?.ownerTeacherId === teacherId;
-    const isOperator = engine.resolveAuthority(slot, now).operatorTeacherId === teacherId;
-    if (!isOwner && !isOperator) continue;
-    rows.push(await resolveEntry(e, slot, periodMap, now));
+    const isOperator = engine.resolveAuthority(slot, at).operatorTeacherId === teacherId;
+    if (isOwner || isOperator) rows.push(resolveRow(e, slot, map, at));
   }
-
-  return rows.sort(
-    (a, b) =>
-      a.entry.className.localeCompare(b.entry.className) ||
-      a.entry.dayOfWeek - b.entry.dayOfWeek ||
-      a.entry.periodIndex - b.entry.periodIndex,
-  );
+  return sortRows(rows);
 }
 
-/**
- * All ACTIVE entries for a class in a term, resolved with live authority.
- * Owner + delegates all visible. Used by the class-grid admin view.
- */
+/** All live rows of a class in a term. */
 export async function getTimetableForClass(
   classId: string,
   term: TermName,
   year: number,
-  now: Date = new Date(),
+  at: Date = new Date(),
 ): Promise<ResolvedTimetableEntry[]> {
-  const entries = await getEntriesByFilter([
+  const raw = await getEntriesByFilter([
     { field: 'classId', value: classId },
     { field: 'term', value: term },
     { field: 'year', value: year },
     { field: 'status', value: 'active' },
   ]);
-  if (entries.length === 0) return [];
-
-  const slotIds = Array.from(new Set(entries.map(e => e.slotId)));
-  const [slotMap, periodMap] = await Promise.all([
-    getSlotsByIds(slotIds),
+  if (raw.length === 0) return [];
+  const [slotMap, { periods, map }] = await Promise.all([
+    getSlotsByIds(raw.map(e => e.slotId)),
     getPeriodMap(year),
   ]);
-
-  const rows: ResolvedTimetableEntry[] = [];
-  for (const e of entries) {
-    const slot = slotMap.get(e.slotId) ?? null;
-    rows.push(await resolveEntry(e, slot, periodMap, now));
-  }
-
-  return rows.sort(
-    (a, b) =>
-      a.entry.dayOfWeek - b.entry.dayOfWeek ||
-      a.entry.periodIndex - b.entry.periodIndex ||
-      a.entry.subject.localeCompare(b.entry.subject),
+  return sortRows(
+    expandLegacyDoubles(raw, periods).map(e => resolveRow(e, slotMap.get(e.slotId) ?? null, map, at)),
   );
 }
 
 /**
- * Entries for today. Filters by weekday, holidays, and (unless asked
- * otherwise) excludes non-lesson periods. Returns resolved rows sorted by
- * periodIndex.
- *
- * A holiday short-circuits to an empty list.
+ * The lessons a teacher TEACHES on a date: weekday rows whose period is a
+ * lesson, where the teacher is the operator at the moment that period
+ * starts on that date (so a cover counts only on the days it runs).
+ * Empty on weekends and holidays.
  */
 export async function getTodayTimetableForTeacher(
   teacherId: string,
@@ -588,759 +616,48 @@ export async function getTodayTimetableForTeacher(
 ): Promise<ResolvedTimetableEntry[]> {
   const dow = toWeekday1to5(at);
   if (dow === null) return [];
-
-  const holiday = await getHolidayCovering(formatLocalYMD(at));
-  if (holiday) return [];
+  const dateYMD = formatLocalYMD(at);
+  if (await getHolidayCovering(dateYMD)) return [];
 
   const { term, year } = getCurrentAcademicTerm(at);
-  const all = await getTimetableForTeacher(teacherId, term, year, at);
-  return all
-    .filter(r => r.entry.dayOfWeek === dow)
-    .filter(r => !r.period || r.period.kind === 'lesson')
-    .sort((a, b) => a.entry.periodIndex - b.entry.periodIndex);
+  const attached = await engine.getSlotsForTeacher(teacherId);
+  if (attached.length === 0) return [];
+  const [raw, { periods, map }] = await Promise.all([
+    entriesForSlots(attached.map(s => s.slot.id), term, year, 'active'),
+    getPeriodMap(year),
+  ]);
+  const slotMap = new Map(attached.map(s => [s.slot.id, s.slot]));
+  const rows: ResolvedTimetableEntry[] = [];
+  for (const e of expandLegacyDoubles(raw, periods)) {
+    if (e.dayOfWeek !== dow) continue;
+    const period = map.get(e.periodIndex);
+    if (!period || period.kind !== 'lesson') continue;
+    const slot = slotMap.get(e.slotId) ?? null;
+    const when = periodStartOn(dateYMD, period);
+    if (engine.resolveAuthority(slot, when).operatorTeacherId !== teacherId) continue;
+    rows.push(resolveRow(e, slot, map, when));
+  }
+  return sortRows(rows);
 }
 
-/**
- * The period the teacher is *in* right now, if any. Null outside lessons,
- * on holidays, on weekends, or between periods.
- */
+/** The row the teacher is teaching at `at`, if any (works inside doubles). */
 export async function getCurrentPeriod(
   teacherId: string,
   at: Date = new Date(),
 ): Promise<ResolvedTimetableEntry | null> {
   const today = await getTodayTimetableForTeacher(teacherId, at);
-  if (today.length === 0) return null;
-
   const minutes = at.getHours() * 60 + at.getMinutes();
-  for (const row of today) {
-    if (!row.period) continue;
-    const start = hhmmToMinutes(row.period.startTime);
-    const end = hhmmToMinutes(row.period.endTime);
-    if (minutes >= start && minutes < end) return row;
-  }
-  return null;
-}
-
-// ==================== CONFLICT DETECTION (PURE) ====================
-
-interface ConflictInput {
-  /** id is a temp identifier for new rows; slot lookups use slotId. */
-  id: string;
-  slotId: string;
-  classId: string;
-  className: string;
-  subject: string;
-  dayOfWeek: 1 | 2 | 3 | 4 | 5;
-  periodIndex: number;
-  isDouble: boolean;
-  /** Owner teacherId, from the slot. */
-  ownerTeacherId: string | null;
-  ownerTeacherName: string | null;
-}
-
-/**
- * Expand a batch into (id, day, period) cells, accounting for doubles
- * consuming periodIndex + 1.
- */
-function expandCells(rows: ConflictInput[]): Array<{
-  id: string;
-  slotId: string;
-  classId: string;
-  className: string;
-  subject: string;
-  ownerTeacherId: string | null;
-  ownerTeacherName: string | null;
-  dayOfWeek: 1 | 2 | 3 | 4 | 5;
-  period: number;
-  /** 'primary' = the row's own periodIndex; 'doubleTail' = the +1 slot. */
-  role: 'primary' | 'doubleTail';
-}> {
-  const out = [] as ReturnType<typeof expandCells>;
-  for (const r of rows) {
-    const base = {
-      id: r.id,
-      slotId: r.slotId,
-      classId: r.classId,
-      className: r.className,
-      subject: r.subject,
-      ownerTeacherId: r.ownerTeacherId,
-      ownerTeacherName: r.ownerTeacherName,
-      dayOfWeek: r.dayOfWeek,
-      role: 'primary' as const,
-    };
-    out.push({ ...base, period: r.periodIndex });
-    if (r.isDouble) {
-      out.push({ ...base, period: r.periodIndex + 1, role: 'doubleTail' as const });
-    }
-  }
-  return out;
-}
-
-/**
- * Pure conflict detector.
- *
- *   teacher-clash   — same owner teacher, same day+period, 2+ different slots
- *   class-clash     — same class, same day+period, 2+ different slots
- *   double-overlap  — a double tail lands on a slot's primary periodIndex
- *
- * Holiday warnings are added separately by `attachHolidayWarnings`.
- */
-export function detectAllConflicts(rows: ConflictInput[]): TimetableConflict[] {
-  const cells = expandCells(rows);
-  const conflicts: TimetableConflict[] = [];
-
-  // Group by (day, period).
-  const byCell = new Map<string, typeof cells>();
-  for (const c of cells) {
-    const key = `${c.dayOfWeek}:${c.period}`;
-    const arr = byCell.get(key) ?? [];
-    arr.push(c);
-    byCell.set(key, arr);
-  }
-
-  for (const [, group] of byCell) {
-    const day = group[0].dayOfWeek;
-    const period = group[0].period;
-
-    // Teacher clash — same ownerTeacherId, different slotIds.
-    const byTeacher = new Map<string, typeof group>();
-    for (const c of group) {
-      if (!c.ownerTeacherId) continue;
-      const arr = byTeacher.get(c.ownerTeacherId) ?? [];
-      arr.push(c);
-      byTeacher.set(c.ownerTeacherId, arr);
-    }
-    for (const [, arr] of byTeacher) {
-      const distinctSlots = new Set(arr.map(a => a.slotId));
-      if (distinctSlots.size > 1) {
-        const teacherName = arr[0].ownerTeacherName ?? 'Teacher';
-        const ids = Array.from(new Set(arr.map(a => a.id)));
-        conflicts.push({
-          kind: 'teacher-clash',
-          message:
-            `${teacherName} is scheduled in two places on ` +
-            `${dayName(day)} period ${period}: ` +
-            `${uniqueSubjects(arr).join(' & ')}.`,
-          entryIds: ids,
-          dayOfWeek: day,
-          periodIndex: period,
-        });
-      }
-    }
-
-    // Class clash — same classId, different slotIds.
-    const byClass = new Map<string, typeof group>();
-    for (const c of group) {
-      const arr = byClass.get(c.classId) ?? [];
-      arr.push(c);
-      byClass.set(c.classId, arr);
-    }
-    for (const [, arr] of byClass) {
-      const distinctSlots = new Set(arr.map(a => a.slotId));
-      if (distinctSlots.size > 1) {
-        const ids = Array.from(new Set(arr.map(a => a.id)));
-        conflicts.push({
-          kind: 'class-clash',
-          message:
-            `${arr[0].className} has two subjects on ` +
-            `${dayName(day)} period ${period}: ` +
-            `${uniqueSubjects(arr).join(' & ')}.`,
-          entryIds: ids,
-          dayOfWeek: day,
-          periodIndex: period,
-        });
-      }
-    }
-
-    // Double-tail landing on a primary — a double period must not be
-    // overlapped by another lesson for the same class.
-    const tails = group.filter(g => g.role === 'doubleTail');
-    const primaries = group.filter(g => g.role === 'primary');
-    if (tails.length > 0 && primaries.length > 0) {
-      for (const tail of tails) {
-        for (const p of primaries) {
-          if (tail.slotId === p.slotId) continue;
-          if (tail.classId !== p.classId) continue;
-          conflicts.push({
-            kind: 'double-overlap',
-            message:
-              `A double period in ${tail.className} overlaps ` +
-              `${p.subject} at ${dayName(day)} period ${period}.`,
-            entryIds: Array.from(new Set([tail.id, p.id])),
-            dayOfWeek: day,
-            periodIndex: period,
-          });
-        }
-      }
-    }
-  }
-
-  return dedupeConflicts(conflicts);
-}
-
-function dedupeConflicts(cs: TimetableConflict[]): TimetableConflict[] {
-  const seen = new Set<string>();
-  const out: TimetableConflict[] = [];
-  for (const c of cs) {
-    const key = `${c.kind}|${c.dayOfWeek}|${c.periodIndex}|${[...c.entryIds].sort().join(',')}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(c);
-  }
-  return out;
-}
-
-function uniqueSubjects(arr: Array<{ subject: string }>): string[] {
-  return Array.from(new Set(arr.map(a => a.subject)));
-}
-
-function dayName(d: 1 | 2 | 3 | 4 | 5): string {
-  return ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'][d - 1];
-}
-
-/** Add holiday warnings for the current term's holidays (informational). */
-export function attachHolidayWarnings(
-  conflicts: TimetableConflict[],
-  holidays: SchoolHoliday[],
-): TimetableConflict[] {
-  // Holidays are date-scoped, not (day, period)-scoped. Counted once each.
-  const out = [...conflicts];
-  for (const h of holidays) {
-    out.push({
-      kind: 'holiday',
-      message: `Timetable pattern overlaps ${h.name} (${h.startDate}). Lessons on that date will be skipped.`,
-      entryIds: [],
-      dayOfWeek: null,
-      periodIndex: null,
-      holidayId: h.id,
-      holidayName: h.name,
-      holidayDate: h.startDate,
-    });
-  }
-  return out;
-}
-
-// ==================== SUBMIT → PENDING ====================
-
-/**
- * Submit a teacher's timetable for admin approval.
- *
- *   classIdsFilter = [c1, c2]  → replaces only pending rows for those
- *                                 classes (per-class submission)
- *   classIdsFilter = null      → replaces ALL of this teacher's pending
- *                                 rows for the term (submit-all flow)
- *
- * ACTIVE rows are NOT touched here. They stay live until an admin
- * approves this submission. This is what "the previous active version
- * stays live until approval" means operationally.
- *
- * Conflicts are detected and returned; they do NOT block submission — an
- * admin decides during approval.
- */
-export async function submitTimetable(
-  teacherId: string,
-  teacherName: string,
-  req: SubmitTimetableRequest,
-): Promise<SubmitTimetableResult> {
-  // 1. Verify the teacher actually operates each slot in the request.
-  const slotsById = await getSlotsByIds(
-    Array.from(new Set(req.entries.map(e => e.slotId))),
-  );
-  const now = new Date();
-  const periodMap = await getPeriodMap(req.year);
-
-  for (const input of req.entries) {
-    const slot = slotsById.get(input.slotId);
-    if (!slot) throw new Error(`Unknown slot: ${input.slotId}`);
-    const auth = engine.resolveAuthority(slot, now);
-    const isOwner = slot.ownerTeacherId === teacherId;
-    const isDelegate = auth.operatorTeacherId === teacherId;
-    if (!isOwner && !isDelegate) {
-      throw new Error(
-        `You don't currently teach ${slot.subject} in ${slot.className}.`,
-      );
-    }
-    const period = periodMap.get(input.periodIndex);
-    if (!period) throw new Error(`Unknown period #${input.periodIndex}.`);
-    if (period.kind !== 'lesson') {
-      throw new Error(`${period.name} is a ${period.kind} — a lesson can't be scheduled there.`);
-    }
-  }
-
-  // 2. Denormalize for storage & run conflict detection.
-  const payloadRows: ConflictInput[] = req.entries.map((e, i) => {
-    const slot = slotsById.get(e.slotId)!;
-    return {
-      id: `new-${i}-${e.slotId}-${e.dayOfWeek}-${e.periodIndex}`,
-      slotId: e.slotId,
-      classId: slot.classId,
-      className: slot.className,
-      subject: slot.subject,
-      dayOfWeek: e.dayOfWeek,
-      periodIndex: e.periodIndex,
-      isDouble: e.isDouble,
-      ownerTeacherId: slot.ownerTeacherId,
-      ownerTeacherName: slot.ownerTeacherName,
-    };
-  });
-  const conflicts = detectAllConflicts(payloadRows);
-
-  // 3. Read currently pending rows in the affected scope.
-  const pendingRows = await getEntriesForTeacherSlots(
-    teacherId,
-    req.term,
-    req.year,
-    'pending',
-  );
-  const pendingToReplace = req.classIdsFilter
-    ? pendingRows.filter(p => req.classIdsFilter!.includes(p.classId))
-    : pendingRows;
-
-  // 4. Write in a batch.
-  const batch = writeBatch(db);
-
-  for (const p of pendingToReplace) {
-    batch.delete(doc(db, ENTRIES, p.id));
-  }
-
-  const batchId = `${teacherId}__${Date.now()}`;
-  for (const e of req.entries) {
-    const slot = slotsById.get(e.slotId)!;
-    const ref = doc(collection(db, ENTRIES));
-    batch.set(ref, {
-      slotId: e.slotId,
-      classId: slot.classId,
-      className: slot.className,
-      subject: slot.subject,
-      normalizedSubject: slot.normalizedSubject,
-      term: req.term,
-      year: req.year,
-      dayOfWeek: e.dayOfWeek,
-      periodIndex: e.periodIndex,
-      isDouble: e.isDouble,
-      status: 'pending' as TimetableEntryStatus,
-      submittedByUid: teacherId,
-      submittedAt: serverTimestamp(),
-      approvedByUid: null,
-      approvedAt: null,
-      rejectedReason: null,
-      batchId,
-      teacherName,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  }
-
-  await batch.commit();
-
-  return {
-    submissionId: batchId,
-    submittedCount: req.entries.length,
-    replacedPendingCount: pendingToReplace.length,
-    conflicts,
-  };
-}
-
-// ==================== APPROVE / REJECT ====================
-
-/**
- * Admin: approve a pending submission batch.
- *
- * Transactionally, for each (slotId, day, period) in the batch:
- *   • archive any ACTIVE row it collides with
- *   • promote the pending row to 'active' and record approver
- *
- * Rows that don't collide simply flip to 'active'.
- */
-export async function approveSubmission(
-  submissionId: string,
-  adminUid: string,
-): Promise<ApproveTimetableResult> {
-  const pendingSnap = await getDocs(
-    query(collection(db, ENTRIES), where('batchId', '==', submissionId)),
-  );
-  if (pendingSnap.empty) {
-    throw new Error('This submission no longer exists.');
-  }
-
-  const pendingRows = pendingSnap.docs.map(d => ({
-    ref: d.ref,
-    ...mapEntry(d.id, d.data()),
-  }));
-  const term = pendingRows[0].term;
-  const year = pendingRows[0].year;
-  const slotIds = Array.from(new Set(pendingRows.map(p => p.slotId)));
-
-  // Fetch ACTIVE rows for the involved slots in this term.
-  const activeRows: TimetableEntry[] = [];
-  for (let i = 0; i < slotIds.length; i += 30) {
-    const chunk = slotIds.slice(i, i + 30);
-    const snap = await getDocs(
-      query(
-        collection(db, ENTRIES),
-        where('slotId', 'in', chunk),
-        where('term', '==', term),
-        where('year', '==', year),
-        where('status', '==', 'active'),
-      ),
-    );
-    activeRows.push(...snap.docs.map(d => mapEntry(d.id, d.data())));
-  }
-
-  const toArchive = activeRows.filter(a =>
-    pendingRows.some(
-      p => p.slotId === a.slotId && p.dayOfWeek === a.dayOfWeek && p.periodIndex === a.periodIndex,
-    ),
-  );
-
-  await runTransaction(db, async tx => {
-    for (const a of toArchive) {
-      tx.set(
-        doc(db, ENTRIES, a.id),
-        { status: 'archived', updatedAt: serverTimestamp() },
-        { merge: true },
-      );
-    }
-    for (const p of pendingRows) {
-      tx.set(
-        p.ref,
-        {
-          status: 'active' as TimetableEntryStatus,
-          approvedByUid: adminUid,
-          approvedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
-    }
-  });
-
-  return {
-    submissionId,
-    approvedCount: pendingRows.length,
-    archivedCount: toArchive.length,
-  };
-}
-
-export async function rejectSubmission(
-  submissionId: string,
-  reason: string,
-): Promise<RejectTimetableResult> {
-  const snap = await getDocs(
-    query(collection(db, ENTRIES), where('batchId', '==', submissionId)),
-  );
-  if (snap.empty) return { submissionId, rejectedCount: 0 };
-
-  const batch = writeBatch(db);
-  for (const d of snap.docs) {
-    batch.set(
-      d.ref,
-      {
-        status: 'rejected' as TimetableEntryStatus,
-        rejectedReason: reason || 'Rejected by admin.',
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    );
-  }
-  await batch.commit();
-  return { submissionId, rejectedCount: snap.size };
-}
-
-/**
- * Admin approval queue: all pending batches, grouped and enriched.
- */
-export async function getPendingSubmissions(): Promise<PendingSubmission[]> {
-  const snap = await getDocs(
-    query(collection(db, ENTRIES), where('status', '==', 'pending')),
-  );
-  if (snap.empty) return [];
-
-  const entries = snap.docs.map(d => mapEntry(d.id, d.data()));
-
-  // Group by batchId (fallback to submittedByUid + submittedAt millis).
-  const groups = new Map<string, TimetableEntry[]>();
-  for (const e of entries) {
-    const key =
-      e.batchId ??
-      `${e.submittedByUid}__${tsToMillis(e.submittedAt) || Date.now()}`;
-    const arr = groups.get(key) ?? [];
-    arr.push(e);
-    groups.set(key, arr);
-  }
-
-  // Fetch submitter names in bulk.
-  const uids = Array.from(
-    new Set(entries.map(e => e.submittedByUid).filter(Boolean)),
-  ) as string[];
-  const nameMap = new Map<string, string>();
-  for (let i = 0; i < uids.length; i += 30) {
-    const chunk = uids.slice(i, i + 30);
-    const uSnap = await getDocs(
-      query(collection(db, USERS), where('__name__', 'in', chunk)),
-    );
-    for (const u of uSnap.docs) {
-      const data = u.data();
-      nameMap.set(u.id, data.fullName || data.name || 'Unknown teacher');
-    }
-  }
-
-  // Build PendingSubmission objects, one per group.
-  const out: PendingSubmission[] = [];
-  for (const [id, rows] of groups) {
-    const first = rows[0];
-    const submittedAt = new Date(tsToMillis(first.submittedAt) || Date.now());
-    const classIds = Array.from(new Set(rows.map(r => r.classId)));
-    const classNames = Array.from(new Set(rows.map(r => r.className)));
-
-    // Reconstruct conflict inputs from the slots.
-    const slotIds = Array.from(new Set(rows.map(r => r.slotId)));
-    const slotMap = await getSlotsByIds(slotIds);
-    const conflictInputs: ConflictInput[] = rows.map((r, i) => {
-      const slot = slotMap.get(r.slotId) ?? null;
-      return {
-        id: `p-${i}-${r.id}`,
-        slotId: r.slotId,
-        classId: r.classId,
-        className: r.className,
-        subject: r.subject,
-        dayOfWeek: r.dayOfWeek,
-        periodIndex: r.periodIndex,
-        isDouble: r.isDouble,
-        ownerTeacherId: slot?.ownerTeacherId ?? null,
-        ownerTeacherName: slot?.ownerTeacherName ?? null,
-      };
-    });
-
-    out.push({
-      id,
-      submittedByUid: first.submittedByUid ?? '',
-      submittedByName: nameMap.get(first.submittedByUid ?? '') ?? 'Unknown teacher',
-      submittedAt,
-      entries: rows,
-      classIds,
-      classNames,
-      term: first.term,
-      year: first.year,
-      conflicts: detectAllConflicts(conflictInputs),
-    });
-  }
-
-  return out.sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime());
-}
-
-// ==================== COVERAGE (ADMIN MONITORING) ====================
-
-/**
- * For a given local date, compute per-class coverage: expected periods
- * (from ACTIVE timetable entries) vs actually-marked attendance sessions.
- *
- * Short-circuits to zero rows on weekends and holidays.
- */
-export async function getCoverageForDate(
-  dateYMD: string,
-  at: Date = new Date(),
-): Promise<CoverageRow[]> {
-  const dow = toWeekday1to5(new Date(`${dateYMD}T00:00:00`));
-  if (dow === null) return [];
-
-  const holiday = await getHolidayCovering(dateYMD);
-  if (holiday) return [];
-
-  // Which term are we in on this date?
-  const dt = new Date(`${dateYMD}T00:00:00`);
-  const { term, year } = getCurrentAcademicTerm(dt);
-
-  // All ACTIVE entries for this weekday.
-  const snap = await getDocs(
-    query(
-      collection(db, ENTRIES),
-      where('term', '==', term),
-      where('year', '==', year),
-      where('status', '==', 'active'),
-      where('dayOfWeek', '==', dow),
-    ),
-  );
-  const entries = snap.docs.map(d => mapEntry(d.id, d.data()));
-  if (entries.length === 0) return [];
-
-  // Resolve authority for each entry.
-  const slotIds = Array.from(new Set(entries.map(e => e.slotId)));
-  const [slotMap, periodMap] = await Promise.all([
-    getSlotsByIds(slotIds),
-    getPeriodMap(year),
-  ]);
-  const resolved = await Promise.all(
-    entries.map(e => resolveEntry(e, slotMap.get(e.slotId) ?? null, periodMap, at)),
-  );
-
-  // Fetch attendance sessions for the date.
-  const sessionSnap = await getDocs(
-    query(collection(db, 'attendance_sessions'), where('date', '==', dateYMD)),
-  );
-  const sessionsByClass = new Map<
-    string,
-    Array<{
-      period: number;
-      subject: string;
-      normalizedSubject: string;
-      markedBy: string;
-      markedByName: string;
-    }>
-  >();
-  for (const s of sessionSnap.docs) {
-    const d = s.data() as DocumentData;
-    if (d.kind !== 'periodic') continue;
-    const arr = sessionsByClass.get(d.classId) ?? [];
-    arr.push({
-      period: d.period,
-      subject: d.subject,
-      normalizedSubject: d.subject ? d.subject.toLowerCase() : '',
-      markedBy: d.markedBy,
-      markedByName: d.markedByName,
-    });
-    sessionsByClass.set(d.classId, arr);
-  }
-
-  // Group by class, compute missing & rate.
-  const byClass = new Map<string, ResolvedTimetableEntry[]>();
-  for (const r of resolved) {
-    const arr = byClass.get(r.entry.classId) ?? [];
-    arr.push(r);
-    byClass.set(r.entry.classId, arr);
-  }
-
-  const rows: CoverageRow[] = [];
-  for (const [classId, expected] of byClass) {
-    const marked = sessionsByClass.get(classId) ?? [];
-
-    const missing = expected.filter(e => {
-      const anyMatch = marked.some(
-        m =>
-          m.period === e.entry.periodIndex &&
-          (m.normalizedSubject === e.entry.normalizedSubject ||
-            m.subject === e.entry.subject),
-      );
-      return !anyMatch;
-    });
-
-    const expectedCount = expected.length;
-    const missingCount = missing.length;
-    const coverageRate =
-      expectedCount === 0
-        ? 100
-        : Math.round(((expectedCount - missingCount) / expectedCount) * 100);
-
-    rows.push({
-      classId,
-      className: expected[0].entry.className,
-      expectedEntries: expected,
-      expectedCount,
-      markedSessions: marked,
-      markedCount: marked.length,
-      missingEntries: missing,
-      missingCount,
-      coverageRate,
-    });
-  }
-
-  return rows.sort((a, b) => a.className.localeCompare(b.className));
-}
-
-/**
- * Per-teacher coverage for a given date. Combines:
- *   • what they were expected to teach (from ACTIVE entries they operate)
- *   • what they actually marked (from attendance_sessions.markedBy)
- *   • whether any of their owned slots still need cover
- */
-export async function getCoverageForTeachers(
-  dateYMD: string,
-  at: Date = new Date(),
-): Promise<TeacherCoverageRow[]> {
-  const byClass = await getCoverageForDate(dateYMD, at);
-  if (byClass.length === 0) return [];
-
-  // Flatten expected entries.
-  const expected = byClass.flatMap(c => c.expectedEntries);
-
-  // Group by operator teacher.
-  const byTeacher = new Map<string, ResolvedTimetableEntry[]>();
-  for (const e of expected) {
-    if (!e.operatorTeacherId) continue;
-    const arr = byTeacher.get(e.operatorTeacherId) ?? [];
-    arr.push(e);
-    byTeacher.set(e.operatorTeacherId, arr);
-  }
-  if (byTeacher.size === 0) return [];
-
-  // Fetch user docs for names + status.
-  const teacherIds = Array.from(byTeacher.keys());
-  const userMap = new Map<string, { name: string; status: TeacherCoverageRow['status'] }>();
-  for (let i = 0; i < teacherIds.length; i += 30) {
-    const chunk = teacherIds.slice(i, i + 30);
-    const uSnap = await getDocs(query(collection(db, USERS), where('__name__', 'in', chunk)));
-    for (const u of uSnap.docs) {
-      const d = u.data();
-      userMap.set(u.id, {
-        name: d.fullName || d.name || 'Unknown teacher',
-        status: (d.status as TeacherCoverageRow['status']) || 'active',
-      });
-    }
-  }
-
-  // Fetch sessions for the date, group by markedBy.
-  const sessionSnap = await getDocs(
-    query(collection(db, 'attendance_sessions'), where('date', '==', dateYMD)),
-  );
-  const markedByTeacher = new Map<string, number>();
-  for (const s of sessionSnap.docs) {
-    const d = s.data() as DocumentData;
-    if (d.kind !== 'periodic') continue;
-    markedByTeacher.set(d.markedBy, (markedByTeacher.get(d.markedBy) ?? 0) + 1);
-  }
-
-  // Uncovered slots per teacher (owner on leave with no cover).
-  const uncoveredSlots = await engine.getUncoveredSlots(at);
-  const uncoveredOwners = new Set(
-    uncoveredSlots.map(s => s.ownerTeacherId).filter(Boolean),
-  );
-
-  const rows: TeacherCoverageRow[] = [];
-  for (const [teacherId, entries] of byTeacher) {
-    const meta = userMap.get(teacherId) ?? { name: 'Unknown teacher', status: 'active' as const };
-    const expectedCount = entries.length;
-    const markedCount = markedByTeacher.get(teacherId) ?? 0;
-    const missingCount = Math.max(0, expectedCount - markedCount);
-    rows.push({
-      teacherId,
-      teacherName: meta.name,
-      status: meta.status,
-      expectedEntries: entries,
-      expectedCount,
-      markedCount,
-      missingEntries: entries.slice(0, missingCount),
-      missingCount,
-      coverageRate:
-        expectedCount === 0
-          ? 100
-          : Math.round((markedCount / expectedCount) * 100),
-      hasUncoveredSlots: uncoveredOwners.has(teacherId),
-    });
-  }
-
-  return rows.sort(
-    (a, b) =>
-      a.coverageRate - b.coverageRate ||
-      a.teacherName.localeCompare(b.teacherName),
+  return (
+    today.find(
+      r =>
+        r.period &&
+        minutes >= hhmmToMinutes(r.period.startTime) &&
+        minutes < hhmmToMinutes(r.period.endTime),
+    ) ?? null
   );
 }
 
-// ==================== MY CLASSES (helper for teacher UI) ====================
-
-/**
- * Distinct classes a teacher operates ACTIVE entries for, in the given
- * term. Used by MyTimetable to render one grid per class.
- */
+/** Classes a teacher has live rows for (used by MyTimetable headings). */
 export async function getMyTimetableClasses(
   teacherId: string,
   term: TermName,
@@ -1349,59 +666,673 @@ export async function getMyTimetableClasses(
   const rows = await getTimetableForTeacher(teacherId, term, year);
   const byClass = new Map<string, { classId: string; className: string; subjects: Set<string> }>();
   for (const r of rows) {
-    let e = byClass.get(r.entry.classId);
-    if (!e) {
-      e = { classId: r.entry.classId, className: r.entry.className, subjects: new Set() };
-      byClass.set(r.entry.classId, e);
-    }
-    e.subjects.add(r.entry.subject);
+    const c = byClass.get(r.entry.classId) ?? {
+      classId: r.entry.classId,
+      className: r.entry.className,
+      subjects: new Set<string>(),
+    };
+    c.subjects.add(r.entry.subject);
+    byClass.set(r.entry.classId, c);
   }
   return Array.from(byClass.values())
-    .map(e => ({
-      classId: e.classId,
-      className: e.className,
-      subjects: Array.from(e.subjects).sort(),
-    }))
+    .map(c => ({ classId: c.classId, className: c.className, subjects: Array.from(c.subjects).sort() }))
     .sort((a, b) => a.className.localeCompare(b.className));
+}
+
+// ==================== CLASH CONTEXT ====================
+
+const teachersOf = (slot: engine.ClassSlot | null | undefined, at: Date) => {
+  const out: Array<{ id: string; name: string }> = [];
+  if (!slot) return out;
+  if (slot.ownerTeacherId) out.push({ id: slot.ownerTeacherId, name: slot.ownerTeacherName ?? 'Teacher' });
+  const auth = engine.resolveAuthority(slot, at);
+  if (auth.delegationState === 'live' && auth.operatorTeacherId && auth.operatorTeacherId !== slot.ownerTeacherId) {
+    out.push({ id: auth.operatorTeacherId, name: auth.operatorTeacherName ?? 'Teacher' });
+  }
+  return out;
+};
+
+export interface TimetableClashContext extends ClashContext {
+  slots: Map<string, engine.ClassSlot>;
+}
+
+/**
+ * Everything needed to clash-check a change to these subjects: the live
+ * rows of their classes, the live rows of every subject their teachers
+ * (owner and live cover) teach, and who teaches what.
+ */
+export async function getClashContext(
+  scopeSlotIds: string[],
+  term: TermName,
+  year: number,
+  at: Date = new Date(),
+): Promise<TimetableClashContext> {
+  const scope = await getSlotsByIds(scopeSlotIds);
+  const teachersBySlot = new Map<string, Array<{ id: string; name: string }>>();
+  const teacherIds = new Set<string>();
+  for (const s of scope.values()) {
+    const ts = teachersOf(s, at);
+    teachersBySlot.set(s.id, ts);
+    ts.forEach(t => teacherIds.add(t.id));
+  }
+
+  // Every subject those teachers are attached to.
+  const allSlots = new Map(scope);
+  for (const t of teacherIds) {
+    for (const { slot } of await engine.getSlotsForTeacher(t)) allSlots.set(slot.id, slot);
+  }
+  for (const s of allSlots.values()) if (!teachersBySlot.has(s.id)) teachersBySlot.set(s.id, teachersOf(s, at));
+
+  const classIds = Array.from(new Set(Array.from(scope.values()).map(s => s.classId)));
+  const [{ periods }, teacherRows, ...classRows] = await Promise.all([
+    getPeriodMap(year),
+    entriesForSlots(Array.from(allSlots.keys()), term, year, 'active'),
+    ...classIds.map(c =>
+      getEntriesByFilter([
+        { field: 'classId', value: c },
+        { field: 'term', value: term },
+        { field: 'year', value: year },
+        { field: 'status', value: 'active' },
+      ]),
+    ),
+  ]);
+  const byId = new Map<string, TimetableEntry>();
+  for (const e of [...teacherRows, ...classRows.flat()]) byId.set(e.id, e);
+  // Teachers of class rows we haven't seen (other teachers in the class).
+  const missing = Array.from(byId.values()).map(e => e.slotId).filter(id => !teachersBySlot.has(id));
+  const more = await getSlotsByIds(missing);
+  for (const s of more.values()) {
+    allSlots.set(s.id, s);
+    teachersBySlot.set(s.id, teachersOf(s, at));
+  }
+
+  return {
+    live: expandLegacyDoubles(Array.from(byId.values()), periods) as RowLike[],
+    teachersBySlot,
+    replaceSlotIds: new Set(scopeSlotIds),
+    periods,
+    slots: allSlots,
+  };
+}
+
+const conflictSummary = (cs: TimetableConflict[]) =>
+  cs.slice(0, 3).map(c => c.message).join(' ') + (cs.length > 3 ? ` (+${cs.length - 3} more)` : '');
+
+// ==================== SUBMIT → PENDING ====================
+
+function mapSubmission(id: string, d: DocumentData): TimetableSubmission {
+  return {
+    id,
+    teacherId: d.teacherId ?? '',
+    teacherName: d.teacherName ?? 'Teacher',
+    term: d.term,
+    year: d.year,
+    scopeSlotIds: Array.isArray(d.scopeSlotIds) ? d.scopeSlotIds : [],
+    classIds: Array.isArray(d.classIds) ? d.classIds : [],
+    entryCount: d.entryCount ?? 0,
+    status: d.status ?? 'pending',
+    submittedAt: tsToDate(d.submittedAt),
+    decidedBy: d.decidedBy ?? null,
+    decidedAt: tsToDate(d.decidedAt),
+    rejectedReason: d.rejectedReason ?? null,
+  };
+}
+
+/**
+ * Submit the full timetable of some subjects for approval. Every period
+ * ticked for a subject in `scopeSlotIds` is one row; a subject with nothing
+ * ticked is submitted as "clear this subject". Refused when:
+ *   • the teacher neither owns nor currently covers a subject,
+ *   • a period is not a lesson, or
+ *   • it clashes with the class's or the teacher's live timetable.
+ * The live timetable stays in force until an admin approves.
+ */
+export async function submitTimetable(
+  teacherId: string,
+  teacherName: string,
+  req: SubmitTimetableRequest,
+): Promise<SubmitTimetableResult> {
+  const scope = Array.from(new Set(req.scopeSlotIds));
+  if (scope.length === 0) throw new Error('Choose at least one subject to submit.');
+  const now = new Date();
+
+  const ctx = await getClashContext(scope, req.term, req.year, now);
+  for (const id of scope) {
+    const slot = ctx.slots.get(id);
+    if (!slot) throw new Error(`Unknown subject: ${id}`);
+    const isOwner = slot.ownerTeacherId === teacherId;
+    const isOperator = engine.resolveAuthority(slot, now).operatorTeacherId === teacherId;
+    if (!isOwner && !isOperator) {
+      throw new Error(`You don't currently teach ${slot.subject} in ${slot.className}.`);
+    }
+  }
+
+  // One row per (subject, day, period).
+  const seen = new Set<string>();
+  const rows: Array<RowLike & { normalizedSubject: string; venue: string | null }> = [];
+  for (const e of req.entries) {
+    if (!scope.includes(e.slotId)) throw new Error('A ticked period belongs to a subject outside this submission.');
+    const k = `${e.slotId}|${e.dayOfWeek}|${e.periodIndex}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const slot = ctx.slots.get(e.slotId)!;
+    rows.push({
+      slotId: e.slotId,
+      classId: slot.classId,
+      className: slot.className,
+      subject: slot.subject,
+      normalizedSubject: slot.normalizedSubject,
+      dayOfWeek: e.dayOfWeek,
+      periodIndex: e.periodIndex,
+      venue: e.venue?.trim() ? e.venue.trim() : null,
+    });
+  }
+
+  const conflicts = blockingConflicts(checkClashes(rows, ctx));
+  if (conflicts.length > 0) {
+    throw new Error(`Fix these clashes first: ${conflictSummary(conflicts)}`);
+  }
+
+  // Earlier pending work of mine on the same subjects is replaced.
+  const mineSnap = await getDocs(
+    query(collection(db, SUBMISSIONS), where('teacherId', '==', teacherId), where('status', '==', 'pending')),
+  );
+  const batch = writeBatch(db);
+  let replacedPendingCount = 0;
+  for (const d of mineSnap.docs) {
+    const sub = mapSubmission(d.id, d.data());
+    if (sub.term !== req.term || sub.year !== req.year) continue;
+    const overlap = sub.scopeSlotIds.filter(id => scope.includes(id));
+    if (overlap.length === 0) continue;
+    const subRows = await getDocs(query(collection(db, ENTRIES), where('batchId', '==', sub.id)));
+    let kept = 0;
+    for (const r of subRows.docs) {
+      if (overlap.includes(r.data().slotId)) {
+        batch.delete(r.ref);
+        replacedPendingCount++;
+      } else kept++;
+    }
+    const left = sub.scopeSlotIds.filter(id => !scope.includes(id));
+    batch.set(
+      d.ref,
+      left.length === 0
+        ? { status: 'superseded', updatedAt: serverTimestamp() }
+        : { scopeSlotIds: left, entryCount: kept, updatedAt: serverTimestamp() },
+      { merge: true },
+    );
+  }
+  // Legacy pending rows (from before submissions existed).
+  for (const p of await entriesForSlots(scope, req.term, req.year, 'pending')) {
+    if (p.submittedByUid === teacherId && !mineSnap.docs.some(d => d.id === p.batchId)) {
+      batch.delete(doc(db, ENTRIES, p.id));
+      replacedPendingCount++;
+    }
+  }
+
+  const subRef = doc(collection(db, SUBMISSIONS));
+  const classIds = Array.from(new Set(scope.map(id => ctx.slots.get(id)!.classId)));
+  batch.set(subRef, {
+    teacherId,
+    teacherName,
+    term: req.term,
+    year: req.year,
+    scopeSlotIds: scope,
+    classIds,
+    entryCount: rows.length,
+    status: 'pending',
+    submittedAt: serverTimestamp(),
+    decidedBy: null,
+    decidedAt: null,
+    rejectedReason: null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  for (const r of rows) {
+    batch.set(doc(collection(db, ENTRIES)), {
+      slotId: r.slotId,
+      classId: r.classId,
+      className: r.className,
+      subject: r.subject,
+      normalizedSubject: r.normalizedSubject,
+      term: req.term,
+      year: req.year,
+      dayOfWeek: r.dayOfWeek,
+      periodIndex: r.periodIndex,
+      isDouble: false,
+      venue: r.venue,
+      status: 'pending' as TimetableEntryStatus,
+      submittedByUid: teacherId,
+      submittedAt: serverTimestamp(),
+      approvedByUid: null,
+      approvedAt: null,
+      rejectedReason: null,
+      batchId: subRef.id,
+      teacherName,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+
+  return { submissionId: subRef.id, submittedCount: rows.length, replacedPendingCount, conflicts: [] };
+}
+
+// ==================== ADMIN QUEUE / APPROVE / REJECT ====================
+
+interface LoadedSubmission {
+  id: string;
+  doc: TimetableSubmission | null;
+  rows: Array<TimetableEntry & { ref: any }>;
+  scope: string[];
+  term: TermName;
+  year: number;
+}
+
+async function loadSubmission(submissionId: string): Promise<LoadedSubmission> {
+  const [docSnap, rowSnap] = await Promise.all([
+    getDoc(doc(db, SUBMISSIONS, submissionId)),
+    getDocs(query(collection(db, ENTRIES), where('batchId', '==', submissionId))),
+  ]);
+  const rows = rowSnap.docs
+    .map(d => ({ ref: d.ref, ...mapEntry(d.id, d.data()) }))
+    .filter(r => r.status === 'pending');
+  const sub = docSnap.exists() ? mapSubmission(docSnap.id, docSnap.data()!) : null;
+  if (!sub && rows.length === 0) throw new Error('This submission no longer exists.');
+  if (sub && sub.status !== 'pending') throw new Error(`This submission was already ${sub.status}.`);
+  return {
+    id: submissionId,
+    doc: sub,
+    rows,
+    // Legacy batches (no doc) replace only the subjects they contain.
+    scope: sub ? sub.scopeSlotIds : Array.from(new Set(rows.map(r => r.slotId))),
+    term: sub?.term ?? rows[0].term,
+    year: sub?.year ?? rows[0].year,
+  };
+}
+
+/**
+ * Approve: re-check clashes against the CURRENT live timetable, then in one
+ * transaction retire every live row of the submission's subjects and make
+ * the submitted rows live.
+ */
+export async function approveSubmission(
+  submissionId: string,
+  adminUid: string,
+): Promise<ApproveTimetableResult> {
+  const sub = await loadSubmission(submissionId);
+  const ctx = await getClashContext(sub.scope, sub.term, sub.year);
+  const conflicts = blockingConflicts(checkClashes(sub.rows, ctx));
+  if (conflicts.length > 0) {
+    throw new Error(`Cannot approve — the timetable has changed since this was submitted: ${conflictSummary(conflicts)}`);
+  }
+  const live = await entriesForSlots(sub.scope, sub.term, sub.year, 'active');
+
+  await runTransaction(db, async tx => {
+    if (sub.doc) {
+      const fresh = await tx.get(doc(db, SUBMISSIONS, sub.id));
+      if (!fresh.exists() || fresh.data()?.status !== 'pending') {
+        throw new Error('This submission was changed by someone else. Refresh and try again.');
+      }
+      tx.set(
+        doc(db, SUBMISSIONS, sub.id),
+        { status: 'approved', decidedBy: adminUid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp() },
+        { merge: true },
+      );
+    }
+    for (const a of live) {
+      tx.set(doc(db, ENTRIES, a.id), { status: 'archived', updatedAt: serverTimestamp() }, { merge: true });
+    }
+    for (const p of sub.rows) {
+      tx.set(
+        p.ref,
+        { status: 'active', approvedByUid: adminUid, approvedAt: serverTimestamp(), updatedAt: serverTimestamp() },
+        { merge: true },
+      );
+    }
+  });
+
+  return { submissionId, approvedCount: sub.rows.length, archivedCount: live.length };
+}
+
+export async function rejectSubmission(
+  submissionId: string,
+  reason: string,
+  adminUid: string | null = null,
+): Promise<RejectTimetableResult> {
+  const sub = await loadSubmission(submissionId);
+  const why = reason?.trim() || 'Rejected by admin.';
+  const batch = writeBatch(db);
+  for (const r of sub.rows) {
+    batch.set(r.ref, { status: 'rejected', rejectedReason: why, updatedAt: serverTimestamp() }, { merge: true });
+  }
+  if (sub.doc) {
+    batch.set(
+      doc(db, SUBMISSIONS, sub.id),
+      { status: 'rejected', rejectedReason: why, decidedBy: adminUid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp() },
+      { merge: true },
+    );
+  }
+  await batch.commit();
+  return { submissionId, rejectedCount: sub.rows.length };
+}
+
+/** Admin approval queue, each with a fresh clash check and a before/after. */
+export async function getPendingSubmissions(): Promise<PendingSubmission[]> {
+  const [docSnap, rowSnap] = await Promise.all([
+    getDocs(query(collection(db, SUBMISSIONS), where('status', '==', 'pending'))),
+    getDocs(query(collection(db, ENTRIES), where('status', '==', 'pending'))),
+  ]);
+  const ids = new Set<string>(docSnap.docs.map(d => d.id));
+  for (const r of rowSnap.docs) {
+    const e = mapEntry(r.id, r.data());
+    ids.add(e.batchId ?? `${e.submittedByUid}__${tsToMillis(r.data().submittedAt)}`);
+  }
+
+  const out: PendingSubmission[] = [];
+  for (const id of ids) {
+    let sub: LoadedSubmission;
+    try {
+      sub = await loadSubmission(id);
+    } catch {
+      continue;
+    }
+    const [ctx, replaced] = await Promise.all([
+      getClashContext(sub.scope, sub.term, sub.year),
+      entriesForSlots(sub.scope, sub.term, sub.year, 'active'),
+    ]);
+    const entries = sub.rows.map(({ ref: _ref, ...e }) => e as TimetableEntry);
+    const classIds = Array.from(new Set(sub.scope.map(s => ctx.slots.get(s)?.classId).filter(Boolean))) as string[];
+    out.push({
+      id,
+      submittedByUid: sub.doc?.teacherId ?? entries[0]?.submittedByUid ?? '',
+      submittedByName: sub.doc?.teacherName ?? (sub.rows[0] as any)?.teacherName ?? 'Teacher',
+      submittedAt: sub.doc?.submittedAt ?? new Date(tsToMillis(entries[0]?.submittedAt) || Date.now()),
+      entries,
+      scopeSlotIds: sub.scope,
+      replacedEntries: replaced,
+      classIds,
+      classNames: classIds.map(c => Array.from(ctx.slots.values()).find(s => s.classId === c)?.className ?? c),
+      term: sub.term,
+      year: sub.year,
+      conflicts: blockingConflicts(checkClashes(sub.rows, ctx)),
+    });
+  }
+  return out.sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime());
+}
+
+/** A teacher's own submissions this term, newest first (for status badges). */
+export async function getMySubmissions(
+  teacherId: string,
+  term: TermName,
+  year: number,
+): Promise<Array<TimetableSubmission & { entries: TimetableEntry[] }>> {
+  const snap = await getDocs(query(collection(db, SUBMISSIONS), where('teacherId', '==', teacherId)));
+  const subs = snap.docs
+    .map(d => mapSubmission(d.id, d.data()))
+    .filter(s => s.term === term && s.year === year && (s.status === 'pending' || s.status === 'rejected'))
+    .sort((a, b) => (b.submittedAt?.getTime() ?? 0) - (a.submittedAt?.getTime() ?? 0));
+  const out = [];
+  for (const s of subs) {
+    const rows = await getDocs(query(collection(db, ENTRIES), where('batchId', '==', s.id)));
+    out.push({ ...s, entries: rows.docs.map(d => mapEntry(d.id, d.data())) });
+  }
+  return out;
+}
+
+export { dayName, bellOrder };
+
+// ==================== SCHOOL DAY BOARD (WHO IS TEACHING) ====================
+
+export type BoardStatus = 'taken' | 'in-progress' | 'missed' | 'uncovered' | 'upcoming';
+
+export interface BoardLesson {
+  /** Resolved at the moment the period starts on that date. */
+  row: ResolvedTimetableEntry;
+  status: BoardStatus;
+  markedByName: string | null;
+}
+
+export interface BoardClass {
+  classId: string;
+  className: string;
+  lessons: BoardLesson[];
+  /** Daily register (form teacher) taken for this date. */
+  dailyTaken: boolean;
+  dailyMarkedByName: string | null;
+}
+
+export interface SchoolDayBoard {
+  date: string;
+  dayOfWeek: 1 | 2 | 3 | 4 | 5 | null;
+  holiday: SchoolHoliday | null;
+  term: TermName;
+  year: number;
+  periods: Period[];
+  classes: BoardClass[];
+}
+
+interface DaySession {
+  classId: string;
+  kind: string;
+  period?: number;
+  subject?: string;
+  normalizedSubject?: string;
+  markedBy: string;
+  markedByName: string;
+}
+
+/** Does a register belong to this timetable row? */
+export function sessionMatchesRow(s: DaySession, e: TimetableEntry): boolean {
+  if (s.kind !== 'periodic' || s.classId !== e.classId || s.period !== e.periodIndex) return false;
+  if (s.normalizedSubject) return s.normalizedSubject === e.normalizedSubject;
+  return (
+    (s.subject ?? '').trim().toLowerCase() === e.subject.trim().toLowerCase() ||
+    normalizeSubjectName(s.subject ?? '') === e.normalizedSubject
+  );
+}
+
+/**
+ * One date, every class: each lesson with who teaches it (cover worked out
+ * for that date) and whether its register was taken; plus the daily register.
+ *   taken        register saved
+ *   in-progress  lesson running now, no register yet
+ *   missed       lesson over, no register
+ *   uncovered    nobody can teach it (vacant, or owner on leave with no cover)
+ *   upcoming     later today / a future date
+ */
+export async function getSchoolDayBoard(dateYMD: string, at: Date = new Date()): Promise<SchoolDayBoard> {
+  const day = new Date(`${dateYMD}T12:00:00`);
+  const dow = toWeekday1to5(day);
+  const { term, year } = getCurrentAcademicTerm(day);
+  const [holiday, { periods, map }, classSnap] = await Promise.all([
+    getHolidayCovering(dateYMD),
+    getPeriodMap(year),
+    getDocs(collection(db, 'classes')),
+  ]);
+  const board: SchoolDayBoard = { date: dateYMD, dayOfWeek: dow, holiday, term, year, periods, classes: [] };
+  if (dow === null || holiday) return board;
+
+  const [raw, sessionSnap, leaveSnap] = await Promise.all([
+    getEntriesByFilter([
+      { field: 'term', value: term },
+      { field: 'year', value: year },
+      { field: 'status', value: 'active' },
+      { field: 'dayOfWeek', value: dow },
+    ]),
+    getDocs(query(collection(db, 'attendance_sessions'), where('date', '==', dateYMD))),
+    getDocs(query(collection(db, USERS), where('status', '==', 'on_leave'))),
+  ]);
+  const onLeave = new Set(leaveSnap.docs.map(d => d.id));
+  const sessions = sessionSnap.docs.map(d => d.data() as DaySession);
+  const slotMap = await getSlotsByIds(raw.map(e => e.slotId));
+  const nowMin = at.getHours() * 60 + at.getMinutes();
+  const today = formatLocalYMD(at);
+
+  const classes = new Map<string, BoardClass>();
+  const classFor = (id: string, name: string) => {
+    let c = classes.get(id);
+    if (!c) {
+      const daily = sessions.find(s => s.classId === id && s.kind === 'daily');
+      c = { classId: id, className: name, lessons: [], dailyTaken: !!daily, dailyMarkedByName: daily?.markedByName ?? null };
+      classes.set(id, c);
+    }
+    return c;
+  };
+  for (const d of classSnap.docs) {
+    const data = d.data();
+    if (data.isActive === false) continue;
+    classFor(d.id, data.name || d.id);
+  }
+
+  for (const e of expandLegacyDoubles(raw, periods)) {
+    const period = map.get(e.periodIndex);
+    if (!period || period.kind !== 'lesson') continue;
+    const row = resolveRow(e, slotMap.get(e.slotId) ?? null, map, periodStartOn(dateYMD, period));
+    const session = sessions.find(s => sessionMatchesRow(s, e));
+    const ended = dateYMD < today || (dateYMD === today && nowMin >= hhmmToMinutes(period.endTime));
+    const started = dateYMD < today || (dateYMD === today && nowMin >= hhmmToMinutes(period.startTime));
+    const uncovered =
+      !row.operatorTeacherId || (row.operatorRole === 'owner' && onLeave.has(row.operatorTeacherId));
+    const status: BoardStatus = session
+      ? 'taken'
+      : uncovered
+        ? 'uncovered'
+        : ended
+          ? 'missed'
+          : started
+            ? 'in-progress'
+            : 'upcoming';
+    classFor(e.classId, e.className).lessons.push({ row, status, markedByName: session?.markedByName ?? null });
+  }
+
+  board.classes = Array.from(classes.values())
+    .map(c => ({ ...c, lessons: c.lessons.sort((a, b) => a.row.entry.periodIndex - b.row.entry.periodIndex) }))
+    .sort((a, b) => a.className.localeCompare(b.className, undefined, { numeric: true }));
+  return board;
+}
+
+// ==================== COVERAGE (built on the board) ====================
+
+const hasStarted = (l: BoardLesson) => l.status !== 'upcoming';
+
+/** Per class: lessons that have started vs registers taken. */
+export async function getCoverageForDate(dateYMD: string, at: Date = new Date()): Promise<CoverageRow[]> {
+  const board = await getSchoolDayBoard(dateYMD, at);
+  const sessionsByClass = new Map<string, CoverageRow['markedSessions']>();
+  const snap = board.classes.length
+    ? await getDocs(query(collection(db, 'attendance_sessions'), where('date', '==', dateYMD)))
+    : { docs: [] as any[] };
+  for (const s of snap.docs) {
+    const d = s.data() as DaySession;
+    if (d.kind !== 'periodic') continue;
+    const arr = sessionsByClass.get(d.classId) ?? [];
+    arr.push({
+      period: d.period ?? 0,
+      subject: d.subject ?? '',
+      normalizedSubject: d.normalizedSubject ?? normalizeSubjectName(d.subject ?? ''),
+      markedBy: d.markedBy,
+      markedByName: d.markedByName,
+    });
+    sessionsByClass.set(d.classId, arr);
+  }
+  return board.classes
+    .filter(c => c.lessons.length > 0)
+    .map(c => {
+      const expected = c.lessons.filter(hasStarted);
+      const missing = expected.filter(l => l.status !== 'taken');
+      const marked = sessionsByClass.get(c.classId) ?? [];
+      return {
+        classId: c.classId,
+        className: c.className,
+        expectedEntries: expected.map(l => l.row),
+        expectedCount: expected.length,
+        markedSessions: marked,
+        markedCount: expected.length - missing.length,
+        missingEntries: missing.map(l => l.row),
+        missingCount: missing.length,
+        coverageRate:
+          expected.length === 0 ? 100 : Math.round(((expected.length - missing.length) / expected.length) * 100),
+      };
+    });
+}
+
+/** Per teacher who taught (operator on that date): their lessons vs registers. */
+export async function getCoverageForTeachers(dateYMD: string, at: Date = new Date()): Promise<TeacherCoverageRow[]> {
+  const board = await getSchoolDayBoard(dateYMD, at);
+  const lessons = board.classes.flatMap(c => c.lessons).filter(hasStarted);
+  const byTeacher = new Map<string, BoardLesson[]>();
+  const uncoveredOwners = new Set<string>();
+  for (const l of lessons) {
+    if (l.status === 'uncovered') {
+      if (l.row.ownerTeacherId) uncoveredOwners.add(l.row.ownerTeacherId);
+      continue;
+    }
+    const t = l.row.operatorTeacherId;
+    if (!t) continue;
+    const arr = byTeacher.get(t) ?? [];
+    arr.push(l);
+    byTeacher.set(t, arr);
+  }
+  const ids = Array.from(new Set([...byTeacher.keys(), ...uncoveredOwners]));
+  const users = new Map<string, { name: string; status: TeacherCoverageRow['status'] }>();
+  for (let i = 0; i < ids.length; i += 30) {
+    const snap = await getDocs(query(collection(db, USERS), where('__name__', 'in', ids.slice(i, i + 30))));
+    for (const u of snap.docs) {
+      const d = u.data();
+      users.set(u.id, { name: d.fullName || d.name || 'Teacher', status: d.status || 'active' });
+    }
+  }
+  const rows: TeacherCoverageRow[] = [];
+  for (const id of ids) {
+    const mine = byTeacher.get(id) ?? [];
+    const missing = mine.filter(l => l.status !== 'taken');
+    const meta = users.get(id) ?? {
+      name: mine[0]?.row.operatorTeacherName ?? 'Teacher',
+      status: 'active' as const,
+    };
+    rows.push({
+      teacherId: id,
+      teacherName: meta.name,
+      status: meta.status,
+      expectedEntries: mine.map(l => l.row),
+      expectedCount: mine.length,
+      markedCount: mine.length - missing.length,
+      missingEntries: missing.map(l => l.row),
+      missingCount: missing.length,
+      coverageRate: mine.length === 0 ? 100 : Math.round(((mine.length - missing.length) / mine.length) * 100),
+      hasUncoveredSlots: uncoveredOwners.has(id),
+    });
+  }
+  return rows.sort((a, b) => a.coverageRate - b.coverageRate || a.teacherName.localeCompare(b.teacherName));
 }
 
 // ==================== EXPORTS ====================
 
 export const timetableService = {
-  // Periods
   listPeriods,
   getPeriodById,
   upsertPeriod,
   deletePeriod,
   seedDefaultPeriods,
-
-  // Holidays
   listHolidays,
   listHolidaysForYear,
   upsertHoliday,
   deleteHoliday,
   getHolidayCovering,
-
-  // Reads
   getEntriesForSlot,
   getTimetableForTeacher,
   getTimetableForClass,
   getTodayTimetableForTeacher,
   getCurrentPeriod,
   getMyTimetableClasses,
-
-  // Workflow
+  getClashContext,
   submitTimetable,
   approveSubmission,
   rejectSubmission,
   getPendingSubmissions,
-
-  // Coverage
+  getMySubmissions,
+  getSchoolDayBoard,
   getCoverageForDate,
   getCoverageForTeachers,
-
-  // Utilities
   formatLocalYMD,
-  detectAllConflicts,
-  attachHolidayWarnings,
 };

@@ -297,6 +297,26 @@ export async function getSlot(classId: string, subject: string): Promise<ClassSl
   return snap.exists() ? mapSlot(snap.id, snap.data()) : null;
 }
 
+/**
+ * A class's slot for a subject, whatever spelling the caller has: the
+ * normalized key, the key exactly as given (older slots were keyed before
+ * the subject list changed, e.g. 'Computer Studies' vs 'ICT'), or any slot
+ * of the class whose subject normalizes to the same name.
+ */
+export async function findSlotForSubject(classId: string, subject: string): Promise<ClassSlot | null> {
+  const direct = await getSlot(classId, subject);
+  if (direct) return direct;
+  const asGiven = await getDoc(doc(db, SLOTS, slotIdForNormalized(classId, subject.trim())));
+  if (asGiven.exists()) return mapSlot(asGiven.id, asGiven.data());
+  const want = toNormalized(subject);
+  const snap = await getDocs(query(collection(db, SLOTS), where('classId', '==', classId)));
+  for (const d of snap.docs) {
+    const s = mapSlot(d.id, d.data());
+    if (toNormalized(s.normalizedSubject || s.subject) === want || toNormalized(s.subject) === want) return s;
+  }
+  return null;
+}
+
 export async function getSlotById(slotId: string): Promise<ClassSlot | null> {
   const snap = await getDoc(doc(db, SLOTS, slotId));
   return snap.exists() ? mapSlot(snap.id, snap.data()) : null;

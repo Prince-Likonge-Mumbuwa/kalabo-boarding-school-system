@@ -159,6 +159,8 @@ export interface ClassSMSPreview {
   encoding: 'GSM-7' | 'UCS-2' | 'mixed';
   totalCostZmw: number;
   previews: SMSPreview[];
+  /** Ready messages whose report card is still provisional (marks pending). */
+  provisionalCount?: number;
   error?: string;
 }
 
@@ -331,14 +333,22 @@ export const smsService = {
     try {
       console.log(`🔍 Previewing bulk SMS for class ${classId} — ${term} ${year}`);
 
-      const learners = await resultsService.getLearnersInClass(classId);
+      // One grid load for the whole class — the same report cards the admin
+      // sees, so every SMS carries the card's average and grade.
+      const { rosterSize, messages } = await resultsService.formatClassResultsSMSAsync(classId, term, year, options);
 
-      const previews = await Promise.all(
-        learners.map(learner => smsService.previewStudentSMS(learner.id, term, year, options))
-      );
+      const previews: SMSPreview[] = messages.map(m => ({
+        success: true,
+        studentId: m.studentId,
+        studentName: m.studentName,
+        body: m.body,
+        segments: m.segments,
+        estimatedCostZmw: m.segments.segments * COST_PER_SEGMENT_ZMW,
+      }));
 
-      const ready = previews.filter(p => p.success);
-      const skippedNoResults = previews.length - ready.length;
+      const ready = previews;
+      const skippedNoResults = Math.max(0, rosterSize - ready.length);
+      const provisionalCount = messages.filter(m => m.payload.provisional).length;
 
       const totalSegments = ready.reduce((sum, p) => sum + p.segments.segments, 0);
       const totalCharacters = ready.reduce((sum, p) => sum + p.segments.length, 0);
@@ -363,7 +373,8 @@ export const smsService = {
         classId,
         term,
         year,
-        totalStudents: previews.length,
+        totalStudents: rosterSize,
+        provisionalCount,
         readyCount: ready.length,
         skippedNoResults,
         totalSegments,
@@ -476,22 +487,15 @@ export const smsService = {
     try {
       console.log(`📱 Preparing bulk SMS for class ${classId} — ${term} ${year}`);
 
-      const learners = await resultsService.getLearnersInClass(classId);
-
-      const prepared = await Promise.all(
-        learners.map(async learner => {
-          const built = await buildCompactBody(learner.id, term, year, options);
-          return {
-            studentId: learner.id,
-            studentName: learner.name,
-            body: built?.body || null,
-            segments: built?.segments || null,
-          };
-        })
-      );
-
-      const ready = prepared.filter(p => p.body !== null);
-      const skippedNoResults = prepared.length - ready.length;
+      // One grid load for the whole class (same cards as the admin view).
+      const { rosterSize, messages } = await resultsService.formatClassResultsSMSAsync(classId, term, year, options);
+      const ready = messages.map(m => ({
+        studentId: m.studentId,
+        studentName: m.studentName,
+        body: m.body as string | null,
+        segments: m.segments as SMSSegmentInfo | null,
+      }));
+      const skippedNoResults = Math.max(0, rosterSize - ready.length);
 
       if (ready.length === 0) {
         throw new Error('No students have results to send');

@@ -22,6 +22,9 @@ import ClassManagement from "./pages/admin/ClassManagement";
 import TeacherManagement from "./pages/admin/TeacherManagement";
 import ExamManagement from "./pages/admin/ExamManagement";
 import ResultsEntryMonitor from "./pages/admin/ResultsEntryMonitor";
+import ResultsDataCheck from "./pages/admin/ResultsDataCheck";
+import TimetableDataCheck from "./pages/admin/TimetableDataCheck";
+import LiveTimetable from "./pages/admin/LiveTimetable";
 import ReportCards from "./pages/admin/ReportCards";
 import AdminResultsAnalysis from "./pages/admin/AdminResultsAnalysis";
 import SbaSchoolOverview from "./pages/admin/SbaSchoolOverview";
@@ -99,6 +102,27 @@ const App = () => (
             <Route path="/dashboard/admin/results-monitor" element={
               <ProtectedRoute allowedRoles={['admin']}>
                 <ResultsEntryMonitor />
+              </ProtectedRoute>
+            } />
+
+            {/* Admin: who is teaching now / on a date */}
+            <Route path="/dashboard/admin/timetable-live" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <LiveTimetable />
+              </ProtectedRoute>
+            } />
+
+            {/* Admin timetable data check (read-only check, explicit fixes) */}
+            <Route path="/dashboard/admin/timetable-data-check" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <TimetableDataCheck />
+              </ProtectedRoute>
+            } />
+
+            {/* Admin results data check (read-only check, explicit fixes) */}
+            <Route path="/dashboard/admin/results-data-check" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <ResultsDataCheck />
               </ProtectedRoute>
             } />
 

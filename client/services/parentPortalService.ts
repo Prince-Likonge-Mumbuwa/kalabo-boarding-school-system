@@ -113,15 +113,17 @@ class ParentPortalService {
     term: string,
     year: number
   ): Promise<ChildResultBundle> {
-    // Prefer custom student id; the service resolves both custom and document ids.
-    const lookupId = child.studentId || child.documentId;
+    // Prefer the document id (unique); the service also accepts custom ids.
+    const lookupId = child.documentId || child.studentId;
 
     try {
+      // Same shared-grid report card the admin sees (publicView: parents are
+      // signed out).
       const reportCard = await resultsService.generateReportCard(
         lookupId,
         term,
         year,
-        { includeIncomplete: true, markMissing: true }
+        { includeIncomplete: true, markMissing: true, publicView: true }
       );
 
       if (!reportCard) {

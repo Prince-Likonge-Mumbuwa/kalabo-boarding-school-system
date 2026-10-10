@@ -22,6 +22,26 @@ import {
   limit,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { getAuth } from 'firebase/auth';
+import type { DocumentData } from 'firebase/firestore';
+import * as engine from '@/services/assignmentEngine';
+import {
+  MARK,
+  buildReportCard,
+  classPositions,
+  gradeForPercentage,
+  learnerProgress,
+  subjectProgress,
+  type GridCell,
+  type ReportCard,
+} from '@/services/resultsGrid';
+import {
+  loadClassGrid,
+  loadClassRoster,
+  loadClassSubjects,
+  slotKeyFor,
+  type LoadedClassGrid,
+} from '@/services/resultsGridLoader';
 
 // ==================== ENHANCED TYPES ====================
 
@@ -48,6 +68,21 @@ export interface StudentResult {
   createdAt: string;
   updatedAt: string;
   customStudentId?: string; // For reference/debugging
+  /** Slot key segment (class_slots/{classId}__{normalizedSubject}) — used by Firestore rules. */
+  normalizedSubject?: string;
+  /** uid that first saved this row (set once, never changed). */
+  enteredBy?: string;
+  /** uid of the last save. */
+  lastEditedBy?: string;
+}
+
+export interface SaveClassResultsResponse {
+  success: boolean;
+  count: number;
+  results: StudentResult[];
+  overwritten: boolean;
+  /** Rows that were NOT saved, with the reason (never dropped silently). */
+  skipped: Array<{ studentId: string; studentName: string; reason: string }>;
 }
 
 export interface SubjectResultSummary {
@@ -66,33 +101,11 @@ export interface SubjectResultSummary {
   missingExams: string[];
 }
 
-export interface ReportCardData {
-  id: string;
-  studentId: string;
-  studentName: string;
-  className: string;
-  classId: string;
-  form: string;
-  overallGrade: number;
-  overallGradeDescription: string;
-  position: string;
-  gender: string;
-  totalMarks: number;
-  percentage: number;
-  status: 'pass' | 'fail';
-  improvement: 'improved' | 'declined' | 'stable';
-  subjects: SubjectResultSummary[];
-  attendance: number;
-  teachersComment: string;
-  parentsEmail: string;
-  parentsPhone?: string;
-  generatedDate: string;
-  term: string;
-  year: number;
-  isComplete: boolean;
-  completionPercentage: number;
-  documentId?: string;
-}
+/**
+ * A report card. Built by the shared grid (resultsGrid.buildReportCard), so
+ * the admin card, PDFs, SMS and Parent Portal all use the same numbers.
+ */
+export type ReportCardData = ReportCard;
 
 export interface StudentProgress {
   studentId: string;
@@ -119,6 +132,9 @@ export interface StudentProgress {
   missingSubjects: number;
   totalSubjects: number;
   documentId?: string;
+  gender?: string;
+  /** Exams active for the term (the only ones counted). */
+  activeExams?: string[];
 }
 
 export interface ReportReadinessCheck {
@@ -187,6 +203,14 @@ export interface SubjectCompletionStatus {
     week8: boolean;
     endOfTerm: boolean;
   };
+  /** Active learners (document ids) still without a mark, per exam. */
+  missingStudentIds?: {
+    week4: string[];
+    week8: string[];
+    endOfTerm: string[];
+  };
+  /** Exams active for the term (the only ones counted). */
+  activeExams?: string[];
 }
 
 export interface BulkReportOperation {
@@ -217,6 +241,8 @@ export interface SMSStudentPayload {
   subjects: SMSSubjectLine[];
   overallPercentage: number;
   overallGrade: number;
+  /** Some subjects still have pending marks — the SMS says PROVISIONAL. */
+  provisional?: boolean;
 }
 
 export interface SMSFormatOptions {
@@ -422,18 +448,8 @@ export const getGradeShortCode = (gradeNum: number): string => {
   return map[gradeNum] || '-';
 };
 
-export const calculateGrade = (percentage: number): number => {
-  if (percentage < 0) return -1;
-  if (percentage >= 75) return 1;
-  if (percentage >= 70) return 2;
-  if (percentage >= 65) return 3;
-  if (percentage >= 60) return 4;
-  if (percentage >= 55) return 5;
-  if (percentage >= 50) return 6;
-  if (percentage >= 45) return 7;
-  if (percentage >= 40) return 8;
-  return 9;
-};
+/** ECZ grade 1–9 (single definition lives in resultsGrid). */
+export const calculateGrade = (percentage: number): number => gradeForPercentage(percentage);
 
 export const getGradeDescription = (grade: number): string => {
   if (grade === -1) return 'Incomplete';
@@ -506,7 +522,7 @@ export const formatStudentResultsSMS = (
     includeGrade && payload.overallGrade > 0
       ? ` (${getGradeShortCode(payload.overallGrade)})`
       : '';
-  lines.push(`AVG ${payload.overallPercentage}${gradePart}`);
+  lines.push(`AVG ${payload.overallPercentage}${gradePart}${payload.provisional ? ' PROVISIONAL' : ''}`);
 
   // --- Footer ---
   if (footer && footer.trim()) {
@@ -640,51 +656,45 @@ class ResultsService {
     }
   }
 
+  /**
+   * Find a learner by Firestore document id (preferred) or custom id.
+   * If several learners share a custom id, an active one is preferred.
+   */
   private async resolveStudentDocument(inputId: string): Promise<{
     documentId: string;
     customId: string;
     data: any;
   } | null> {
+    if (!inputId) return null;
     try {
-      const customIdQuery = query(
-        this.learnersCollection,
-        where('studentId', '==', inputId)
-      );
-      const customSnapshot = await getDocs(customIdQuery);
-
-      if (!customSnapshot.empty) {
-        const doc = customSnapshot.docs[0];
-        const data = doc.data();
-        return {
-          documentId: doc.id,
-          customId: inputId,
-          data
-        };
-      }
-
-      const docRef = doc(this.learnersCollection, inputId);
-      const docSnap = await getDoc(docRef);
-
+      const docSnap = await getDoc(doc(this.learnersCollection, inputId));
       if (docSnap.exists()) {
         const data = docSnap.data();
-        const customId = data.studentId || data.id || data.registrationNumber || data.admissionNumber || inputId;
-
-        return {
-          documentId: inputId,
-          customId,
-          data
-        };
+        return { documentId: inputId, customId: data.studentId || inputId, data };
       }
-
-      return null;
-    } catch (error) {
-      console.error('Error resolving student document:', error);
-      return null;
+    } catch {
+      // not a valid document id — fall through to the custom-id lookup
     }
+    const customSnapshot = await getDocs(query(this.learnersCollection, where('studentId', '==', inputId)));
+    if (customSnapshot.empty) return null;
+    const pick =
+      customSnapshot.docs.find(d => (d.data().status ?? 'active') === 'active') ?? customSnapshot.docs[0];
+    return { documentId: pick.id, customId: inputId, data: pick.data() };
   }
 
   // ==================== TEACHER ASSIGNMENTS ====================
 
+  /**
+   * The subjects a class currently takes and who is responsible for each.
+   *
+   * Source: class_slots (or current assignment rows before the slot
+   * migration) via the shared grid loader. Ended assignment rows and the
+   * Form Teacher role are NOT subjects — counting them made removed subjects
+   * and the Form Teacher show up as "expected" on report cards.
+   *
+   * `teacherId` is whoever may enter marks right now (live cover/TP, else
+   * the owner). `id` is the slot key.
+   */
   async getTeacherAssignmentsForClass(classId: string): Promise<Array<{
     id: string;
     subject: string;
@@ -693,53 +703,22 @@ class ResultsService {
     teacherName: string;
     classId: string;
   }>> {
-    try {
-      const assignmentsQuery = query(
-        this.teacherAssignmentsCollection,
-        where('classId', '==', classId)
-      );
-
-      const snapshot = await getDocs(assignmentsQuery);
-
-      if (snapshot.empty) {
-        console.warn(`⚠️ No teacher assignments for class ${classId}`);
-        return [];
-      }
-
-      return snapshot.docs.map(doc => {
-        const data = doc.data();
-        const subjectName = data.subject || '';
-        const normalizedSubject = normalizeSubjectName(subjectName);
-
-        return {
-          id: doc.id,
-          subject: subjectName,
-          subjectId: normalizedSubject,
-          teacherId: data.teacherId || 'unknown',
-          teacherName: data.teacherName || 'Not Assigned',
-          classId: data.classId,
-        };
-      });
-    } catch (error) {
-      console.error('❌ Error getting teacher assignments:', error);
-      return [];
-    }
+    const subjects = await loadClassSubjects(classId);
+    return subjects
+      .filter(s => !s.isVacant)
+      .map(s => ({
+        id: s.slotKey,
+        subject: s.subjectName,
+        subjectId: s.subjectId,
+        teacherId: s.operatorTeacherId || s.ownerTeacherId || 'unknown',
+        teacherName: s.operatorTeacherName || s.ownerTeacherName || 'Not Assigned',
+        classId,
+      }));
   }
 
   async getExpectedSubjectsForClass(classId: string): Promise<Array<{ id: string; name: string }>> {
-    try {
-      const assignments = await this.getTeacherAssignmentsForClass(classId);
-
-      const subjectMap = new Map<string, string>();
-      assignments.forEach(assignment => {
-        subjectMap.set(assignment.subjectId, assignment.subject);
-      });
-
-      return Array.from(subjectMap.entries()).map(([id, name]) => ({ id, name }));
-    } catch (error) {
-      console.error('❌ Error getting expected subjects:', error);
-      return [];
-    }
+    const assignments = await this.getTeacherAssignmentsForClass(classId);
+    return assignments.map(a => ({ id: a.subjectId, name: a.subject }));
   }
 
   // ==================== RESULTS QUERIES ====================
@@ -882,7 +861,8 @@ class ResultsService {
       );
 
       const snapshot = await getDocs(q);
-      const results = snapshot.docs.map(doc => doc.data() as StudentResult);
+      // Use the document id: older rows may lack an `id` field.
+      const results = snapshot.docs.map(d => ({ ...(d.data() as StudentResult), id: d.id }));
 
       return {
         exists: results.length > 0,
@@ -891,12 +871,29 @@ class ResultsService {
       };
     } catch (error) {
       console.error('Error checking existing results:', error);
-      return { exists: false, count: 0, results: [] };
+      // Rethrow: treating a failed read as "nothing saved" would make a save
+      // overwrite rows it thinks are new.
+      throw error;
     }
   }
 
   // ==================== SAVE RESULTS ====================
 
+  /**
+   * Save marks for one class + subject + exam.
+   *
+   * - Learners are matched by Firestore document id (custom ids are still
+   *   accepted for older callers). Learners who are not active members of the
+   *   class are NOT silently dropped: they are returned in `skipped`.
+   * - Marks must be -1 (absent), -2 (not conducted) or 0..totalMarks.
+   * - The subject's owner (even while covered) or a live cover/TP teacher
+   *   may save. Firestore rules enforce the same once
+   *   system/assignmentEngine.enforceAuthority is switched on.
+   * - Rows carry `normalizedSubject` (the slot key) plus `enteredBy` (set
+   *   once, on create) and `lastEditedBy`, which the rules require.
+   * - Only learners passed in `results` are written; other saved marks for
+   *   the same exam are left as they are.
+   */
   async saveClassResults(
     data: {
       classId: string;
@@ -917,114 +914,182 @@ class ResultsService {
       }>;
     },
     options?: { overwrite?: boolean }
-  ): Promise<{ success: boolean; count: number; results: StudentResult[]; overwritten: boolean }> {
-    try {
-      const normalizedSubjectId = normalizeSubjectName(data.subjectId);
-      const normalizedSubjectName = normalizeSubjectName(data.subjectName);
+  ): Promise<SaveClassResultsResponse> {
+    const normalizedSubjectId = normalizeSubjectName(data.subjectId);
+    const normalizedSubjectName = normalizeSubjectName(data.subjectName);
+    const year = Number(data.year);
+    const totalMarks = Number(data.totalMarks);
 
-      const existing = await this.checkExistingResults(
-        data.classId,
-        normalizedSubjectId,
-        data.examType,
-        data.term,
-        data.year
-      );
-
-      if (existing.exists && !options?.overwrite) {
-        throw new Error(
-          `Results already exist for ${normalizedSubjectName} - ${data.examType}. ` +
-          `Use overwrite option to replace.`
-        );
-      }
-
-      const batch = writeBatch(db);
-      const savedResults: StudentResult[] = [];
-      const now = new Date().toISOString();
-
-      const classDoc = await getDoc(doc(this.classesCollection, data.classId));
-      const classData = classDoc.data();
-      const form = classData?.level?.toString() || '1';
-
-      const resolvedStudents = await Promise.all(
-        data.results.map(async (result) => ({
-          result,
-          studentDoc: await this.resolveStudentDocument(result.studentId),
-        }))
-      );
-
-      for (const { result, studentDoc } of resolvedStudents) {
-        if (!studentDoc) {
-          console.warn(`⚠️ Could not resolve student ID: ${result.studentId}, skipping...`);
-          continue;
-        }
-
-        let percentage = -1;
-        let grade = -1;
-        let status: StudentResult['status'] = 'not_entered';
-
-        if (result.marks === -2) {
-          status = 'not_conducted';
-          percentage = -1;
-          grade = -1;
-        } else if (result.marks === -1) {
-          status = 'absent';
-          percentage = -1;
-          grade = -1;
-        } else if (result.marks >= 0) {
-          percentage = Math.round((result.marks / data.totalMarks) * 100);
-          grade = calculateGrade(percentage);
-          status = 'entered';
-        }
-
-        const resultData: StudentResult = {
-          id: this.generateResultId(
-            studentDoc.documentId,
-            normalizedSubjectId,
-            data.examType,
-            data.term,
-            data.year
-          ),
-          studentId: studentDoc.documentId,
-          studentName: studentDoc.data.name || result.studentName,
-          classId: data.classId,
-          className: data.className,
-          form,
-          subjectId: normalizedSubjectId,
-          subjectName: normalizedSubjectName,
-          teacherId: data.teacherId,
-          teacherName: data.teacherName,
-          examType: data.examType,
-          examName: data.examName,
-          marks: result.marks,
-          totalMarks: data.totalMarks,
-          percentage,
-          grade,
-          term: data.term,
-          year: data.year,
-          status,
-          createdAt: now,
-          updatedAt: now,
-          customStudentId: studentDoc.customId
-        };
-
-        const docRef = doc(this.resultsCollection, resultData.id);
-        batch.set(docRef, resultData, { merge: true });
-        savedResults.push(resultData);
-      }
-
-      await batch.commit();
-      console.log(`✅ Saved ${savedResults.length} results`);
-
-      return {
-        success: true,
-        count: savedResults.length,
-        results: savedResults,
-        overwritten: existing.exists
-      };
-    } catch (error) {
-      console.error('Error saving results:', error);
-      throw error;
+    if (!Number.isInteger(year)) throw new Error('Invalid year.');
+    if (!(totalMarks > 0)) {
+      throw new Error('Total marks for this exam are not set. Ask the admin to set them in Exam Management.');
     }
+
+    // Who may enter marks: the subject's owner (always, even while covered)
+    // or a cover/TP teacher while their cover is live. Same rule as
+    // firestore.rules (canEnterMarks).
+    // The class's real slot (also when it was keyed under an older
+    // spelling); its id is what the Firestore rules check.
+    const slot = (await engine.isEngineReady())
+      ? await this.assertCanEnterMarks(data.teacherId, data.classId, data.subjectId)
+      : null;
+
+    const existing = await this.checkExistingResults(
+      data.classId, normalizedSubjectId, data.examType, data.term, year
+    );
+    if (existing.exists && !options?.overwrite) {
+      throw new Error(
+        `Results already exist for ${normalizedSubjectName} - ${data.examType}. ` +
+        `Use overwrite option to replace.`
+      );
+    }
+    const existingIds = new Set(existing.results.map(r => r.id));
+
+    const [classDoc, roster] = await Promise.all([
+      getDoc(doc(this.classesCollection, data.classId)),
+      loadClassRoster(data.classId),
+    ]);
+    const form = classDoc.data()?.level?.toString() || '1';
+    const byDocId = new Map(roster.map(l => [l.id, l]));
+    const byCustomId = new Map(roster.filter(l => l.studentId).map(l => [l.studentId, l]));
+
+    const uid = getAuth().currentUser?.uid ?? data.teacherId;
+    const slotKey = slot
+      ? slot.id.slice(data.classId.length + 2)
+      : slotKeyFor(data.classId, normalizedSubjectId);
+    const now = new Date().toISOString();
+
+    const saved: StudentResult[] = [];
+    const skipped: SaveClassResultsResponse['skipped'] = [];
+    const writes: Array<{ id: string; payload: Record<string, any> }> = [];
+
+    for (const r of data.results) {
+      const learner = byDocId.get(r.studentId) ?? byCustomId.get(r.studentId);
+      if (!learner) {
+        skipped.push({ studentId: r.studentId, studentName: r.studentName, reason: 'Not an active learner in this class' });
+        continue;
+      }
+      const marks = Number(r.marks);
+      const valid =
+        marks === MARK.ABSENT ||
+        marks === MARK.NOT_CONDUCTED ||
+        (Number.isFinite(marks) && marks >= 0 && marks <= totalMarks);
+      if (!valid) {
+        skipped.push({ studentId: r.studentId, studentName: r.studentName, reason: `Mark ${r.marks} is not between 0 and ${totalMarks}` });
+        continue;
+      }
+
+      let percentage = -1;
+      let grade = -1;
+      let status: StudentResult['status'];
+      if (marks === MARK.NOT_CONDUCTED) status = 'not_conducted';
+      else if (marks === MARK.ABSENT) status = 'absent';
+      else {
+        percentage = Math.round((marks / totalMarks) * 100);
+        grade = calculateGrade(percentage);
+        status = 'entered';
+      }
+
+      const id = this.generateResultId(learner.id, normalizedSubjectId, data.examType, data.term, year);
+      const isNew = !existingIds.has(id);
+      const resultData: StudentResult = {
+        id,
+        studentId: learner.id,
+        studentName: learner.name || r.studentName,
+        classId: data.classId,
+        className: data.className,
+        form,
+        subjectId: normalizedSubjectId,
+        subjectName: normalizedSubjectName,
+        normalizedSubject: slotKey,
+        teacherId: data.teacherId,
+        teacherName: data.teacherName,
+        examType: data.examType,
+        examName: data.examName,
+        marks,
+        totalMarks,
+        percentage,
+        grade,
+        term: data.term,
+        year,
+        status,
+        updatedAt: now,
+        lastEditedBy: uid,
+        customStudentId: learner.studentId || learner.id,
+        ...(isNew ? { createdAt: now, enteredBy: uid } : {}),
+      } as StudentResult;
+
+      writes.push({ id, payload: resultData });
+      saved.push(resultData);
+    }
+
+    // Firestore batches hold at most 500 writes.
+    for (let i = 0; i < writes.length; i += 450) {
+      const batch = writeBatch(db);
+      for (const w of writes.slice(i, i + 450)) {
+        batch.set(doc(this.resultsCollection, w.id), w.payload, { merge: true });
+      }
+      await batch.commit();
+    }
+    this.invalidateGrid(data.classId);
+
+    return {
+      success: true,
+      count: saved.length,
+      results: saved,
+      overwritten: existing.exists,
+      skipped,
+    };
+  }
+
+  /** Throws unless the teacher owns the slot or is its live cover/TP. */
+  private async assertCanEnterMarks(teacherId: string, classId: string, subject: string): Promise<engine.ClassSlot> {
+    const slot = await engine.findSlotForSubject(classId, subject);
+    const auth = engine.resolveAuthority(slot);
+    if (slot && (slot.ownerTeacherId === teacherId || auth.operatorTeacherId === teacherId)) return slot;
+    throw new engine.AssignmentRuleError(
+      'NOT_OPERATOR',
+      `You are not assigned to ${slot?.subject || subject} in ${slot?.className || 'this class'}, ` +
+        `so you cannot enter its marks.`
+    );
+  }
+
+  /**
+   * Record that an exam was not held for this class + subject: every active
+   * learner gets -2. Refuses if real marks or absences are already saved —
+   * those must be deleted first, so nobody's mark is overwritten by mistake.
+   */
+  async markExamNotConducted(data: {
+    classId: string;
+    className: string;
+    subjectId: string;
+    subjectName: string;
+    teacherId: string;
+    teacherName: string;
+    examType: 'week4' | 'week8' | 'endOfTerm';
+    examName: string;
+    term: string;
+    year: number;
+    totalMarks: number;
+  }): Promise<SaveClassResultsResponse> {
+    const existing = await this.checkExistingResults(
+      data.classId, normalizeSubjectName(data.subjectId), data.examType, data.term, Number(data.year)
+    );
+    const real = existing.results.filter(r => r.marks !== MARK.NOT_CONDUCTED);
+    if (real.length > 0) {
+      throw new Error(
+        `${real.length} mark(s) are already saved for this exam. ` +
+        `Delete them first if the exam was not conducted.`
+      );
+    }
+    const roster = await loadClassRoster(data.classId);
+    return this.saveClassResults(
+      {
+        ...data,
+        results: roster.map(l => ({ studentId: l.id, studentName: l.name, marks: MARK.NOT_CONDUCTED })),
+      },
+      { overwrite: true }
+    );
   }
 
   async deleteClassResults(data: {
@@ -1056,6 +1121,7 @@ class ResultsService {
       });
 
       await batch.commit();
+      this.invalidateGrid(data.classId);
       console.log(`🗑️ Deleted ${existing.count} results for ${normalizedSubjectId} ${data.examType}`);
       return { success: true, deletedCount: existing.count };
     } catch (error) {
@@ -1092,7 +1158,9 @@ class ResultsService {
         grade,
         status,
         updatedAt: new Date().toISOString(),
+        lastEditedBy: getAuth().currentUser?.uid ?? null,
       });
+      this.invalidateGrid();
 
       const updatedDoc = await getDoc(docRef);
       return updatedDoc.data() as StudentResult;
@@ -1102,168 +1170,132 @@ class ResultsService {
     }
   }
 
-  async editResults(data: {
-    classId: string;
-    subjectId: string;
-    examType: 'week4' | 'week8' | 'endOfTerm';
-    term: string;
-    year: number;
-  }): Promise<{ success: boolean; message: string; unlockedCount: number }> {
-    try {
-      console.log('🔓 Unlocking results for editing:', data);
-      return {
-        success: true,
-        message: 'Results unlocked for editing',
-        unlockedCount: 0
-      };
-    } catch (error) {
-      console.error('Error editing results:', error);
-      throw error;
+  // ==================== SHARED GRID (cached briefly) ====================
+  //
+  // Report Cards, SMS and Parent Portal all read one class grid. A short
+  // cache stops a class of 40 from loading the same grid 40 times while one
+  // screen builds its cards. Any save or delete clears it.
+
+  private gridCache = new Map<string, { at: number; promise: Promise<LoadedClassGrid> }>();
+  private static GRID_TTL_MS = 15_000;
+
+  loadGrid(classId: string, term: string, year: number, opts: { publicView?: boolean } = {}): Promise<LoadedClassGrid> {
+    const key = `${classId}|${term}|${year}${opts.publicView ? '|public' : ''}`;
+    const hit = this.gridCache.get(key);
+    if (hit && Date.now() - hit.at < ResultsService.GRID_TTL_MS) return hit.promise;
+    const promise = loadClassGrid(classId, term, Number(year), { publicFallback: !!opts.publicView });
+    this.gridCache.set(key, { at: Date.now(), promise });
+    promise.catch(() => this.gridCache.delete(key));
+    return promise;
+  }
+
+  invalidateGrid(classId?: string): void {
+    if (!classId) {
+      this.gridCache.clear();
+      return;
+    }
+    for (const key of [...this.gridCache.keys()]) {
+      if (key.startsWith(`${classId}|`)) this.gridCache.delete(key);
     }
   }
 
-  // ==================== STUDENT PROGRESS ====================
+  // ==================== STUDENT PROGRESS (Report Cards list) ====================
 
+  /**
+   * One row per active learner, from the shared grid. The progress bar is
+   * completed subjects / subjects (Form Teacher and dropped subjects are not
+   * subjects); averages use only the term's active exams.
+   */
   async getStudentProgress(
     classId: string,
     term: string,
     year: number
   ): Promise<StudentProgress[]> {
-    try {
-      console.log(`🔍 Getting progress for class: ${classId}, ${term} ${year}`);
+    const loaded = await this.loadGrid(classId, term, year);
+    return loaded.grid.learners.map(l => this.toStudentProgress(loaded, l.id));
+  }
 
-      const learners = await this.getLearnersInClass(classId);
-      if (learners.length === 0) return [];
-
-      const expectedSubjects = await this.getExpectedSubjectsForClass(classId);
-
-      const resultsQuery = query(
-        this.resultsCollection,
-        where('classId', '==', classId),
-        where('term', '==', term),
-        where('year', '==', year)
-      );
-
-      const resultsSnapshot = await getDocs(resultsQuery);
-      const allResults = resultsSnapshot.docs.map(doc => doc.data() as StudentResult);
-
-      const resultsByDocumentId = new Map<string, StudentResult[]>();
-      allResults.forEach(result => {
-        if (!resultsByDocumentId.has(result.studentId)) {
-          resultsByDocumentId.set(result.studentId, []);
-        }
-        resultsByDocumentId.get(result.studentId)!.push(result);
-      });
-
-      const assignments = await this.getTeacherAssignmentsForClass(classId);
-      const classData = await this.getClassData(classId);
-
-      const studentProgress = await Promise.all(
-        learners.map(async (learner) => {
-          const studentResults = resultsByDocumentId.get(learner.documentId) || [];
-
-          const subjects: StudentProgress['subjects'] = [];
-          let totalSubjectsCompleted = 0;
-          let totalPercentage = 0;
-          let subjectsWithScores = 0;
-
-          for (const subject of expectedSubjects) {
-            const subjectResults = studentResults.filter(r => r.subjectId === subject.id);
-            const teacherAssignment = assignments.find(a => a.subjectId === subject.id);
-
-            const week4Result = subjectResults.find(r => r.examType === 'week4');
-            const week8Result = subjectResults.find(r => r.examType === 'week8');
-            const endOfTermResult = subjectResults.find(r => r.examType === 'endOfTerm');
-
-            const week4Status = week4Result
-              ? (week4Result.status === 'absent' ? 'absent' :
-                 week4Result.status === 'not_conducted' ? 'not_conducted' : 'complete')
-              : 'missing';
-
-            const week8Status = week8Result
-              ? (week8Result.status === 'absent' ? 'absent' :
-                 week8Result.status === 'not_conducted' ? 'not_conducted' : 'complete')
-              : 'missing';
-
-            const endOfTermStatus = endOfTermResult
-              ? (endOfTermResult.status === 'absent' ? 'absent' :
-                 endOfTermResult.status === 'not_conducted' ? 'not_conducted' : 'complete')
-              : 'missing';
-
-            const week4Complete = week4Status !== 'missing';
-            const week8Complete = week8Status !== 'missing';
-            const endOfTermComplete = endOfTermStatus !== 'missing';
-
-            const completedExams = [week4Complete, week8Complete, endOfTermComplete].filter(Boolean).length;
-            const subjectProgress = Math.round((completedExams / 3) * 100);
-
-            if (subjectProgress === 100) totalSubjectsCompleted++;
-
-            const availableScores = [];
-            if (week4Result?.percentage >= 0) availableScores.push(week4Result.percentage);
-            if (week8Result?.percentage >= 0) availableScores.push(week8Result.percentage);
-            if (endOfTermResult?.percentage >= 0) availableScores.push(endOfTermResult.percentage);
-
-            const averagePercentage = availableScores.length > 0
-              ? Math.round(availableScores.reduce((a, b) => a + b, 0) / availableScores.length)
-              : undefined;
-
-            if (averagePercentage && averagePercentage > 0) {
-              totalPercentage += averagePercentage;
-              subjectsWithScores++;
-            }
-
-            subjects.push({
-              subjectId: subject.id,
-              subjectName: subject.name,
-              teacherName: teacherAssignment?.teacherName || 'Not assigned',
-              week4: { status: week4Status, marks: week4Result?.percentage },
-              week8: { status: week8Status, marks: week8Result?.percentage },
-              endOfTerm: { status: endOfTermStatus, marks: endOfTermResult?.percentage },
-              averagePercentage,
-              subjectProgress,
-              grade: endOfTermResult?.grade
-            });
-          }
-
-          const overallPercentage = subjectsWithScores > 0
-            ? Math.round(totalPercentage / subjectsWithScores)
-            : 0;
-
-          const completionPercentage = expectedSubjects.length > 0
-            ? Math.round((totalSubjectsCompleted / expectedSubjects.length) * 100)
-            : 0;
-
-          const isComplete = totalSubjectsCompleted === expectedSubjects.length && expectedSubjects.length > 0;
-
-          return {
-            studentId: learner.id,
-            studentName: learner.name,
-            className: classData?.name || 'Unknown',
-            classId,
-            form: classData?.level?.toString() || '1',
-            overallPercentage,
-            overallGrade: calculateGrade(overallPercentage),
-            status: overallPercentage >= 50 ? 'pass' : (overallPercentage > 0 ? 'fail' : 'pending'),
-            isComplete,
-            completionPercentage,
-            subjects,
-            missingSubjects: expectedSubjects.length - totalSubjectsCompleted,
-            totalSubjects: expectedSubjects.length,
-            documentId: learner.documentId
-          } as StudentProgress;
-        })
-      );
-
-      return studentProgress.sort((a, b) => a.studentName.localeCompare(b.studentName));
-    } catch (error) {
-      console.error('❌ Error getting student progress:', error);
-      return [];
-    }
+  private toStudentProgress(loaded: LoadedClassGrid, learnerId: string): StudentProgress {
+    const { grid, classInfo } = loaded;
+    const p = learnerProgress(grid, learnerId);
+    const learner = grid.learners.find(l => l.id === learnerId)!;
+    const cellOut = (c: GridCell | undefined): StudentProgress['subjects'][number]['week4'] => {
+      if (!c) return { status: 'missing' };
+      if (c.status === 'entered') return { status: 'complete', marks: c.percentage ?? undefined };
+      if (c.status === 'absent') return { status: 'absent', marks: MARK.ABSENT };
+      if (c.status === 'not_conducted') return { status: 'not_conducted', marks: MARK.NOT_CONDUCTED };
+      return { status: 'missing' };
+    };
+    const examCount = grid.activeExams.length;
+    return {
+      studentId: learner.studentId || learner.id,
+      documentId: learner.id,
+      studentName: p.name,
+      className: classInfo.name,
+      classId: classInfo.id,
+      form: classInfo.form,
+      gender: learner.gender,
+      overallPercentage: p.overallPercentage,
+      overallGrade: p.overallGrade,
+      status: p.status,
+      isComplete: p.isComplete,
+      completionPercentage: p.completionPercentage,
+      subjects: p.subjects.map(s => {
+        const done = grid.activeExams.filter(e => s.cells[e] && s.cells[e].status !== 'pending').length;
+        return {
+          subjectId: s.subjectId,
+          subjectName: s.subjectName,
+          teacherName: s.teacherName,
+          week4: cellOut(s.cells.week4),
+          week8: cellOut(s.cells.week8),
+          endOfTerm: cellOut(s.cells.endOfTerm),
+          averagePercentage: s.average >= 0 ? s.average : undefined,
+          subjectProgress: examCount > 0 ? Math.round((done / examCount) * 100) : 0,
+          grade: s.grade,
+        };
+      }),
+      missingSubjects: p.totalSubjects - p.completedSubjects,
+      totalSubjects: p.totalSubjects,
+      activeExams: grid.activeExams,
+    };
   }
 
   // ==================== REPORT CARD GENERATION ====================
 
+  private cardFor(
+    loaded: LoadedClassGrid,
+    learnerId: string,
+    learnerData: DocumentData | undefined,
+    positions: Map<string, string>,
+    improvement: 'improved' | 'declined' | 'stable'
+  ): ReportCardData {
+    return buildReportCard(loaded.grid, learnerId, {
+      classId: loaded.classInfo.id,
+      className: loaded.classInfo.name,
+      form: loaded.classInfo.form,
+      term: loaded.term,
+      year: loaded.year,
+      gender: learnerData?.gender,
+      parentsPhone: learnerData?.guardianPhone || learnerData?.parentPhone || learnerData?.parentsPhone || '',
+      parentsEmail: learnerData?.parentEmail || learnerData?.parentsEmail || '',
+      positions,
+      improvement,
+    });
+  }
+
+  /** True when at least one cell (entered, absent or not conducted) exists. */
+  private hasAnyEntry(card: ReportCardData): boolean {
+    return card.subjects.some(s =>
+      [s.week4, s.week8, s.endOfTerm].some(v => v !== MARK.PENDING)
+    );
+  }
+
+  /**
+   * Report card for one learner, built from the shared grid — the same
+   * numbers the Report Cards list, the admin PDF, the SMS and the Parent
+   * Portal show. Returns null when the learner is not an active member of
+   * their class or nothing has been entered yet.
+   */
   async generateReportCard(
     inputStudentId: string,
     term: string,
@@ -1271,194 +1303,32 @@ class ResultsService {
     options?: {
       includeIncomplete?: boolean;
       markMissing?: boolean;
+      /** Parent Portal (signed out). */
+      publicView?: boolean;
     }
-  ): Promise<ReportCardData | null> {
-    try {
-      console.log(`📝 Generating report card for: ${inputStudentId}, ${term} ${year}`);
-
-      const studentDoc = await this.resolveStudentDocument(inputStudentId);
-
-      if (!studentDoc) {
-        console.warn(`⚠️ Student not found: ${inputStudentId}`);
-        return null;
-      }
-
-      const { data: studentData, documentId, customId } = studentDoc;
-      const studentName = studentData.name || studentData.studentName || 'Unknown';
-      const classId = studentData.classId;
-
-      if (!classId) {
-        console.warn(`⚠️ Student has no class assigned`);
-        return null;
-      }
-
-      const classDoc = await getDoc(doc(this.classesCollection, classId));
-      if (!classDoc.exists()) {
-        console.warn(`⚠️ Class not found: ${classId}`);
-        return null;
-      }
-      const classData = classDoc.data();
-
-      const results = await this.getStudentResults(documentId, { term, year });
-
-      if (results.length === 0) {
-        console.log(`📭 No results found`);
-        return null;
-      }
-
-      const subjectMap = new Map<string, {
-        subjectId: string;
-        subjectName: string;
-        teacherId: string;
-        teacherName: string;
-        week4: number;
-        week8: number;
-        endOfTerm: number;
-        week4Status?: string;
-        week8Status?: string;
-        endOfTermStatus?: string;
-      }>();
-
-      results.forEach(result => {
-        const subjectId = result.subjectId;
-
-        if (!subjectMap.has(subjectId)) {
-          subjectMap.set(subjectId, {
-            subjectId,
-            subjectName: result.subjectName,
-            teacherId: result.teacherId,
-            teacherName: result.teacherName,
-            week4: -1,
-            week8: -1,
-            endOfTerm: -1,
-          });
-        }
-
-        const subject = subjectMap.get(subjectId)!;
-
-        if (result.examType === 'week4') {
-          subject.week4 = result.marks === -2 ? -2 : result.percentage;
-        }
-        if (result.examType === 'week8') {
-          subject.week8 = result.marks === -2 ? -2 : result.percentage;
-        }
-        if (result.examType === 'endOfTerm') {
-          subject.endOfTerm = result.marks === -2 ? -2 : result.percentage;
-        }
-      });
-
-      const subjects: SubjectResultSummary[] = [];
-      let totalPercentage = 0;
-      let validSubjectsCount = 0;
-
-      subjectMap.forEach(subjectData => {
-        const missingExams: string[] = [];
-        if (subjectData.week4 === -1) missingExams.push('Week 4');
-        if (subjectData.week8 === -1) missingExams.push('Week 8');
-        if (subjectData.endOfTerm === -1) missingExams.push('End of Term');
-
-        const isComplete = missingExams.length === 0;
-
-        const availableScores = [];
-        if (subjectData.week4 >= 0) availableScores.push(subjectData.week4);
-        if (subjectData.week8 >= 0) availableScores.push(subjectData.week8);
-        if (subjectData.endOfTerm >= 0) availableScores.push(subjectData.endOfTerm);
-
-        const averagePercentage = availableScores.length > 0
-          ? Math.round(availableScores.reduce((a, b) => a + b, 0) / availableScores.length)
-          : -1;
-
-        const grade = averagePercentage >= 0 ? calculateGrade(averagePercentage) : -1;
-        const gradeDescription = getGradeDescription(grade);
-
-        const comment = this.generateSubjectComment(
-          grade,
-          averagePercentage,
-          missingExams,
-          subjectData.week4 === -2 || subjectData.week8 === -2 || subjectData.endOfTerm === -2
-        );
-
-        subjects.push({
-          subjectId: subjectData.subjectId,
-          subjectName: subjectData.subjectName,
-          teacherId: subjectData.teacherId,
-          teacherName: subjectData.teacherName,
-          week4: subjectData.week4,
-          week8: subjectData.week8,
-          endOfTerm: subjectData.endOfTerm,
-          averagePercentage,
-          grade,
-          gradeDescription,
-          comment,
-          isComplete,
-          missingExams,
-        });
-
-        if (averagePercentage >= 0) {
-          totalPercentage += averagePercentage;
-          validSubjectsCount++;
-        }
-      });
-
-      const overallAveragePercentage = validSubjectsCount > 0
-        ? Math.round(totalPercentage / validSubjectsCount)
-        : 0;
-
-      const overallGrade = overallAveragePercentage > 0 ? calculateGrade(overallAveragePercentage) : -1;
-      const overallGradeDescription = getGradeDescription(overallGrade);
-
-      const completeSubjects = subjects.filter(s => s.isComplete).length;
-      const completionPercentage = subjects.length > 0
-        ? Math.round((completeSubjects / subjects.length) * 100)
-        : 0;
-
-      const isComplete = completeSubjects === subjects.length && subjects.length > 0;
-
-      if (!isComplete && !options?.includeIncomplete) {
-        console.log(`⚠️ Report incomplete (${completionPercentage}%)`);
-        return null;
-      }
-
-      const position = await this.calculatePosition(documentId, classId, term, year);
-      const improvement = await this.calculateImprovement(documentId, term, year);
-      const teachersComment = this.generateTeacherComment(
-        overallAveragePercentage,
-        subjects
-      );
-
-      return {
-        id: `report-${customId}-${term}-${year}`,
-        studentId: customId,
-        studentName,
-        className: classData.name,
-        classId,
-        form: classData.level?.toString() || '1',
-        overallGrade,
-        overallGradeDescription,
-        position,
-        gender: studentData.gender || 'Not specified',
-        totalMarks: totalPercentage,
-        percentage: overallAveragePercentage,
-        status: overallAveragePercentage >= 50 ? 'pass' : 'fail',
-        improvement,
-        subjects: subjects.sort((a, b) => a.subjectName.localeCompare(b.subjectName)),
-        attendance: studentData.attendance || 95,
-        teachersComment,
-        parentsEmail: studentData.parentEmail || studentData.parentsEmail || '',
-        parentsPhone: studentData.parentPhone || studentData.parentsPhone || '',
-        generatedDate: new Date().toLocaleDateString('en-GB'),
-        term,
-        year,
-        isComplete,
-        completionPercentage,
-        documentId
-      };
-    } catch (error) {
-      console.error(`❌ Error generating report card:`, error);
+  ): Promise<(ReportCardData & { degraded?: boolean }) | null> {
+    const studentDoc = await this.resolveStudentDocument(inputStudentId);
+    if (!studentDoc) {
+      console.warn(`⚠️ Student not found: ${inputStudentId}`);
       return null;
     }
+    const classId = studentDoc.data.classId;
+    if (!classId) return null;
+
+    const loaded = await this.loadGrid(classId, term, year, { publicView: options?.publicView });
+    if (!loaded.grid.learners.some(l => l.id === studentDoc.documentId)) return null;
+
+    const improvement = await this.calculateImprovement(studentDoc.documentId, term, year).catch(
+      () => 'stable' as const
+    );
+    const card = this.cardFor(loaded, studentDoc.documentId, studentDoc.data, classPositions(loaded.grid), improvement);
+
+    if (!this.hasAnyEntry(card)) return null;
+    if (!card.isComplete && !options?.includeIncomplete) return null;
+    return loaded.degraded ? { ...card, degraded: true } : card;
   }
 
+  /** All report cards for a class from ONE grid load (positions computed once). */
   async generateClassReportCards(
     classId: string,
     term: string,
@@ -1468,384 +1338,100 @@ class ResultsService {
       markMissing?: boolean;
     }
   ): Promise<BulkReportOperation> {
-    try {
-      console.log(`🎓 Generating reports for class: ${classId}, ${term} ${year}`);
+    const loaded = await this.loadGrid(classId, term, year);
+    const positions = classPositions(loaded.grid);
+    const learnerDocs = await getDocs(query(this.learnersCollection, where('classId', '==', classId)));
+    const dataById = new Map(learnerDocs.docs.map(d => [d.id, d.data()]));
+    const includeIncomplete = options?.includeIncomplete ?? true;
 
-      const learners = await this.getLearnersInClass(classId);
+    const cards = await Promise.all(
+      loaded.grid.learners.map(async l => {
+        const improvement = await this.calculateImprovement(l.id, term, year).catch(() => 'stable' as const);
+        return this.cardFor(loaded, l.id, dataById.get(l.id), positions, improvement);
+      })
+    );
+    const reportCards = cards
+      .filter(c => this.hasAnyEntry(c))
+      .filter(c => includeIncomplete || c.isComplete)
+      .sort((a, b) => a.studentName.localeCompare(b.studentName));
 
-      if (learners.length === 0) {
-        return {
-          reportCards: [],
-          summary: { total: 0, passed: 0, failed: 0, avgPercentage: 0, complete: 0, incomplete: 0 },
-        };
-      }
-
-      const reportCardsPromises = learners.map(learner =>
-        this.generateReportCard(learner.id, term, year, {
-          includeIncomplete: options?.includeIncomplete ?? true,
-          markMissing: options?.markMissing ?? true,
-        })
-      );
-
-      const results = await Promise.allSettled(reportCardsPromises);
-
-      const reportCards: ReportCardData[] = [];
-      results.forEach(result => {
-        if (result.status === 'fulfilled' && result.value) {
-          reportCards.push(result.value);
-        }
-      });
-
-      const passed = reportCards.filter(r => r.status === 'pass').length;
-      const failed = reportCards.filter(r => r.status === 'fail').length;
-      const complete = reportCards.filter(r => r.isComplete).length;
-      const incomplete = reportCards.filter(r => !r.isComplete).length;
-
-      const avgPercentage = reportCards.length > 0
-        ? Math.round(reportCards.reduce((sum, r) => sum + r.percentage, 0) / reportCards.length)
-        : 0;
-
-      return {
-        reportCards: reportCards.sort((a, b) => a.studentName.localeCompare(b.studentName)),
-        summary: {
-          total: reportCards.length,
-          passed,
-          failed,
-          avgPercentage,
-          complete,
-          incomplete,
-        },
-      };
-    } catch (error) {
-      console.error('❌ Error generating class reports:', error);
-      throw error;
-    }
+    const passed = reportCards.filter(r => r.status === 'pass').length;
+    const failed = reportCards.filter(r => r.status === 'fail').length;
+    const complete = reportCards.filter(r => r.isComplete).length;
+    return {
+      reportCards,
+      summary: {
+        total: reportCards.length,
+        passed,
+        failed,
+        avgPercentage: reportCards.length
+          ? Math.round(reportCards.reduce((s, r) => s + r.percentage, 0) / reportCards.length)
+          : 0,
+        complete,
+        incomplete: reportCards.length - complete,
+      },
+    };
   }
 
-  // ==================== REPORT READINESS ====================
+  // ==================== SUBJECT COMPLETION (Results Entry) ====================
 
-  async validateReportCardReadiness(
-    inputStudentId: string,
-    term: string,
-    year: number
-  ): Promise<ReportReadinessCheck | null> {
-    try {
-      const studentDoc = await this.resolveStudentDocument(inputStudentId);
-
-      if (!studentDoc) {
-        return null;
-      }
-
-      const { data: studentData, customId } = studentDoc;
-      const classId = studentData.classId;
-
-      if (!classId) {
-        return null;
-      }
-
-      const expectedSubjects = await this.getExpectedSubjectsForClass(classId);
-      const results = await this.getStudentResults(studentDoc.documentId, { term, year });
-
-      const subjectMap = new Map<string, {
-        name: string;
-        hasWeek4: boolean;
-        hasWeek8: boolean;
-        hasEndOfTerm: boolean;
-        isNotConductedWeek4?: boolean;
-        isNotConductedWeek8?: boolean;
-        isNotConductedEndOfTerm?: boolean;
-        teacherName: string;
-      }>();
-
-      expectedSubjects.forEach(subject => {
-        subjectMap.set(subject.id, {
-          name: subject.name,
-          hasWeek4: false,
-          hasWeek8: false,
-          hasEndOfTerm: false,
-          isNotConductedWeek4: false,
-          isNotConductedWeek8: false,
-          isNotConductedEndOfTerm: false,
-          teacherName: 'Not assigned',
-        });
-      });
-
-      results.forEach(result => {
-        if (subjectMap.has(result.subjectId)) {
-          const subject = subjectMap.get(result.subjectId)!;
-          subject.teacherName = result.teacherName;
-
-          if (result.examType === 'week4') {
-            subject.hasWeek4 = true;
-            subject.isNotConductedWeek4 = result.marks === -2;
-          }
-          if (result.examType === 'week8') {
-            subject.hasWeek8 = true;
-            subject.isNotConductedWeek8 = result.marks === -2;
-          }
-          if (result.examType === 'endOfTerm') {
-            subject.hasEndOfTerm = true;
-            subject.isNotConductedEndOfTerm = result.marks === -2;
-          }
-        }
-      });
-
-      const missingData: ReportReadinessCheck['missingData'] = [];
-      const notConductedExams: Array<{ subject: string; subjectId: string; examType: string }> = [];
-      let completeSubjects = 0;
-
-      subjectMap.forEach((subject, subjectId) => {
-        const missing: string[] = [];
-
-        if (!subject.hasWeek4 && !subject.isNotConductedWeek4) missing.push('Week 4');
-        if (!subject.hasWeek8 && !subject.isNotConductedWeek8) missing.push('Week 8');
-        if (!subject.hasEndOfTerm && !subject.isNotConductedEndOfTerm) missing.push('End of Term');
-
-        if (missing.length > 0) {
-          missingData.push({
-            subject: subject.name,
-            subjectId,
-            teacherName: subject.teacherName,
-            missingExamTypes: missing,
-          });
-        } else {
-          completeSubjects++;
-        }
-
-        if (subject.isNotConductedWeek4) {
-          notConductedExams.push({ subject: subject.name, subjectId, examType: 'Week 4' });
-        }
-        if (subject.isNotConductedWeek8) {
-          notConductedExams.push({ subject: subject.name, subjectId, examType: 'Week 8' });
-        }
-        if (subject.isNotConductedEndOfTerm) {
-          notConductedExams.push({ subject: subject.name, subjectId, examType: 'End of Term' });
-        }
-      });
-
-      return {
-        isReady: missingData.length === 0 && subjectMap.size > 0,
-        studentId: customId,
-        studentName: studentData.name || 'Unknown',
-        totalSubjects: subjectMap.size,
-        completeSubjects,
-        missingData,
-        notConductedExams,
-      };
-    } catch (error) {
-      console.error('❌ Error validating report readiness:', error);
-      return null;
-    }
-  }
-
-  async validateClassReportReadiness(
-    classId: string,
-    term: string,
-    year: number
-  ): Promise<ClassReportReadiness | null> {
-    try {
-      const classDoc = await getDoc(doc(this.classesCollection, classId));
-      if (!classDoc.exists()) {
-        return null;
-      }
-      const classData = classDoc.data();
-
-      const expectedSubjectsWithIds = await this.getExpectedSubjectsForClass(classId);
-      const hasAssignments = expectedSubjectsWithIds.length > 0;
-
-      const learners = await this.getLearnersInClass(classId);
-
-      const readinessResults = await Promise.allSettled(
-        learners.map(learner => this.validateReportCardReadiness(learner.id, term, year))
-      );
-
-      const studentDetails: ReportReadinessCheck[] = readinessResults
-        .filter((r): r is PromiseFulfilledResult<ReportReadinessCheck | null> => r.status === 'fulfilled')
-        .map(r => r.value)
-        .filter((r): r is ReportReadinessCheck => r !== null);
-
-      const readyStudents = studentDetails.filter(check => check.isReady).length;
-      const completionPercentage = studentDetails.length > 0
-        ? Math.round((readyStudents / studentDetails.length) * 100)
-        : 0;
-
-      return {
-        classId,
-        className: classData.name,
-        term,
-        year,
-        totalStudents: learners.length,
-        readyStudents,
-        incompleteStudents: learners.length - readyStudents,
-        completionPercentage,
-        studentDetails,
-        expectedSubjects: expectedSubjectsWithIds.map(s => s.id),
-        expectedSubjectsWithIds,
-        hasAssignments,
-      };
-    } catch (error) {
-      console.error('❌ Error validating class readiness:', error);
-      return null;
-    }
-  }
-
-  // ==================== SUBJECT COMPLETION ====================
-
+  /**
+   * Per-subject completion for a class, from the shared grid — the same
+   * numbers the Results Entry Monitor shows for that class and subject.
+   * Exams that are not active this term report 0 and complete = false.
+   */
   async getSubjectCompletionStatus(
     classId: string,
     term: string,
     year: number
   ): Promise<SubjectCompletionStatus[]> {
-    try {
-      const classDoc = await getDoc(doc(this.classesCollection, classId));
-      if (!classDoc.exists()) {
-        throw new Error('Class not found');
-      }
-      const classData = classDoc.data();
-
-      const expectedSubjects = await this.getExpectedSubjectsForClass(classId);
-
-      const q = query(
-        this.resultsCollection,
-        where('classId', '==', classId),
-        where('term', '==', term),
-        where('year', '==', year)
-      );
-
-      const snapshot = await getDocs(q);
-      const results = snapshot.docs.map(doc => doc.data() as StudentResult);
-
-      const subjectMap = new Map<string, {
-        subjectName: string;
-        teacherId: string;
-        teacherName: string;
-        week4Students: Set<string>;
-        week8Students: Set<string>;
-        endOfTermStudents: Set<string>;
-        week4Marks: Map<string, number>;
-        week8Marks: Map<string, number>;
-        endOfTermMarks: Map<string, number>;
-        week4NotConducted?: boolean;
-        week8NotConducted?: boolean;
-        endOfTermNotConducted?: boolean;
-      }>();
-
-      results.forEach(result => {
-        const key = result.subjectId;
-        if (!subjectMap.has(key)) {
-          subjectMap.set(key, {
-            subjectName: result.subjectName,
-            teacherId: result.teacherId,
-            teacherName: result.teacherName,
-            week4Students: new Set(),
-            week8Students: new Set(),
-            endOfTermStudents: new Set(),
-            week4Marks: new Map(),
-            week8Marks: new Map(),
-            endOfTermMarks: new Map(),
-            week4NotConducted: false,
-            week8NotConducted: false,
-            endOfTermNotConducted: false,
-          });
-        }
-        const subject = subjectMap.get(key)!;
-
-        if (result.examType === 'week4') {
-          if (result.marks === -2) subject.week4NotConducted = true;
-          subject.week4Students.add(result.studentId);
-          subject.week4Marks.set(result.studentId, result.marks);
-        }
-        if (result.examType === 'week8') {
-          if (result.marks === -2) subject.week8NotConducted = true;
-          subject.week8Students.add(result.studentId);
-          subject.week8Marks.set(result.studentId, result.marks);
-        }
-        if (result.examType === 'endOfTerm') {
-          if (result.marks === -2) subject.endOfTermNotConducted = true;
-          subject.endOfTermStudents.add(result.studentId);
-          subject.endOfTermMarks.set(result.studentId, result.marks);
-        }
-      });
-
-      expectedSubjects.forEach(subject => {
-        const normalizedId = subject.id;
-        if (!subjectMap.has(normalizedId)) {
-          subjectMap.set(normalizedId, {
-            subjectName: subject.name,
-            teacherId: 'pending',
-            teacherName: 'Not entered',
-            week4Students: new Set(),
-            week8Students: new Set(),
-            endOfTermStudents: new Set(),
-            week4Marks: new Map(),
-            week8Marks: new Map(),
-            endOfTermMarks: new Map(),
-            week4NotConducted: false,
-            week8NotConducted: false,
-            endOfTermNotConducted: false,
-          });
-        }
-      });
-
-      const totalStudents = await this.getLearnerCountInClass(classId);
-
-      return Array.from(subjectMap.entries()).map(([subjectId, data]) => {
-        const week4NotConducted = data.week4NotConducted ||
-          (data.week4Students.size > 0 && Array.from(data.week4Marks.values()).every(mark => mark === -2));
-        const week8NotConducted = data.week8NotConducted ||
-          (data.week8Students.size > 0 && Array.from(data.week8Marks.values()).every(mark => mark === -2));
-        const endOfTermNotConducted = data.endOfTermNotConducted ||
-          (data.endOfTermStudents.size > 0 && Array.from(data.endOfTermMarks.values()).every(mark => mark === -2));
-
-        const week4Complete = week4NotConducted || data.week4Students.size >= totalStudents;
-        const week8Complete = week8NotConducted || data.week8Students.size >= totalStudents;
-        const endOfTermComplete = endOfTermNotConducted || data.endOfTermStudents.size >= totalStudents;
-
-        const completeCount = [week4Complete, week8Complete, endOfTermComplete].filter(Boolean).length;
-        const percentComplete = totalStudents > 0 ? Math.round((completeCount / 3) * 100) : 0;
-
-        const savedMarks: { [studentId: string]: number } = {};
-
-        data.week4Marks.forEach((marks, studentId) => { savedMarks[studentId] = marks; });
-        data.week8Marks.forEach((marks, studentId) => { savedMarks[studentId] = marks; });
-        data.endOfTermMarks.forEach((marks, studentId) => { savedMarks[studentId] = marks; });
-
-        return {
-          subjectId,
-          subjectName: data.subjectName,
-          teacherId: data.teacherId,
-          teacherName: data.teacherName,
-          classId,
-          className: classData.name,
-          term,
-          year,
-          week4Complete,
-          week8Complete,
-          endOfTermComplete,
-          percentComplete,
-          totalStudents,
-          enteredStudents: {
-            week4: data.week4Students.size,
-            week8: data.week8Students.size,
-            endOfTerm: data.endOfTermStudents.size,
-          },
-          enteredStudentIds: {
-            week4: Array.from(data.week4Students),
-            week8: Array.from(data.week8Students),
-            endOfTerm: Array.from(data.endOfTermStudents),
-          },
-          savedMarks,
-          notConducted: {
-            week4: week4NotConducted,
-            week8: week8NotConducted,
-            endOfTerm: endOfTermNotConducted,
-          },
-        };
-      });
-    } catch (error) {
-      console.error('Error getting subject completion status:', error);
-      return [];
-    }
+    const { grid, classInfo } = await this.loadGrid(classId, term, year);
+    return grid.subjects.map(s => {
+      const sp = subjectProgress(grid, s.subjectId);
+      const ex = (t: string) => sp.exams.find(e => e.examType === t);
+      const doneIds = (t: string) => {
+        const e = ex(t);
+        if (!e) return [];
+        const missing = new Set(e.missingLearnerIds);
+        return grid.learners.filter(l => !missing.has(l.id)).map(l => l.id);
+      };
+      return {
+        subjectId: s.subjectId,
+        subjectName: s.subjectName,
+        teacherId: s.operatorTeacherId || s.ownerTeacherId || '',
+        teacherName: s.operatorTeacherName || s.ownerTeacherName || 'Not assigned',
+        classId,
+        className: classInfo.name,
+        term,
+        year,
+        week4Complete: ex('week4')?.percentage === 100,
+        week8Complete: ex('week8')?.percentage === 100,
+        endOfTermComplete: ex('endOfTerm')?.percentage === 100,
+        percentComplete: sp.completionPercentage,
+        totalStudents: sp.totalStudents,
+        enteredStudents: {
+          week4: ex('week4')?.doneCount ?? 0,
+          week8: ex('week8')?.doneCount ?? 0,
+          endOfTerm: ex('endOfTerm')?.doneCount ?? 0,
+        },
+        enteredStudentIds: {
+          week4: doneIds('week4'),
+          week8: doneIds('week8'),
+          endOfTerm: doneIds('endOfTerm'),
+        },
+        missingStudentIds: {
+          week4: ex('week4')?.missingLearnerIds ?? [],
+          week8: ex('week8')?.missingLearnerIds ?? [],
+          endOfTerm: ex('endOfTerm')?.missingLearnerIds ?? [],
+        },
+        notConducted: {
+          week4: ex('week4')?.notConducted ?? false,
+          week8: ex('week8')?.notConducted ?? false,
+          endOfTerm: ex('endOfTerm')?.notConducted ?? false,
+        },
+        activeExams: grid.activeExams,
+      };
+    });
   }
 
   // ==================== ANALYTICS METHODS ====================
@@ -2166,9 +1752,24 @@ class ResultsService {
 
   // ==================== SMS COMPOSITION METHODS ====================
 
+  /** SMS payload from a report card — the same numbers the card prints. */
+  smsPayloadFromCard(card: ReportCardData): SMSStudentPayload {
+    return {
+      studentName: card.studentName,
+      studentId: card.studentId,
+      className: card.className,
+      term: card.term,
+      year: card.year,
+      subjects: card.subjects.map(s => ({ subjectName: s.subjectName, percentage: s.average })),
+      overallPercentage: card.percentage,
+      overallGrade: card.grade,
+      provisional: card.isProvisional,
+    };
+  }
+
   /**
-   * Build the SMS body for a single student using the current DB state.
-   * Moderate compaction — readable, single-segment where possible.
+   * Build the SMS body for a single student from their report card, so the
+   * guardian receives exactly the average and grade on the report card.
    */
   async formatStudentResultsSMSAsync(
     inputStudentId: string,
@@ -2177,40 +1778,60 @@ class ResultsService {
     options: SMSFormatOptions = {}
   ): Promise<{ body: string; segments: SMSSegmentInfo; payload: SMSStudentPayload } | null> {
     try {
-      const report = await this.generateReportCard(inputStudentId, term, year, {
-        includeIncomplete: true,
-        markMissing: true,
-      });
-
-      if (!report) {
+      const card = await this.generateReportCard(inputStudentId, term, year, { includeIncomplete: true });
+      if (!card) {
         console.warn(`⚠️ No report data for ${inputStudentId} — cannot format SMS.`);
         return null;
       }
-
-      const payload: SMSStudentPayload = {
-        studentName: report.studentName,
-        studentId: report.studentId,
-        className: report.className,
-        term: report.term,
-        year: report.year,
-        subjects: report.subjects.map(s => ({
-          subjectName: s.subjectName,
-          percentage: typeof s.averagePercentage === 'number' && s.averagePercentage >= 0
-            ? s.averagePercentage
-            : (typeof s.endOfTerm === 'number' && s.endOfTerm >= 0 ? s.endOfTerm : -1),
-        })),
-        overallPercentage: report.percentage,
-        overallGrade: report.overallGrade,
-      };
-
+      const payload = this.smsPayloadFromCard(card);
       const body = formatStudentResultsSMS(payload, options);
-      const segments = getSmsSegments(body);
-
-      return { body, segments, payload };
+      return { body, segments: getSmsSegments(body), payload };
     } catch (error) {
       console.error('Error formatting SMS from DB:', error);
       return null;
     }
+  }
+
+  /**
+   * SMS bodies for every learner in a class with results, from ONE grid load.
+   * `studentId` is the same id the SMS backend has always received
+   * (the custom id, or the document id when a learner has none).
+   */
+  async formatClassResultsSMSAsync(
+    classId: string,
+    term: string,
+    year: number,
+    options: SMSFormatOptions = {}
+  ): Promise<{
+    rosterSize: number;
+    messages: Array<{
+      studentId: string;
+      documentId: string;
+      studentName: string;
+      body: string;
+      segments: SMSSegmentInfo;
+      payload: SMSStudentPayload;
+    }>;
+  }> {
+    const [bulk, legacyIds, loaded] = await Promise.all([
+      this.generateClassReportCards(classId, term, year, { includeIncomplete: true }),
+      this.getLearnersInClass(classId),
+      this.loadGrid(classId, term, year),
+    ]);
+    const smsIdByDoc = new Map(legacyIds.map(l => [l.documentId, l.id]));
+    const messages = bulk.reportCards.map(card => {
+      const payload = this.smsPayloadFromCard(card);
+      const body = formatStudentResultsSMS(payload, options);
+      return {
+        studentId: smsIdByDoc.get(card.documentId) ?? card.studentId,
+        documentId: card.documentId,
+        studentName: card.studentName,
+        body,
+        segments: getSmsSegments(body),
+        payload,
+      };
+    });
+    return { rosterSize: loaded.grid.learners.length, messages };
   }
 
   // ==================== PRIVATE HELPERS ====================
@@ -2224,124 +1845,6 @@ class ResultsService {
   ): string {
     const cleanTerm = term.replace(/\s+/g, '');
     return `${studentDocumentId}_${subjectId}_${examType}_${cleanTerm}_${year}`;
-  }
-
-  private generateSubjectComment(
-    grade: number,
-    averagePercentage: number,
-    missingExams: string[],
-    hasNotConducted: boolean = false
-  ): string {
-    if (missingExams.length > 0) {
-      return `Missing: ${missingExams.join(', ')}. ${averagePercentage >= 0 ? `Average: ${averagePercentage}%.` : ''}`;
-    }
-
-    if (hasNotConducted) {
-      return 'Some assessments were not conducted.';
-    }
-
-    if (averagePercentage < 0) return 'No assessment data available.';
-
-    const comments: Record<number, string> = {
-      1: 'Outstanding performance showing exceptional mastery across all assessments.',
-      2: 'Excellent work with strong understanding demonstrated consistently.',
-      3: 'Very good performance with solid comprehension throughout.',
-      4: 'Good grasp of concepts with consistent effort shown in all tests.',
-      5: 'Commendable effort showing satisfactory understanding overall.',
-      6: 'Acceptable performance meeting basic subject requirements.',
-      7: 'Fair performance across assessments; more practice and review needed.',
-      8: 'Below expectations; requires additional support and guidance.',
-      9: 'Needs immediate intervention and intensive remedial work.',
-    };
-
-    return comments[grade] || 'Assessment completed.';
-  }
-
-  private generateTeacherComment(overallPercentage: number, subjects: SubjectResultSummary[]): string {
-    const validSubjects = subjects.filter(s => s.averagePercentage >= 0);
-    const passCount = validSubjects.filter(s => s.averagePercentage >= 50).length;
-    const totalSubjects = validSubjects.length;
-
-    const sortedSubjects = [...validSubjects].sort((a, b) => b.averagePercentage - a.averagePercentage);
-    const strongest = sortedSubjects[0];
-    const weakest = sortedSubjects[sortedSubjects.length - 1];
-
-    if (overallPercentage >= 70) {
-      return `Excellent overall performance with ${overallPercentage}% average. Particularly strong in ${strongest?.subjectName}. Keep up the outstanding work across all subjects!`;
-    } else if (overallPercentage >= 50) {
-      return `Good overall performance with ${passCount}/${totalSubjects} subjects passed (${overallPercentage}% average). Focus more attention on ${weakest?.subjectName} for improvement next term.`;
-    } else {
-      return `Performance requires improvement with ${overallPercentage}% average. Need to focus on ${weakest?.subjectName} and all core subjects. Additional support and remedial classes recommended.`;
-    }
-  }
-
-  private async calculatePosition(
-    studentDocumentId: string,
-    classId: string,
-    term: string,
-    year: number
-  ): Promise<string> {
-    try {
-      const q = query(
-        this.resultsCollection,
-        where('classId', '==', classId),
-        where('term', '==', term),
-        where('year', '==', year)
-      );
-
-      const snapshot = await getDocs(q);
-      const results = snapshot.docs.map(doc => doc.data() as StudentResult);
-
-      if (results.length === 0) return '1/1';
-
-      const studentAverages = new Map<string, { name: string; percentages: number[] }>();
-      const studentResults = new Map<string, Map<string, number[]>>();
-
-      results
-        .filter(r => r.percentage >= 0)
-        .forEach(result => {
-          if (!studentResults.has(result.studentId)) {
-            studentResults.set(result.studentId, new Map());
-          }
-          const subjectMap = studentResults.get(result.studentId)!;
-          if (!subjectMap.has(result.subjectId)) {
-            subjectMap.set(result.subjectId, []);
-          }
-          subjectMap.get(result.subjectId)!.push(result.percentage);
-        });
-
-      studentResults.forEach((subjectMap, studentId) => {
-        const subjectAverages: number[] = [];
-        subjectMap.forEach(percentages => {
-          const avg = percentages.reduce((a, b) => a + b, 0) / percentages.length;
-          subjectAverages.push(avg);
-        });
-
-        const studentAvg = subjectAverages.reduce((a, b) => a + b, 0) / subjectAverages.length;
-        const studentResult = results.find(r => r.studentId === studentId);
-
-        studentAverages.set(studentId, {
-          name: studentResult?.studentName || 'Unknown',
-          percentages: [studentAvg]
-        });
-      });
-
-      const rankings = Array.from(studentAverages.entries())
-        .map(([id, data]) => ({
-          studentId: id,
-          name: data.name,
-          average: data.percentages[0],
-        }))
-        .sort((a, b) => b.average - a.average);
-
-      const position = rankings.findIndex(r => r.studentId === studentDocumentId) + 1;
-      const total = rankings.length;
-
-      return `${position}/${total}`;
-    } catch (error) {
-      console.error('Error calculating position:', error);
-      return '—';
-    }
   }
 
   private async calculateImprovement(

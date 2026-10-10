@@ -40,14 +40,14 @@ export type PeriodKind = 'lesson' | 'break' | 'assembly' | 'lunch';
 /**
  * One row of the daily bell schedule.
  *
- * `order` is the integer used as `period` in attendance sessions and as
- * `periodIndex` on timetable rows, so the two systems share a single
- * numbering. Never reuse an order — breaks and assemblies also occupy a
- * slot so a lesson can never be scheduled over them.
+ * For lessons, `order` is the lesson number 1..8 — the number used as
+ * `period` in attendance registers and `periodIndex` on timetable rows.
+ * The break is not a period: its order is 0. The school's schedule is
+ * SCHOOL_BELL in services/timetableModel (07:20–13:00, break 10:00–10:20).
  */
 export interface Period {
   id: string;
-  /** 1..n, unique per academic year. */
+  /** Lesson number 1..8 (unique per academic year); 0 for the break. */
   order: number;
   /** Short label shown in the grid: 'P1', 'Break', 'Lunch'. */
   name: string;
@@ -116,7 +116,7 @@ export interface HolidayDraft {
  * Rejected rows keep `rejectedReason` and stay visible to the teacher so
  * they can fix and resubmit.
  */
-export type TimetableEntryStatus = 'draft' | 'pending' | 'active' | 'rejected';
+export type TimetableEntryStatus = 'draft' | 'pending' | 'active' | 'rejected' | 'archived';
 
 /**
  * One timetable slot: "this SLOT runs on this day in this period, for
@@ -142,8 +142,13 @@ export interface TimetableEntry {
   dayOfWeek: 1 | 2 | 3 | 4 | 5;
   /** Matches `Period.order` and `attendance_sessions.period`. */
   periodIndex: number;
-  /** When true, occupies `periodIndex` AND `periodIndex + 1`. One session. */
+  /**
+   * DEPRECATED. Old rows used `true` to mean "this period and the next".
+   * New rows are one per period (always false); reads expand old doubles.
+   */
   isDouble: boolean;
+  /** Optional room / venue, e.g. 'Lab 2'. */
+  venue?: string | null;
 
   status: TimetableEntryStatus;
 
@@ -173,7 +178,7 @@ export interface TimetableEntryInput {
   slotId: string;
   dayOfWeek: 1 | 2 | 3 | 4 | 5;
   periodIndex: number;
-  isDouble: boolean;
+  venue?: string | null;
 }
 
 // ==================== RESOLVED VIEW (READ-TIME) ====================
@@ -220,7 +225,7 @@ export type TeacherTimetableRow = ResolvedTimetableEntry;
 export type ConflictKind =
   | 'teacher-clash'      // same teacher, same day+period, two different slots
   | 'class-clash'        // same class, same day+period, two different slots
-  | 'double-overlap'     // a double period overlaps a single period
+  | 'not-lesson'         // the period is a break / lunch / assembly / unknown
   | 'holiday';           // entry lands on a holiday (warning only, allowed)
 
 export interface TimetableConflict {
@@ -291,64 +296,72 @@ export interface TeacherCoverageRow {
   hasUncoveredSlots: boolean;
 }
 
-// ==================== PENDING SUBMISSIONS (ADMIN APPROVAL QUEUE) ====================
+// ==================== SUBMISSIONS ====================
+
+export type SubmissionStatus = 'pending' | 'approved' | 'rejected' | 'superseded';
 
 /**
- * A batch of pending rows submitted at once by a teacher. Grouped by
- * (submittedByUid, submittedAt) since that identifies the batch.
+ * timetable_submissions/{id}. A submission REPLACES the whole timetable of
+ * the subjects in `scopeSlotIds` when approved — so moved and removed
+ * periods disappear, and a subject with nothing ticked is cleared.
  */
+export interface TimetableSubmission {
+  id: string;
+  teacherId: string;
+  teacherName: string;
+  term: TermName;
+  year: number;
+  scopeSlotIds: string[];
+  classIds: string[];
+  entryCount: number;
+  status: SubmissionStatus;
+  submittedAt: Date | null;
+  decidedBy: string | null;
+  decidedAt: Date | null;
+  rejectedReason: string | null;
+}
+
+/** Admin approval queue item: the submission + its rows + a fresh clash check. */
 export interface PendingSubmission {
-  /** Deterministic id: `${submittedByUid}__${submittedAtMs}`. */
   id: string;
   submittedByUid: string;
   submittedByName: string;
   submittedAt: Date;
-
-  /** Entries in this submission batch. */
   entries: TimetableEntry[];
-
-  /** Classes affected by this batch. */
+  scopeSlotIds: string[];
+  /** Live rows that approval would replace (for the before/after view). */
+  replacedEntries: TimetableEntry[];
   classIds: string[];
   classNames: string[];
-
   term: TermName;
   year: number;
-
-  /** Detected conflicts on this batch (empty = clean). */
+  /** Checked against the CURRENT live timetable. Non-holiday = cannot approve. */
   conflicts: TimetableConflict[];
 }
 
 // ==================== REQUEST / RESPONSE SHAPES ====================
 
 export interface SubmitTimetableRequest {
-  /**
-   * When set, only these classIds are replaced by this submission.
-   * When null, ALL of the teacher's classes for the term are replaced
-   * (the "Submit all my classes" flow).
-   */
-  classIdsFilter: string[] | null;
-
   term: TermName;
   year: number;
-
-  /** Every entry the teacher wants live in this term (for the filtered set). */
+  /** The subjects (slot ids) whose timetable this submission replaces. */
+  scopeSlotIds: string[];
+  /** Every period the teacher wants live for those subjects. */
   entries: TimetableEntryInput[];
 }
 
 export interface SubmitTimetableResult {
-  /** Batch id of the pending submission. */
   submissionId: string;
   submittedCount: number;
-  /** Number of previously-pending rows this submission replaced. */
+  /** Earlier pending rows of the same subjects that this replaced. */
   replacedPendingCount: number;
-  /** Conflicts detected on this submission. Non-empty = admin must review. */
   conflicts: TimetableConflict[];
 }
 
 export interface ApproveTimetableResult {
   submissionId: string;
   approvedCount: number;
-  /** Rows archived because they were replaced by this approval. */
+  /** Live rows retired because this approval replaced them. */
   archivedCount: number;
 }
 

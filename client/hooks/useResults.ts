@@ -7,8 +7,6 @@ import {
   StudentResult, 
   ReportCardData, 
   SubjectCompletionStatus,
-  ReportReadinessCheck,
-  ClassReportReadiness,
   BulkReportOperation,
   StudentProgress,
 } from '@/services/resultsService';
@@ -38,18 +36,27 @@ export interface ReportGenerationOptions {
   configuredExamTypes?: string[]; // NEW: Which exams are configured for this term
 }
 
-// Helper function for grade calculation
-const calculateGrade = (percentage: number): number => {
-  if (percentage < 0) return -1;
-  if (percentage >= 75) return 1;
-  if (percentage >= 70) return 2;
-  if (percentage >= 65) return 3;
-  if (percentage >= 60) return 4;
-  if (percentage >= 55) return 5;
-  if (percentage >= 50) return 6;
-  if (percentage >= 45) return 7;
-  if (percentage >= 40) return 8;
-  return 9;
+import { calculateGrade } from '@/services/resultsService';
+
+// Every query that shows results. A save/delete refreshes all of them so the
+// Results Entry page, the Monitor, the teacher warning, Report Cards and the
+// analysis pages never show different numbers in the same browser.
+const RESULTS_QUERY_KEYS = [
+  ['results'],
+  ['analytics'],
+  ['reportCards'],
+  ['reportCard'],
+  ['studentProgress'],
+  ['subjectAnalysis'],
+  ['subjectCompletion'],
+  ['examResults'],
+  ['results_monitor'],
+  ['results_grid'],
+];
+
+export const invalidateAllResultsQueries = (queryClient: ReturnType<typeof useQueryClient>) => {
+  resultsService.invalidateGrid();
+  for (const key of RESULTS_QUERY_KEYS) queryClient.invalidateQueries({ queryKey: key });
 };
 
 // ==================== MAIN RESULTS HOOK ====================
@@ -160,40 +167,17 @@ export const useResults = (options?: {
     onSuccess: (data, variables) => {
       console.log(`✅ Saved ${data.count} results successfully${data.overwritten ? ' (overwritten)' : ''}`);
       
-      // Invalidate all related queries
-      queryClient.invalidateQueries({ queryKey: ['results'] });
-      queryClient.invalidateQueries({ queryKey: ['analytics'] });
-      queryClient.invalidateQueries({ queryKey: ['reportCards'] });
-      queryClient.invalidateQueries({ queryKey: ['studentProgress'] });
-      queryClient.invalidateQueries({ queryKey: ['subjectAnalysis'] });
-      queryClient.invalidateQueries({ queryKey: ['subjectCompletion'] });
-      queryClient.invalidateQueries({ queryKey: ['reportReadiness'] });
-      queryClient.invalidateQueries({ queryKey: ['examResults'] });
+      invalidateAllResultsQueries(queryClient);
     },
     onError: (error) => {
       console.error('❌ Failed to save results:', error);
     },
   });
 
-  const editResultsMutation = useMutation({
-    mutationFn: (data: {
-      classId: string;
-      subjectId: string;
-      examType: 'week4' | 'week8' | 'endOfTerm';
-      term: string;
-      year: number;
-    }) => resultsService.editResults(data),
-    onSuccess: (data, variables) => {
-      console.log(`✅ Unlocked results for editing:`, variables);
-      
-      queryClient.invalidateQueries({ queryKey: ['results'] });
-      queryClient.invalidateQueries({ queryKey: ['subjectCompletion', variables.classId, variables.term, variables.year] });
-      queryClient.invalidateQueries({ queryKey: ['studentProgress'] });
-      queryClient.invalidateQueries({ queryKey: ['examResults'] });
-    },
-    onError: (error) => {
-      console.error('❌ Failed to unlock results for editing:', error);
-    },
+  const markNotConductedMutation = useMutation({
+    mutationFn: (data: Parameters<typeof resultsService.markExamNotConducted>[0]) =>
+      resultsService.markExamNotConducted(data),
+    onSuccess: () => invalidateAllResultsQueries(queryClient),
   });
 
   const deleteResultsMutation = useMutation({
@@ -206,11 +190,7 @@ export const useResults = (options?: {
     }) => resultsService.deleteClassResults(data),
     onSuccess: (data, variables) => {
       console.log(`🗑️ Deleted ${data.deletedCount} results`);
-      queryClient.invalidateQueries({ queryKey: ['results'] });
-      queryClient.invalidateQueries({ queryKey: ['subjectCompletion'] });
-      queryClient.invalidateQueries({ queryKey: ['reportReadiness'] });
-      queryClient.invalidateQueries({ queryKey: ['reportCards'] });
-      queryClient.invalidateQueries({ queryKey: ['studentProgress'] });
+      invalidateAllResultsQueries(queryClient);
     },
     onError: (error) => {
       console.error('❌ Failed to delete results:', error);
@@ -223,13 +203,7 @@ export const useResults = (options?: {
       marks: number;
       totalMarks: number;
     }) => resultsService.updateStudentResult(resultId, marks, totalMarks),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['results'] });
-      queryClient.invalidateQueries({ queryKey: ['analytics'] });
-      queryClient.invalidateQueries({ queryKey: ['reportCards'] });
-      queryClient.invalidateQueries({ queryKey: ['studentProgress'] });
-      queryClient.invalidateQueries({ queryKey: ['examResults'] });
-    },
+    onSuccess: () => invalidateAllResultsQueries(queryClient),
   });
 
   const generateReportCardMutation = useMutation({
@@ -291,8 +265,8 @@ export const useResults = (options?: {
     isSaving: saveResultsMutation.isPending,
     isUpdating: updateResultMutation.isPending,
     
-    editResults: editResultsMutation.mutateAsync,
-    isEditing: editResultsMutation.isPending,
+    markExamNotConducted: markNotConductedMutation.mutateAsync,
+    isMarkingNotConducted: markNotConductedMutation.isPending,
 
     deleteResults: deleteResultsMutation.mutateAsync,
     isDeleting: deleteResultsMutation.isPending,
@@ -353,40 +327,9 @@ export const useStudentProgress = (options: {
       
       console.log(`✅ Found ${serviceProgress.length} students with progress data`);
       
-      // Transform service progress to match our hook's expected format
-      const students: StudentProgress[] = serviceProgress.map(s => ({
-        studentId: s.studentId,
-        studentName: s.studentName,
-        className: s.className,
-        classId: s.classId,
-        form: s.form,
-        overallPercentage: s.overallPercentage,
-        overallGrade: s.overallGrade,
-        status: s.status,
-        isComplete: s.isComplete,
-        completionPercentage: s.completionPercentage,
-        subjects: s.subjects.map(subject => ({
-          subjectId: subject.subjectId,
-          subjectName: subject.subjectName,
-          teacherName: subject.teacherName,
-          week4: {
-            status: subject.week4.status,
-            marks: subject.week4.marks
-          },
-          week8: {
-            status: subject.week8.status,
-            marks: subject.week8.marks
-          },
-          endOfTerm: {
-            status: subject.endOfTerm.status,
-            marks: subject.endOfTerm.marks
-          },
-          subjectProgress: subject.subjectProgress,
-          grade: subject.grade
-        })),
-        missingSubjects: s.missingSubjects,
-        totalSubjects: s.totalSubjects
-      }));
+      // Pass the service rows through unchanged (they come from the shared
+      // results grid, including documentId and the term's active exams).
+      const students: StudentProgress[] = [...serviceProgress];
       
       // Sort by student name
       const sortedStudents = students.sort((a, b) => a.studentName.localeCompare(b.studentName));
@@ -608,70 +551,10 @@ export const useSubjectCompletion = (options: {
   };
 };
 
-// ==================== REPORT READINESS HOOK ====================
-
-export const useReportReadiness = (options: {
-  studentId?: string;
-  classId?: string;
-  term: string;
-  year: number;
-}) => {
-  const teacherAssignmentsQuery = useQuery({
-    queryKey: ['teacherAssignments', 'class', options.classId],
-    queryFn: async () => {
-      if (!options.classId) return [];
-      return resultsService.getTeacherAssignmentsForClass(options.classId);
-    },
-    enabled: !!options.classId,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const studentReadinessQuery = useQuery({
-    queryKey: ['reportReadiness', 'student', options.studentId, options.term, options.year],
-    queryFn: () => {
-      if (!options.studentId) throw new Error('Student ID required');
-      return resultsService.validateReportCardReadiness(
-        options.studentId,
-        options.term,
-        options.year
-      );
-    },
-    enabled: !!options.studentId,
-    staleTime: 2 * 60 * 1000,
-  });
-
-  const classReadinessQuery = useQuery({
-    queryKey: ['reportReadiness', 'class', options.classId, options.term, options.year],
-    queryFn: async () => {
-      if (!options.classId) throw new Error('Class ID required');
-      return resultsService.validateClassReportReadiness(
-        options.classId,
-        options.term,
-        options.year
-      );
-    },
-    enabled: !!options.classId && !options.studentId,
-    staleTime: 2 * 60 * 1000,
-  });
-
-  return {
-    studentReadiness: studentReadinessQuery.data,
-    classReadiness: classReadinessQuery.data,
-    teacherAssignments: teacherAssignmentsQuery.data || [],
-    assignmentsLoading: teacherAssignmentsQuery.isLoading,
-    
-    isLoading: studentReadinessQuery.isLoading || classReadinessQuery.isLoading || teacherAssignmentsQuery.isLoading,
-    isFetching: studentReadinessQuery.isFetching || classReadinessQuery.isFetching || teacherAssignmentsQuery.isFetching,
-    isError: studentReadinessQuery.isError || classReadinessQuery.isError || teacherAssignmentsQuery.isError,
-    error: studentReadinessQuery.error || classReadinessQuery.error || teacherAssignmentsQuery.error,
-    
-    refetch: () => {
-      studentReadinessQuery.refetch();
-      classReadinessQuery.refetch();
-      teacherAssignmentsQuery.refetch();
-    },
-  };
-};
+// ==================== REPORT READINESS ====================
+// The old useReportReadiness hook had no callers and used a separate
+// readiness calculation. Readiness is now part of every report card
+// (isComplete / isProvisional / completionPercentage from the shared grid).
 
 // ==================== ANALYTICS HOOK ====================
 

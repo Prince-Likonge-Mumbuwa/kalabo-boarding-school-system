@@ -24,11 +24,12 @@
 //  unchanged. The service contract (markSession / deleteSession) is the same.
 // ============================================================================
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useTeacherClasses } from '@/hooks/useTeacherClasses';
-import { useSchoolLearners } from '@/hooks/useSchoolLearners';
+import { loadClassRoster } from '@/services/resultsGridLoader';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
 import { useAuth } from '@/hooks/useAuth';
 import { attendanceService } from '@/services/attendanceService';
@@ -49,8 +50,11 @@ import {
   useTodayTimetable,
   useCurrentPeriod,
   useHolidayCovering,
+  usePeriods,
 } from '@/hooks/useTimetable';
 import type { ResolvedTimetableEntry } from '@/types/timetable';
+import { groupIntoBlocks, blockSizeName, type Block } from '@/services/timetableModel';
+import { getCurrentAcademicTerm } from '@/utils/academicTerm';
 
 import { CompactStats } from '@/components/attendance/CompactStats';
 import { PeriodicOverview } from '@/components/attendance/PeriodicOverview';
@@ -170,14 +174,21 @@ export default function AttendanceTracking() {
   const deleteSession = useDeleteSession();
 
   // ── Mode and tab state ─────────────────────────────────────────────
-  const [mode, setMode] = useState<AttendanceMode>('periodic');
+  // Deep link from the dashboard: ?mode=periodic&class=..&date=..&period=..
+  const [params] = useSearchParams();
+  const [mode, setMode] = useState<AttendanceMode>(
+    params.get('mode') === 'daily' ? 'daily' : 'periodic',
+  );
   const [activeTab, setActiveTab] = useState<TabType>('mark');
 
   // ── Selection state ────────────────────────────────────────────────
-  const [selectedClass, setSelectedClass] = useState('');
-  const [selectedDate, setSelectedDate] = useState(() => formatLocalYMD(new Date()));
+  const [selectedClass, setSelectedClass] = useState(() => params.get('class') ?? '');
+  const [selectedDate, setSelectedDate] = useState(
+    () => (/^\d{4}-\d{2}-\d{2}$/.test(params.get('date') ?? '') ? params.get('date')! : formatLocalYMD(new Date())),
+  );
   const [selectedSubject, setSelectedSubject] = useState('');
-  const [selectedPeriod, setSelectedPeriod] = useState('1');
+  const [selectedPeriod, setSelectedPeriod] = useState(() => params.get('period') ?? '');
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // ── UI state ───────────────────────────────────────────────────────
   const [searchTerm, setSearchTerm] = useState('');
@@ -205,8 +216,12 @@ export default function AttendanceTracking() {
   const { assignments = [], isLoading: loadingAssignments } = useTeacherAssignments(user?.uid);
 
   // ── Timetable: today's schedule + current period + holiday check ──
-  const todayTimetableQ = useTodayTimetable();
+  // The lessons this teacher teaches on the SELECTED date (cover included
+  // only on the days it runs).
+  const todayTimetableQ = useTodayTimetable(selectedDate);
   const currentPeriodQ = useCurrentPeriod();
+  const isToday = selectedDate === formatLocalYMD(new Date());
+  const periodsQ = usePeriods(getCurrentAcademicTerm(new Date(`${selectedDate}T12:00:00`)).year);
   const holidayQ = useHolidayCovering(selectedDate);
 
   const isHoliday = !!holidayQ.data;
@@ -281,12 +296,32 @@ export default function AttendanceTracking() {
   //
   // A teacher should only be able to pick periods they actually operate.
   // The list is already scoped that way by useTodayTimetable.
-  const availableEntries = useMemo(() => {
-    if (mode !== 'periodic' || !selectedClass) return [];
-    return todayByClass.get(selectedClass) ?? [];
-  }, [mode, selectedClass, todayByClass]);
+  // Consecutive periods of one subject form one lesson (double / triple),
+  // marked once and saved for every period of the block.
+  const availableBlocks = useMemo(() => {
+    if (mode !== 'periodic' || !selectedClass) return [] as Block<ResolvedTimetableEntry['entry'] & { resolved: ResolvedTimetableEntry }>[];
+    const rows = (todayByClass.get(selectedClass) ?? []).map(r => ({ ...r.entry, resolved: r }));
+    return groupIntoBlocks(rows, periodsQ.data ?? []);
+  }, [mode, selectedClass, todayByClass, periodsQ.data]);
+  /** One entry per lesson (the block's first period). */
+  const availableEntries = useMemo(() => availableBlocks.map(b => b.rows[0].resolved), [availableBlocks]);
+  const chosenBlock = useMemo(
+    () => availableBlocks.find(b => String(b.periodIndexes[0]) === selectedPeriod) ?? null,
+    [availableBlocks, selectedPeriod],
+  );
 
-  const { learners, isLoading: loadingLearners } = useSchoolLearners(selectedClass);
+  // Same learner list as Results Entry (active or no status).
+  const learnersQ = useQuery({
+    queryKey: ['class_roster', selectedClass],
+    queryFn: () => loadClassRoster(selectedClass),
+    enabled: !!selectedClass,
+    staleTime: 2 * 60_000,
+  });
+  const learners = useMemo(
+    () => (learnersQ.data ?? []).map(l => ({ ...l, classId: selectedClass })),
+    [learnersQ.data, selectedClass],
+  );
+  const loadingLearners = learnersQ.isLoading && !!selectedClass;
 
   // ── Defaults ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -305,32 +340,35 @@ export default function AttendanceTracking() {
   //   1. If the teacher is currently teaching something in THIS class,
   //      preselect that period.
   //   2. Otherwise pick the first scheduled period for the class.
+  // Priority: the lesson the teacher is in right now (today only), else the
+  // first lesson. Done once per class+date, so the teacher can then pick
+  // any other lesson freely.
+  const autoPicked = useRef<string>('');
   useEffect(() => {
     if (mode !== 'periodic') return;
-    if (availableEntries.length === 0) {
-      if (selectedPeriod !== '') setSelectedPeriod('');
-      if (selectedSubject !== '') setSelectedSubject('');
+    if (availableBlocks.length === 0) {
+      if (todayTimetableQ.isSuccess && periodsQ.isSuccess) {
+        if (selectedPeriod !== '') setSelectedPeriod('');
+        if (selectedSubject !== '') setSelectedSubject('');
+      }
       return;
     }
-
-    const currentInThisClass =
-      currentPeriodQ.data &&
-      currentPeriodQ.data.entry.classId === selectedClass
-        ? currentPeriodQ.data
-        : null;
-
-    const preferred = currentInThisClass ?? availableEntries[0];
-    const periodStr = String(preferred.entry.periodIndex);
-
-    // Only overwrite if the current selection is invalid.
-    const stillValid = availableEntries.some(
-      e => String(e.entry.periodIndex) === selectedPeriod,
-    );
-    if (!stillValid || currentInThisClass) {
-      setSelectedPeriod(periodStr);
-      setSelectedSubject(preferred.entry.subject);
-    }
-  }, [mode, availableEntries, selectedPeriod, selectedSubject, selectedClass, currentPeriodQ.data]);
+    const cur = isToday ? currentPeriodQ.data : null;
+    const curBlock =
+      cur && cur.entry.classId === selectedClass
+        ? availableBlocks.find(b => b.slotId === cur.entry.slotId && b.periodIndexes.includes(cur.entry.periodIndex))
+        : undefined;
+    // A deep link may name any period of the lesson.
+    const linked = availableBlocks.find(b => b.periodIndexes.map(String).includes(selectedPeriod));
+    const stillValid = !!linked;
+    const key = `${selectedClass}|${selectedDate}`;
+    const first = autoPicked.current !== key;
+    if (first) autoPicked.current = key;
+    const pick = (first && !params.get('period') ? curBlock : undefined) ?? (stillValid ? linked : curBlock ?? availableBlocks[0]);
+    if (pick && String(pick.periodIndexes[0]) !== selectedPeriod) setSelectedPeriod(String(pick.periodIndexes[0]));
+    if (pick && pick.subject !== selectedSubject) setSelectedSubject(pick.subject);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, availableBlocks, selectedPeriod, selectedSubject, selectedClass, selectedDate, currentPeriodQ.data, isToday]);
 
   // Sync the subject from the chosen period.
   useEffect(() => {
@@ -481,41 +519,64 @@ export default function AttendanceTracking() {
     if (!selectedClass || !user?.uid) return;
     if (mode === 'periodic' && (!selectedPeriod || !selectedSubject)) return;
 
+    if (mode === 'periodic' && !chosenBlock) return;
+
     setIsSubmitting(true);
+    setSaveError(null);
     try {
       const classObj = classes.find(c => c.id === selectedClass);
       const className = classObj?.name ?? '';
-
-      await attendanceService.markSession({
+      const base = {
         classId: selectedClass,
         className,
         date: selectedDate,
         kind: mode,
-        subject: mode === 'periodic' ? selectedSubject : undefined,
-        period: mode === 'periodic' ? parseInt(selectedPeriod) : undefined,
         roster: draft.draft,
         excuseReasons: draft.reasons,
         markedBy: user.uid,
         markedByName: user.fullName || 'Teacher',
-      });
+      };
+      if (mode === 'periodic' && chosenBlock) {
+        const e = chosenBlock.rows[0];
+        // Same register for every period of a double / triple.
+        await attendanceService.markSessions(
+          chosenBlock.periodIndexes.map(period => ({
+            ...base,
+            subject: e.subject,
+            period,
+            slotId: e.slotId,
+            normalizedSubject: e.normalizedSubject,
+          })),
+        );
+      } else {
+        await attendanceService.markSession(base);
+      }
 
-      await invalidateSessionCaches({
-        classId: selectedClass,
-        date: selectedDate,
-        kind: mode,
-        period: sessionPeriod,
-        subject: sessionSubject,
-      });
+      for (const period of mode === 'periodic' && chosenBlock ? chosenBlock.periodIndexes : [undefined]) {
+        await invalidateSessionCaches({
+          classId: selectedClass,
+          date: selectedDate,
+          kind: mode,
+          period,
+          subject: sessionSubject,
+        });
+      }
 
       draft.markClean();
       setSubmitSuccess(true);
       setTimeout(() => setSubmitSuccess(false), 2000);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving attendance:', error);
+      setSaveError(
+        error?.code === 'permission-denied'
+          ? 'Not saved: you are not the teacher of this lesson on this date (or the register belongs to another teacher).'
+          : `Not saved: ${error?.message || 'unknown error'}. Check your connection and try again.`,
+      );
     } finally {
       setIsSubmitting(false);
     }
   }, [
+    chosenBlock,
     selectedClass,
     selectedDate,
     selectedSubject,
@@ -534,19 +595,22 @@ export default function AttendanceTracking() {
     if (!selectedClass) return;
 
     try {
-      await deleteSession.mutateAsync({
-        classId: selectedClass,
-        date: selectedDate,
-        kind: mode,
-        subject: sessionSubject,
-        period: sessionPeriod,
-      });
+      for (const period of mode === 'periodic' && chosenBlock ? chosenBlock.periodIndexes : [sessionPeriod]) {
+        await deleteSession.mutateAsync({
+          classId: selectedClass,
+          date: selectedDate,
+          kind: mode,
+          subject: sessionSubject,
+          period,
+        });
+      }
 
       setConfirmDelete(false);
     } catch (error) {
       console.error('Error deleting session:', error);
     }
   }, [
+    chosenBlock,
     deleteSession,
     selectedClass,
     selectedDate,
@@ -607,6 +671,7 @@ export default function AttendanceTracking() {
   }, [mode, availableEntries, selectedPeriod]);
 
   const currentPeriodEntry =
+    isToday &&
     currentPeriodQ.data &&
     currentPeriodQ.data.entry.classId === selectedClass
       ? currentPeriodQ.data
@@ -746,27 +811,21 @@ export default function AttendanceTracking() {
                         onChange={e => {
                           const p = e.target.value;
                           setSelectedPeriod(p);
-                          const entry = availableEntries.find(
-                            x => String(x.entry.periodIndex) === p,
-                          );
-                          if (entry) setSelectedSubject(entry.entry.subject);
+                          const b = availableBlocks.find(x => String(x.periodIndexes[0]) === p);
+                          if (b) setSelectedSubject(b.subject);
                         }}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm"
                         disabled={availableEntries.length === 0}
                       >
                         {availableEntries.length === 0 ? (
-                          <option value="">No periods scheduled today</option>
+                          <option value="">{isToday ? 'No lessons for you today' : 'No lessons for you on this date'}</option>
                         ) : (
-                          availableEntries.map(entry => (
-                            <option
-                              key={`${entry.entry.dayOfWeek}-${entry.entry.periodIndex}`}
-                              value={String(entry.entry.periodIndex)}
-                            >
-                              {entry.period?.name ?? `P${entry.entry.periodIndex}`}
-                              {' · '}
-                              {entry.entry.subject}
-                              {entry.period ? ` (${entry.period.startTime}–${entry.period.endTime})` : ''}
-                              {entry.isCoveredNow ? ' [cover]' : ''}
+                          availableBlocks.map(b => (
+                            <option key={b.key} value={String(b.periodIndexes[0])}>
+                              {b.label} · {b.subject}
+                              {b.startTime ? ` (${b.startTime}–${b.endTime})` : ''}
+                              {b.size > 1 ? ` · ${blockSizeName(b.size)}` : ''}
+                              {b.rows[0].resolved.isCoveredNow ? ' [cover]' : ''}
                             </option>
                           ))
                         )}
@@ -817,9 +876,9 @@ export default function AttendanceTracking() {
                   <p className="text-[10px] sm:text-xs text-gray-500">
                     {mode === 'daily'
                       ? 'Daily roll call — mark each student present/absent/late for the day'
-                      : chosenEntry
-                      ? `Periodic attendance — ${chosenEntry.entry.subject} · ${chosenEntry.entry.className} · period ${chosenEntry.entry.periodIndex}`
-                      : 'Select a period to mark'}
+                      : chosenBlock
+                      ? `Lesson register — ${chosenBlock.subject} · ${chosenBlock.className} · ${chosenBlock.label}${chosenBlock.size > 1 ? ` (${blockSizeName(chosenBlock.size)}: saved for each period)` : ''}`
+                      : 'Select a lesson to mark'}
                   </p>
                 </div>
               </div>
@@ -855,7 +914,7 @@ export default function AttendanceTracking() {
                 <Info size={16} className="text-gray-500 flex-shrink-0 mt-0.5" />
                 <div>
                   <p className="font-medium text-gray-900">
-                    No scheduled periods for you in this class today.
+                    No lessons for you in this class on this date.
                   </p>
                   <p className="text-gray-600 mt-0.5">
                     Submit your timetable from <span className="font-medium">My Timetable</span>{' '}
@@ -899,6 +958,11 @@ export default function AttendanceTracking() {
                 {submitSuccess && (
                   <span className="text-xs sm:text-sm text-green-600 bg-green-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg flex items-center gap-1 whitespace-nowrap">
                     <Check size={12} /> Saved
+                  </span>
+                )}
+                {saveError && (
+                  <span role="alert" className="text-xs sm:text-sm text-red-700 bg-red-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg flex items-center gap-1">
+                    <AlertCircle size={12} /> {saveError}
                   </span>
                 )}
               </div>

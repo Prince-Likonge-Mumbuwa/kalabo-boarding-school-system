@@ -43,6 +43,7 @@ import {
   useUpsertPeriod,
   useDeletePeriod,
   useSeedDefaultPeriods,
+  useResetToSchoolBell,
   useSchoolHolidays,
   useUpsertHoliday,
   useDeleteHoliday,
@@ -52,8 +53,9 @@ import {
   useRejectSubmission,
   useTimetableCoverage,
   useTeacherCoverage,
-  useClassTimetable,
+  useSchoolDayBoard,
 } from '@/hooks/useTimetable';
+import { Link } from 'react-router-dom';
 import {
   CoverageCard,
   UncoveredPeriodsTable,
@@ -61,12 +63,13 @@ import {
   ConflictWarning,
 } from '@/components/timetable/TimetableShared';
 import { getCurrentAcademicTerm } from '@/utils/academicTerm';
+import { SCHOOL_BELL } from '@/services/timetableModel';
 
 import type {
+  Period,
   PeriodDraft,
   HolidayDraft,
   PendingSubmission,
-  ResolvedTimetableEntry,
 } from '@/types/timetable';
 import type { AttendanceDailyRollup } from '@/types/attendance';
 
@@ -187,7 +190,7 @@ function RiskOverview({
   classId: string | undefined;
   className: string;
 }) {
-  const termStart = useMemo(() => daysAgoYMD(120), []);
+  const termStart = useMemo(() => formatLocalYMD(getCurrentAcademicTerm().startDate), []);
   const { atRisk, isLoading } = useClassRiskIndex(classId, className, termStart);
 
   if (!classId) {
@@ -521,6 +524,8 @@ function PeriodsTab() {
   const upsert = useUpsertPeriod();
   const remove = useDeletePeriod();
   const seed = useSeedDefaultPeriods();
+  const reset = useResetToSchoolBell();
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<PeriodDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -528,12 +533,15 @@ function PeriodsTab() {
   const periods = periodsQ.data ?? [];
 
   const startNew = () => {
-    const nextOrder = periods.length === 0 ? 1 : Math.max(...periods.map(p => p.order)) + 1;
+    // Lessons are P1..P8; breaks are not numbered.
+    const used = new Set(periods.filter(p => p.kind === 'lesson').map(p => p.order));
+    const nextOrder = [1, 2, 3, 4, 5, 6, 7, 8].find(n => !used.has(n)) ?? 8;
+    const std = SCHOOL_BELL.find(r => r.kind === 'lesson' && r.order === nextOrder)!;
     setEditing({
       order: nextOrder,
       name: `P${nextOrder}`,
-      startTime: '07:30',
-      endTime: '08:20',
+      startTime: std.startTime,
+      endTime: std.endTime,
       kind: 'lesson',
       academicYear: year,
       isActive: true,
@@ -568,18 +576,35 @@ function PeriodsTab() {
         <div>
           <h2 className="font-semibold text-gray-900">Bell Schedule — {year}</h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            Periods are shared across the whole school. Order is used by attendance and the timetable.
+            School day 07:20–13:00: P1–P4 (40 min each), Break 10:00–10:20 (not a period), P5–P8 ending 13:00.
           </p>
         </div>
         <div className="flex gap-2">
           <button
-            onClick={async () => { await seed.mutateAsync(year); }}
-            disabled={seed.isPending || periods.length > 0}
-            title={periods.length > 0 ? 'Already seeded' : 'Seed a default 8-lesson day'}
+            onClick={async () => {
+              setError(null);
+              setNotice(null);
+              try {
+                if (periods.length === 0) {
+                  await seed.mutateAsync(year);
+                  setNotice('School bell schedule added.');
+                  return;
+                }
+                if (!confirm('Set the bell schedule to P1–P4 07:20–10:00, Break 10:00–10:20, P5–P8 10:20–13:00? Timetable rows and registers move with their lessons.')) return;
+                const r = await reset.mutateAsync(year);
+                setNotice(r.periods === 0
+                  ? 'The bell schedule already matches the school day.'
+                  : `Bell schedule updated; moved ${r.rows} timetable row(s) and ${r.registers} register(s).`);
+              } catch (e: any) {
+                setError(e?.message ?? 'Could not apply the bell schedule.');
+              }
+            }}
+            disabled={seed.isPending || reset.isPending}
+            title="P1–P4 07:20–10:00, Break 10:00–10:20, P5–P8 10:20–13:00"
             className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5"
           >
-            {seed.isPending ? <Loader2 size={14} className="animate-spin" /> : <Calendar size={14} />}
-            Seed defaults
+            {seed.isPending || reset.isPending ? <Loader2 size={14} className="animate-spin" /> : <Calendar size={14} />}
+            Apply school bell schedule
           </button>
           <button onClick={startNew} className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-1.5">
             <Plus size={14} /> Add period
@@ -593,6 +618,10 @@ function PeriodsTab() {
         </div>
       )}
 
+      {notice && (
+        <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">{notice}</div>
+      )}
+
       {periodsQ.isLoading ? (
         <div className="flex justify-center py-10">
           <Loader2 className="animate-spin text-blue-600" size={24} />
@@ -601,7 +630,7 @@ function PeriodsTab() {
         <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
           <Info className="text-gray-400 mx-auto mb-2" size={28} />
           <p className="text-sm text-gray-600">
-            No periods yet. Use <span className="font-medium">Seed defaults</span> for a typical 8-lesson day, or add them one by one.
+            No periods yet. Use <span className="font-medium">Apply school bell schedule</span> to add P1–P8 and the break.
           </p>
         </div>
       ) : (
@@ -609,7 +638,7 @@ function PeriodsTab() {
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                {['Order', 'Name', 'Start', 'End', 'Kind', 'Status', ''].map(h => (
+                {['Period', 'Name', 'Start', 'End', 'Kind', 'Status', ''].map(h => (
                   <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-gray-600 uppercase">{h}</th>
                 ))}
               </tr>
@@ -617,7 +646,7 @@ function PeriodsTab() {
             <tbody className="divide-y divide-gray-100">
               {periods.map(p => (
                 <tr key={p.id} className="hover:bg-gray-50/50">
-                  <td className="px-4 py-2 text-sm tabular-nums">{p.order}</td>
+                  <td className="px-4 py-2 text-sm tabular-nums">{p.kind === 'lesson' ? p.order : '—'}</td>
                   <td className="px-4 py-2 text-sm font-medium">{p.name}</td>
                   <td className="px-4 py-2 text-sm tabular-nums">{p.startTime}</td>
                   <td className="px-4 py-2 text-sm tabular-nums">{p.endTime}</td>
@@ -674,9 +703,11 @@ function PeriodEditorDialog({
         <div className="p-5 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
-              <span className="text-xs font-medium text-gray-600">Order</span>
-              <input type="number" min={1} value={draft.order}
-                onChange={e => onChange({ ...draft, order: Number(e.target.value) || 1 })}
+              <span className="text-xs font-medium text-gray-600">Period number (1–8)</span>
+              <input type="number" min={1} max={8} value={draft.kind === 'lesson' ? draft.order : ''}
+                disabled={draft.kind !== 'lesson'}
+                placeholder={draft.kind !== 'lesson' ? 'not a period' : undefined}
+                onChange={e => onChange({ ...draft, order: Math.min(8, Math.max(1, Number(e.target.value) || 1)) })}
                 className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
             </label>
             <label className="block">
@@ -689,13 +720,13 @@ function PeriodEditorDialog({
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="text-xs font-medium text-gray-600">Start</span>
-              <input type="time" value={draft.startTime}
+              <input type="time" min="07:20" max="13:00" value={draft.startTime}
                 onChange={e => onChange({ ...draft, startTime: e.target.value })}
                 className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
             </label>
             <label className="block">
               <span className="text-xs font-medium text-gray-600">End</span>
-              <input type="time" value={draft.endTime}
+              <input type="time" min="07:20" max="13:00" value={draft.endTime}
                 onChange={e => onChange({ ...draft, endTime: e.target.value })}
                 className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
             </label>
@@ -703,7 +734,10 @@ function PeriodEditorDialog({
           <label className="block">
             <span className="text-xs font-medium text-gray-600">Kind</span>
             <select value={draft.kind}
-              onChange={e => onChange({ ...draft, kind: e.target.value as PeriodDraft['kind'] })}
+              onChange={e => {
+                const kind = e.target.value as PeriodDraft['kind'];
+                onChange({ ...draft, kind, order: kind === 'lesson' ? (draft.order || 1) : 0 });
+              }}
               className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
               <option value="lesson">Lesson</option>
               <option value="break">Break</option>
@@ -962,6 +996,9 @@ function ApprovalsTab() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const submissions = pendingQ.data ?? [];
+  const periodsQ = usePeriods(submissions[0]?.year);
+  const clean = submissions.filter(s => s.conflicts.length === 0);
+  const [bulk, setBulk] = useState<string | null>(null);
 
   const handleApprove = async (id: string) => {
     setActionError(null);
@@ -970,6 +1007,25 @@ function ApprovalsTab() {
     } catch (e: any) {
       setActionError(e?.message ?? 'Failed to approve.');
     }
+  };
+
+  // One at a time, so each approval is checked against the timetable the
+  // previous one produced.
+  const approveAllClean = async () => {
+    setActionError(null);
+    const failed: string[] = [];
+    let done = 0;
+    for (const s of clean) {
+      setBulk(`Approving ${done + 1} of ${clean.length}…`);
+      try {
+        await approve.mutateAsync(s.id);
+        done++;
+      } catch (e: any) {
+        failed.push(`${s.submittedByName}: ${e?.message ?? 'failed'}`);
+      }
+    }
+    setBulk(null);
+    if (failed.length) setActionError(`Approved ${done}. Not approved — ${failed.join(' | ')}`);
   };
 
   const handleReject = async () => {
@@ -1004,12 +1060,24 @@ function ApprovalsTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="font-semibold text-gray-900">Pending Submissions</h2>
-        <p className="text-xs text-gray-500 mt-0.5">
-          {submissions.length} batch{submissions.length === 1 ? '' : 'es'} awaiting review.
-          Approving replaces the currently-active timetable rows for the affected slots.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 className="font-semibold text-gray-900">Pending Submissions</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {submissions.length} submission{submissions.length === 1 ? '' : 's'} awaiting review.
+            Approving replaces the whole live timetable of each subject listed. Submissions with clashes can't be approved.
+          </p>
+        </div>
+        {clean.length > 0 && (
+          <button
+            onClick={approveAllClean}
+            disabled={!!bulk || approve.isPending}
+            className="px-3 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {bulk ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            {bulk ?? `Approve all with no clashes (${clean.length})`}
+          </button>
+        )}
       </div>
 
       {actionError && (
@@ -1023,6 +1091,7 @@ function ApprovalsTab() {
           <SubmissionRow
             key={sub.id}
             submission={sub}
+            periods={periodsQ.data ?? []}
             onApprove={() => handleApprove(sub.id)}
             onReject={() => setRejecting({ id: sub.id, name: sub.submittedByName })}
             approving={approve.isPending}
@@ -1065,20 +1134,15 @@ function ApprovalsTab() {
 }
 
 function SubmissionRow({
-  submission, onApprove, onReject, approving, rejecting,
+  submission, periods, onApprove, onReject, approving, rejecting,
 }: {
   submission: PendingSubmission;
+  periods: Period[];
   onApprove: () => void;
   onReject: () => void;
   approving: boolean;
   rejecting: boolean;
 }) {
-  const firstClass = submission.classIds[0];
-  const classTimetableQ = useClassTimetable(firstClass, {
-    term: submission.term,
-    year: submission.year,
-  });
-  const activeRows: ResolvedTimetableEntry[] = classTimetableQ.data ?? [];
   const hasConflicts = submission.conflicts.length > 0;
 
   return (
@@ -1087,22 +1151,23 @@ function SubmissionRow({
         <div className="min-w-0">
           <p className="font-semibold text-gray-900 text-sm">{submission.submittedByName}</p>
           <p className="text-xs text-gray-500 mt-0.5">
-            {submission.term} {submission.year} · {submission.entries.length} rows ·{' '}
+            {submission.classNames.join(', ')} · {submission.term} {submission.year} · {submission.entries.length} period(s) ·{' '}
             {submission.submittedAt.toLocaleString()}
           </p>
         </div>
         <div className="flex items-center gap-2">
           {hasConflicts && (
             <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-800 flex items-center gap-1">
-              <AlertCircle size={12} /> {submission.conflicts.length} conflict
-              {submission.conflicts.length === 1 ? '' : 's'}
+              <AlertCircle size={12} /> {submission.conflicts.length} clash
+              {submission.conflicts.length === 1 ? '' : 'es'}
             </span>
           )}
           <button onClick={onReject} disabled={approving || rejecting}
             className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-lg disabled:opacity-50 flex items-center gap-1">
             <Ban size={12} /> Reject
           </button>
-          <button onClick={onApprove} disabled={approving || rejecting}
+          <button onClick={onApprove} disabled={approving || rejecting || hasConflicts}
+            title={hasConflicts ? 'Fix the clashes first (reject with a note, or ask the other teacher to change theirs)' : undefined}
             className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50 flex items-center gap-1">
             {approving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
             Approve
@@ -1117,7 +1182,7 @@ function SubmissionRow({
       )}
 
       <div className="p-5">
-        <SubmissionDiffView pending={submission} activeForSlots={activeRows} />
+        <SubmissionDiffView pending={submission} periods={periods} />
       </div>
     </div>
   );
@@ -1162,6 +1227,11 @@ export default function AttendanceOverview() {
 
   // ── Timetable coverage (only in daily view) ────────────────────────
   const coverageQ = useTimetableCoverage(isDaily ? selectedDate : undefined);
+  // Every class (also those that marked nothing) for the daily register list.
+  const dayBoardQ = useSchoolDayBoard(selectedDate);
+  const noDailyRegister = (dayBoardQ.data?.dayOfWeek && !dayBoardQ.data.holiday)
+    ? dayBoardQ.data.classes.filter(c => !c.dailyTaken)
+    : [];
   const teacherCoverageQ = useTeacherCoverage(isDaily ? selectedDate : undefined);
 
   const classOptions = useMemo(() => {
@@ -1384,6 +1454,18 @@ export default function AttendanceOverview() {
               >
                 <Check size={14} /> Approvals
               </button>
+              <Link
+                to="/dashboard/admin/timetable-live"
+                className="px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap flex items-center gap-1.5 text-gray-600 hover:bg-gray-100"
+              >
+                <Clock size={14} /> Live timetable
+              </Link>
+              <Link
+                to="/dashboard/admin/timetable-data-check"
+                className="px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap flex items-center gap-1.5 text-gray-600 hover:bg-gray-100"
+              >
+                <Search size={14} /> Data check
+              </Link>
             </div>
           </div>
 
@@ -1475,6 +1557,12 @@ export default function AttendanceOverview() {
               />
 
               {/* ── NEW: Timetable coverage card (daily only) ─── */}
+              {isDaily && noDailyRegister.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <span className="font-semibold">Daily register not taken ({noDailyRegister.length}):</span>{' '}
+                  {noDailyRegister.map(c => c.className).join(', ')}
+                </div>
+              )}
               {isDaily && (
                 <CoverageCard
                   rows={coverageQ.data ?? []}

@@ -1,4 +1,6 @@
 // @/pages/teacher/TeacherResultsAnalysis.tsx
+import { activeExamsFor, pickTermConfig, gradeForPercentage } from '@/services/resultsGrid';
+import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
@@ -64,14 +66,8 @@ interface ClassPerformance {
 
 // ==================== HELPER FUNCTIONS ====================
 
-const getConfiguredExamTypes = (examConfig: any): string[] => {
-  if (!examConfig?.examTypes) return [];
-  const types = [];
-  if (examConfig.examTypes.week4) types.push('week4');
-  if (examConfig.examTypes.week8) types.push('week8');
-  if (examConfig.examTypes.endOfTerm) types.push('endOfTerm');
-  return types;
-};
+// Active exams: app-wide rule (box ticked AND total marks > 0).
+const getConfiguredExamTypes = (examConfig: any): string[] => activeExamsFor(examConfig);
 
 const calculateStudentSubjectAverageGrade = (
   studentId: string,
@@ -87,15 +83,7 @@ const calculateStudentSubjectAverageGrade = (
   );
   if (subjectResults.length === 0) return null;
   const avgPercentage = subjectResults.reduce((sum, r) => sum + r.percentage, 0) / subjectResults.length;
-  if (avgPercentage >= 75) return 1;
-  if (avgPercentage >= 70) return 2;
-  if (avgPercentage >= 65) return 3;
-  if (avgPercentage >= 60) return 4;
-  if (avgPercentage >= 55) return 5;
-  if (avgPercentage >= 50) return 6;
-  if (avgPercentage >= 45) return 7;
-  if (avgPercentage >= 40) return 8;
-  return 9;
+  return gradeForPercentage(avgPercentage);
 };
 
 // ==================== GRADE COLOUR MAP ====================
@@ -451,8 +439,9 @@ export default function TeacherResultsAnalysis() {
 
   const [selectedClass, setSelectedClass] = useState<string>('all');
   const [selectedSubject, setSelectedSubject] = useState<string>('all');
-  const [selectedTerm, setSelectedTerm] = useState('Term 1');
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  // Opens on the current academic term (was always Term 1).
+  const [selectedTerm, setSelectedTerm] = useState<TermName>(() => getCurrentAcademicTerm().term);
+  const [selectedYear, setSelectedYear] = useState<number>(() => getCurrentAcademicTerm().year);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [chartViewMode, setChartViewMode] = useState<'detailed' | 'simple'>('detailed');
   const [isDownloading, setIsDownloading] = useState(false);
@@ -478,7 +467,7 @@ export default function TeacherResultsAnalysis() {
     term: selectedTerm,
   });
 
-  const currentExamConfig = examConfigs?.[0];
+  const currentExamConfig = pickTermConfig(examConfigs as any[], selectedTerm, selectedYear);
 
   const configuredExamTypes = useMemo(
     () => getConfiguredExamTypes(currentExamConfig),
@@ -503,14 +492,26 @@ export default function TeacherResultsAnalysis() {
   const filteredResults = useMemo(() => {
     if (!allResults?.length || !assignments?.length) return [];
 
-    const teacherSubjectIds = new Set<string>();
+    // Keyed by class AND subject: teaching Maths in 1A must not pull in
+    // Maths results from 2B. Form Teacher is not a subject.
+    const teacherSlots = new Set<string>();
     const scope = selectedClass === 'all' ? assignments : assignments.filter(a => a.classId === selectedClass);
-    scope.forEach(a => teacherSubjectIds.add(normalizeSubjectName(a.subject)));
+    scope
+      .filter(a => a.normalizedSubjectId !== 'form-teacher')
+      .forEach(a => teacherSlots.add(`${a.classId}|${normalizeSubjectName(a.subject)}`));
+
+    // Only learners who are currently active count (same as the monitor).
+    const active = new Set<string>();
+    learners?.forEach((l: any) => {
+      if (l.id) active.add(l.id);
+      if (l.studentId) active.add(l.studentId);
+    });
 
     return allResults.filter(r =>
-      teacherSubjectIds.has(normalizeSubjectName(r.subjectId || r.subjectName || ''))
+      teacherSlots.has(`${r.classId}|${normalizeSubjectName(r.subjectId || r.subjectName || '')}`) &&
+      (active.size === 0 || active.has(r.studentId))
     );
-  }, [allResults, assignments, selectedClass]);
+  }, [allResults, assignments, selectedClass, learners]);
 
   // ==================== GENDER MAP ====================
 
@@ -724,8 +725,8 @@ export default function TeacherResultsAnalysis() {
   const clearFilters = () => {
     setSelectedClass('all');
     setSelectedSubject('all');
-    setSelectedTerm('Term 1');
-    setSelectedYear(new Date().getFullYear());
+    setSelectedTerm(getCurrentAcademicTerm().term);
+    setSelectedYear(getCurrentAcademicTerm().year);
   };
 
   const hasAssignments   = !!assignments?.length;
@@ -921,7 +922,7 @@ export default function TeacherResultsAnalysis() {
                   <label className="block text-xs font-medium text-gray-600 mb-1">Term</label>
                   <select
                     value={selectedTerm}
-                    onChange={e => setSelectedTerm(e.target.value)}
+                    onChange={e => setSelectedTerm(e.target.value as TermName)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
                   >
                     {['Term 1', 'Term 2', 'Term 3'].map(t => <option key={t} value={t}>{t}</option>)}

@@ -1,4 +1,9 @@
 // @/pages/ParentPortal.tsx
+// Consistency rewrite: the parent sees the SAME report card as the admin
+// (built by the shared results grid) — same subjects, same active exams,
+// same averages, grades and position — on screen and in the PDF. It opens
+// on the current academic term and says "Provisional" while marks are
+// still pending.
 // Version 2.0.0 - PDF export now maps service ReportCardData → admin ReportCardData shape
 //                  (fixes blank Avg column), grade descriptions wired, exam-config aware.
 
@@ -8,7 +13,7 @@ import { Layout } from '@/components/Layout';
 import { learnerService } from '@/services/schoolService';
 import { resultsService, ReportCardData } from '@/services/resultsService';
 import { generateReportCardPDF } from '@/services/pdf/reportCardPDFLib';
-import { useExamConfig } from '@/hooks/useExamConfig';
+import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import type { Learner } from '@/types/school';
 import {
   Phone,
@@ -27,113 +32,11 @@ import {
   Download,
 } from 'lucide-react';
 
-const TERMS = ['Term 1', 'Term 2', 'Term 3'];
+const TERMS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
 
 /* ============================================================
    HELPERS
    ============================================================ */
-
-const ALL_EXAM_TYPES = ['week4', 'week8', 'endOfTerm'] as const;
-
-const getExamDisplayName = (examType: string): string => {
-  switch (examType) {
-    case 'week4': return 'Week 4';
-    case 'week8': return 'Week 8';
-    case 'endOfTerm': return 'End of Term';
-    default: return examType;
-  }
-};
-
-/**
- * Resolve which exam columns should be shown for the current term/year,
- * based on the school's exam configuration.
- *
- * Parent portal is unauthenticated in most deployments, so `useExamConfig`
- * may return nothing. In that case we default to showing all three columns
- * — matching the previous parent-portal UX and preventing a confusing
- * "only EOT shows up" experience for parents of students with mixed data.
- */
-const resolveConfiguredExamTypes = (
-  examConfigs: any[] | undefined,
-  term: string,
-  year: number
-): string[] => {
-  if (!examConfigs || examConfigs.length === 0) {
-    return [...ALL_EXAM_TYPES];
-  }
-
-  const matching = examConfigs.filter(
-    (c: any) => c.term === term && c.year === year
-  );
-  if (matching.length === 0) return [...ALL_EXAM_TYPES];
-
-  const active = matching.find((c: any) => c.isActive !== false) || matching[0];
-  const types: string[] = [];
-  if (active?.examTypes?.week4) types.push('week4');
-  if (active?.examTypes?.week8) types.push('week8');
-  if (active?.examTypes?.endOfTerm) types.push('endOfTerm');
-
-  return types.length > 0 ? types : [...ALL_EXAM_TYPES];
-};
-
-const GRADE_DESCRIPTIONS: Record<number, string> = {
-  1: 'Distinction',
-  2: 'Distinction',
-  3: 'Merit',
-  4: 'Merit',
-  5: 'Credit',
-  6: 'Credit',
-  7: 'Satisfactory',
-  8: 'Satisfactory',
-  9: 'Unsatisfactory',
-};
-
-/**
- * The PDF lib (@/services/pdf/reportCardPDFLib) consumes the *admin* ReportCardData
- * shape from @/pages/admin/ReportCards, which differs from the service shape in
- * two important fields:
- *
- *   service.subjects[].averagePercentage  →  admin.subjects[].average
- *   service.overallGrade                  →  admin.grade
- *   service.subjects[].gradeDescription   →  admin.subjects[].gradeDescription
- *                                             (service returns free-text `comment`)
- *
- * Without this transform the PDF renders '-' for every Avg cell and no
- * grade descriptions. We build the admin-shaped object explicitly.
- */
-const transformForPDF = (
-  serviceReport: ReportCardData,
-  configuredExamTypes: string[]
-): any => {
-  const subjects = (serviceReport.subjects || []).map((s: any) => ({
-    subjectId: s.subjectId,
-    subjectName: s.subjectName,
-    week4: s.week4,
-    week8: s.week8,
-    endOfTerm: s.endOfTerm,
-    // service uses `averagePercentage`; PDF lib reads `average`
-    average: typeof s.averagePercentage === 'number' ? s.averagePercentage : -1,
-    grade: s.grade,
-    // Prefer the service's short description; fall back to the grade-band map
-    gradeDescription:
-      s.gradeDescription ||
-      (s.grade > 0 ? GRADE_DESCRIPTIONS[s.grade] : undefined) ||
-      '—',
-  }));
-
-  const showAll = configuredExamTypes.length >= 3;
-  const examConfigSummary = showAll
-    ? undefined
-    : `Based on: ${configuredExamTypes.map(getExamDisplayName).join(' + ')}`;
-
-  return {
-    ...serviceReport,
-    // admin shape uses `grade`, service uses `overallGrade`
-    grade: serviceReport.overallGrade,
-    subjects,
-    examConfigSummary,
-  };
-};
 
 /* ============================================================
    COMPONENT
@@ -144,22 +47,18 @@ const ParentPortal = () => {
   const [searching, setSearching] = useState(false);
   const [children, setChildren] = useState<Learner[]>([]);
   const [selectedChild, setSelectedChild] = useState<Learner | null>(null);
-  const [term, setTerm] = useState('Term 1');
-  const [year, setYear] = useState(new Date().getFullYear());
-  const [reportCard, setReportCard] = useState<ReportCardData | null>(null);
+  // Opens on the current academic term (was always "Term 1").
+  const [term, setTerm] = useState<TermName>(() => getCurrentAcademicTerm().term);
+  const [year, setYear] = useState<number>(() => getCurrentAcademicTerm().year);
+  const [reportCard, setReportCard] = useState<(ReportCardData & { degraded?: boolean }) | null>(null);
   const [loadingReport, setLoadingReport] = useState(false);
   const [downloadingPDF, setDownloadingPDF] = useState(false);
   const [error, setError] = useState('');
   const [hasSearched, setHasSearched] = useState(false);
 
-  // Best-effort: parents may not be permitted to read exam config.
-  // The hook returns [] on error / no-auth, and we fall back to all columns.
-  const { configs: examConfigs } = useExamConfig({ year, term });
-
-  const configuredExamTypes = useMemo(
-    () => resolveConfiguredExamTypes(examConfigs as any, term, year),
-    [examConfigs, term, year]
-  );
+  // The exams the card is based on come from the card itself (the shared
+  // grid), so the columns always match the admin's report card.
+  const configuredExamTypes: string[] = reportCard?.activeExams ?? [];
 
   const resetResults = () => {
     setReportCard(null);
@@ -204,10 +103,10 @@ const ParentPortal = () => {
 
     try {
       const report = await resultsService.generateReportCard(
-        selectedChild.studentId || selectedChild.id,
+        selectedChild.id || selectedChild.studentId,
         term,
         year,
-        { includeIncomplete: true, markMissing: true }
+        { includeIncomplete: true, markMissing: true, publicView: true }
       );
 
       if (!report) {
@@ -232,15 +131,8 @@ const ParentPortal = () => {
     setError('');
 
     try {
-      // Transform service shape → admin shape expected by the PDF lib
-      // (specifically: averagePercentage → average, overallGrade → grade,
-      // plus gradeDescription mapping and exam-config summary).
-      const pdfReady = transformForPDF(reportCard, configuredExamTypes);
-
-      const pdfBytes = await generateReportCardPDF(
-        pdfReady,
-        configuredExamTypes
-      );
+      // The card is already in the shape the PDF uses (same as the admin's).
+      const pdfBytes = await generateReportCardPDF(reportCard as any, configuredExamTypes);
 
       const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
@@ -263,9 +155,11 @@ const ParentPortal = () => {
     }
   };
 
+  // -1 absent, -2 not conducted, -3 (or anything else negative) pending.
   const formatMark = (value: number): string => {
-    if (value === -2) return 'N/C';
-    if (value === -1) return '—';
+    if (value === -1) return 'ABS';
+    if (value === -2) return 'NC';
+    if (typeof value !== 'number' || value < 0) return '—';
     return `${value}%`;
   };
 
@@ -488,7 +382,7 @@ const ParentPortal = () => {
                     <select
                       value={term}
                       onChange={(e) => {
-                        setTerm(e.target.value);
+                        setTerm(e.target.value as TermName);
                         resetResults();
                       }}
                       className="w-full px-3 py-2.5 bg-white/10 border border-white/30 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -623,6 +517,20 @@ const ParentPortal = () => {
                     </p>
                   </div>
                 </div>
+
+                {/* Provisional / partial-data notices */}
+                {reportCard.isProvisional && (
+                  <div className="mb-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800">
+                    <strong>Provisional:</strong> {reportCard.totalSubjects - reportCard.completedSubjects} subject
+                    {reportCard.totalSubjects - reportCard.completedSubjects === 1 ? ' is' : 's are'} still awaiting marks
+                    (shown as —). The average may change when they are entered.
+                  </div>
+                )}
+                {reportCard.degraded && (
+                  <div className="mb-3 p-3 rounded-xl bg-gray-50 border border-gray-200 text-xs text-gray-600">
+                    Some school settings could not be loaded, so this view may differ slightly from the official report card.
+                  </div>
+                )}
 
                 {/* Subjects table */}
                 <div className="overflow-x-auto -mx-2 px-2">

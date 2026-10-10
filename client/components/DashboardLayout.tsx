@@ -62,6 +62,7 @@ export function DashboardLayout({ children, activeTab = 'dashboard' }: Dashboard
     // Timetable management (Periods / Holidays / Approvals) lives inside
     // this page as sub-tabs, so no extra admin nav item is needed here.
     { id: 'attendance', label: 'Attendance Overview', icon: CalendarCheck, path: '/dashboard/admin/attendance-overview' },
+    { id: 'live-timetable', label: "Who's Teaching", icon: Clock, path: '/dashboard/admin/timetable-live' },
     { id: 'exams', label: 'Exam Management', icon: Calendar, path: '/dashboard/admin/exams' },
     // NEW: standalone Results Entry Monitor — who has entered what, per term.
     { id: 'results-monitor', label: 'Results Monitor', icon: Activity, path: '/dashboard/admin/results-monitor' },

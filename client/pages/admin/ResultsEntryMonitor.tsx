@@ -1,6 +1,7 @@
 // @/pages/admin/ResultsEntryMonitor.tsx
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Activity,
   ChevronDown,
@@ -58,6 +59,8 @@ export default function ResultsEntryMonitor() {
     termLabel,
     isCurrentTerm: isTermCurrent,
     refetch,
+    failedClasses,
+    vacantSubjects,
   } = useResultsEntryMonitor({
     term: selectedTerm,
     year: autoTerm.year,
@@ -130,6 +133,13 @@ export default function ResultsEntryMonitor() {
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
           />
         </div>
+
+        <Link
+          to="/dashboard/admin/results-data-check"
+          className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium"
+        >
+          Data check
+        </Link>
 
         <button
           onClick={() => refetch()}
@@ -239,6 +249,37 @@ export default function ResultsEntryMonitor() {
             tone="red"
           />
         </div>
+
+        {/* Classes that failed to load — never shown as 0% or 100% */}
+        {failedClasses.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-800">
+            <div className="font-medium flex items-center gap-2">
+              <AlertCircle size={16} /> Some classes could not be loaded, so their teachers' numbers are incomplete:
+            </div>
+            <ul className="mt-1 ml-6 list-disc text-xs">
+              {failedClasses.map(f => (
+                <li key={f.classId}>{f.className}: {f.error}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Subjects with marks but no teacher assigned */}
+        {vacantSubjects.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-900">
+            <div className="font-medium">Subjects with marks but no teacher assigned</div>
+            <p className="text-xs mt-0.5">
+              These still appear on report cards. Assign a teacher in Teacher Management so the missing marks can be entered.
+            </p>
+            <ul className="mt-1 ml-5 list-disc text-xs">
+              {vacantSubjects.map(v => (
+                <li key={`${v.classId}-${v.subjectId}`}>
+                  {v.className} • {v.subjectName} — {v.progress.completionPercentage}% entered
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Filters */}
         <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-center gap-3">
@@ -416,7 +457,7 @@ function TeacherRow({
           <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full ${
-                teacher.completionPercentage >= 96
+                teacher.status === 'complete'
                   ? 'bg-green-500'
                   : teacher.completionPercentage >= 75
                   ? 'bg-cyan-500'
@@ -459,6 +500,12 @@ function TeacherRow({
                             m.configuredDate
                           ).toLocaleDateString()}`}
                       </div>
+                      {m.missingStudentNames?.length > 0 && (
+                        <div className="text-[11px] text-gray-500 mt-0.5">
+                          Missing: {m.missingStudentNames.slice(0, 8).join(', ')}
+                          {m.missingStudentNames.length > 8 && ` and ${m.missingStudentNames.length - 8} more`}
+                        </div>
+                      )}
                     </div>
                     <div className="text-right flex-shrink-0">
                       <div className="text-sm font-semibold text-amber-600">
@@ -487,4 +534,4 @@ function TeacherRow({
       )}
     </div>
   );
-}
+}

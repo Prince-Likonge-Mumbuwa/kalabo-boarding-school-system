@@ -4,6 +4,7 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
+import { getCurrentAcademicTerm } from '@/utils/academicTerm';
 import { useResultsAnalytics } from '@/hooks/useResults';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import {
@@ -20,7 +21,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 
-import { AnnouncementModal } from '@/components/AnnouncementModal';   // ← new import
+import { AnnouncementModal } from '@/components/AnnouncementModal';
+import { NowBoardWidget } from '@/components/timetable/NowBoardWidget';   // ← new import
 
 // ===== Skeleton Loaders - Optimized for mobile =====
 const MetricSkeleton = () => (
@@ -217,15 +219,15 @@ export default function AdminDashboard() {
   // Use dashboard stats hook for classes, teachers, learners
   const { stats, isLoading: statsLoading, refreshStats } = useDashboardStats();
 
-  // Use results analytics for school-wide pass rate
-  const currentYear = new Date().getFullYear();
+  // School-wide pass rate for the CURRENT academic term (was fixed to Term 1).
+  const currentAcademic = getCurrentAcademicTerm();
   const {
     analytics,
     isLoading: analyticsLoading,
     refetch: refetchAnalytics,
   } = useResultsAnalytics({
-    term: 'Term 1',
-    year: currentYear,
+    term: currentAcademic.term,
+    year: currentAcademic.year,
   });
 
   // Combined loading state
@@ -377,6 +379,11 @@ export default function AdminDashboard() {
                   />
                 ))}
           </div>
+        </div>
+
+        {/* ===== Lessons today (timetable) ===== */}
+        <div className="mb-4 sm:mb-6 md:mb-8">
+          <NowBoardWidget />
         </div>
 
         {/* ===== Quick Actions Section ===== */}
