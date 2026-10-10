@@ -1,7 +1,8 @@
 // components/attendance/RiskAnalyticsTab.tsx
 import React, { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { attendanceService } from '@/services/attendanceService';
+import { useClassRiskIndex } from '@/hooks/useStudentIndex';
+import { getCurrentAcademicTerm } from '@/utils/academicTerm';
+import { formatLocalYMD } from '@/utils/attendanceMath';
 import type { StudentAttendanceIndex } from '@/types/attendance';
 import { RiskAnalysisCard } from './RiskAnalysisCard';
 import { exportRiskAnalysis } from '@/utils/exportUtils';
@@ -56,14 +57,16 @@ export const RiskAnalyticsTab: React.FC<RiskAnalyticsTabProps> = ({
   const [showFilters, setShowFilters] = useState(false);
 
   // ── One query, no fan-out ──────────────────────────────────────────
-  const indexQuery = useQuery({
-    queryKey: ['attendance_student_index', 'class', classId],
-    queryFn: () => attendanceService.getClassStudentIndex(classId),
-    enabled: !!classId && isFormTeacher,
-    staleTime: 5 * 60_000,       // 5 min — index only changes on the nightly rebuild
-    gcTime: 30 * 60_000,
-    refetchOnWindowFocus: false, // nightly rebuild, so no need to refetch on focus
-  });
+  // Worked out from this term's registers (no stored index).
+  const termStart = useMemo(() => formatLocalYMD(getCurrentAcademicTerm().startDate), []);
+  const risk = useClassRiskIndex(isFormTeacher ? classId : undefined, className, termStart);
+  const indexQuery = {
+    data: risk.data,
+    isLoading: risk.isLoading && !!classId && isFormTeacher,
+    isError: risk.isError,
+    isFetching: risk.isLoading,
+    refetch: risk.refetch,
+  };
 
   const indexes: StudentAttendanceIndex[] = indexQuery.data ?? [];
 

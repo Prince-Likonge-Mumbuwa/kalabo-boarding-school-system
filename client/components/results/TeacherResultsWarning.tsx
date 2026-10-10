@@ -656,22 +656,25 @@ export const TeacherResultsWarning = ({
     term: term1?.term,
     year: term1?.year,
     teacherId: user?.uid,
+    enabled: !!term1,
   });
   const monitor2 = useResultsEntryMonitor({
     term: term2?.term,
     year: term2?.year,
     teacherId: user?.uid,
+    enabled: !!term2,
   });
   const monitor3 = useResultsEntryMonitor({
     term: term3?.term,
     year: term3?.year,
     teacherId: user?.uid,
+    enabled: !!term3,
   });
 
   const monitors = [monitor1, monitor2, monitor3];
 
   const isLoading =
-    monitors.some(m => m.isLoading) && termsToScan.length > 0;
+    monitors.some((m, i) => i < termsToScan.length && m.isLoading) && termsToScan.length > 0;
 
   // ── Combine results into per-term panels ───────────────────────────────
   const termReports = useMemo(() => {

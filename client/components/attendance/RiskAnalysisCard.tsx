@@ -13,10 +13,7 @@ import {
   Calendar,
   AlertTriangle,
 } from 'lucide-react';
-import type {
-  RiskAnalysis,
-  StudentAttendanceIndex,
-} from '@/types/attendance';
+import type { StudentAttendanceIndex } from '@/types/attendance';
 
 // ============================================================================
 // TYPES
@@ -31,9 +28,7 @@ import type {
  *
  * Both are normalized to a single internal shape before render.
  */
-export type RiskCardSource =
-  | { kind: 'analysis'; data: RiskAnalysis }
-  | { kind: 'index'; data: StudentAttendanceIndex };
+export type RiskCardSource = { kind: 'index'; data: StudentAttendanceIndex };
 
 export interface RiskAnalysisCardProps {
   /**
@@ -110,31 +105,6 @@ interface RiskCardView {
 }
 
 function normalizeSource(source: RiskCardSource): RiskCardView {
-  if (source.kind === 'analysis') {
-    const a = source.data;
-    return {
-      studentId: a.studentId,
-      studentName: a.studentName,
-      className: a.className,
-      gender: a.gender,
-      riskLevel: a.riskLevel,
-      riskFactors: a.riskFactors,
-      consecutiveAbsences: a.consecutiveAbsences,
-      overallRate: a.dailyStats.rate,
-      subjectStats: a.subjectStats,
-      ditchingIncidents: a.ditchingIncidents.map(d => ({
-        date: d.date,
-        subject: d.subject,
-        period: d.period,
-      })),
-      lateArrivals: a.lateArrivals.map(l => ({
-        date: l.date,
-        firstPeriodSubject: l.firstPeriodSubject,
-        arrivalTime: l.arrivalTime,
-      })),
-    };
-  }
-
   const idx = source.data;
   return {
     studentId: idx.studentId,

@@ -1,4 +1,12 @@
 // @/pages/admin/ReportCards.tsx
+// Consistency rewrite: the list, progress bars, report cards, PDFs and SMS
+// all come from the shared results grid (services/resultsGrid.ts) through
+// resultsService — the same numbers as the Results Entry page, the monitor
+// and the Parent Portal. This page no longer recalculates anything itself.
+//   - Opens on the current academic term.
+//   - Progress bar = completed subjects / subjects (Form Teacher and dropped
+//     subjects are not subjects).
+//   - Cards for the whole class are built in one pass (positions included).
 // Version 3.2.0 - SMS History tab + Bulk All Classes dialog
 //   - Cost corrected to ZMW 0.24 per segment (via smsService constant)
 //   - Two tabs: Report Cards | SMS History
@@ -41,6 +49,9 @@ import {
 } from 'lucide-react';
 
 import { ConfirmationModal } from '@/components/ConfirmationModal';
+import { activeExamsFor, pickTermConfig } from '@/services/resultsGrid';
+import type { ReportCardData as SharedReportCardData } from '@/services/resultsService';
+import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import { smsService } from '@/services/smsService';
 import SmsHistoryPanel from '@/components/SmsHistoryPanel';
 import BulkSendDialog from '@/components/BulkSendDialog';
@@ -55,6 +66,7 @@ interface SubjectProgress {
   endOfTerm: { status: 'complete' | 'missing' | 'absent' | 'not_conducted'; marks?: number };
   subjectProgress: number;
   grade?: number;
+  averagePercentage?: number;
 }
 
 interface StudentProgress {
@@ -72,45 +84,12 @@ interface StudentProgress {
   missingSubjects: number;
   totalSubjects: number;
   gender?: string;
+  documentId?: string;
 }
 
-interface ReportCardSubject {
-  subjectId: string;
-  subjectName: string;
-  week4: number;
-  week8: number;
-  endOfTerm: number;
-  average: number;
-  grade: number;
-  gradeDescription: string;
-}
-
-export interface ReportCardData {
-  id: string;
-  studentId: string;
-  studentName: string;
-  className: string;
-  classId: string;
-  form: string;
-  grade: number;
-  position: string;
-  gender: string;
-  totalMarks: number;
-  percentage: number;
-  status: 'pass' | 'fail';
-  improvement: 'improved' | 'declined' | 'stable';
-  subjects: ReportCardSubject[];
-  attendance: number;
-  teachersComment: string;
-  parentsEmail: string;
-  parentsPhone?: string;
-  generatedDate: string;
-  term: string;
-  year: number;
-  isComplete: boolean;
-  completionPercentage: number;
-  examConfigSummary?: string;
-}
+/** The shared report card (built by resultsGrid.buildReportCard). */
+export type ReportCardData = SharedReportCardData;
+type ReportCardSubject = ReportCardData['subjects'][number];
 
 interface ClassResultsMatrix {
   className: string;
@@ -160,15 +139,6 @@ const getGradeDisplay = (grade: number): string => grade === -1 ? 'X' : grade.to
 const getGradeDescription = (grade: number): string => GRADE_SYSTEM[grade === -1 ? 'X' : grade]?.shortDesc || '—';
 const getGradeColor = (grade: number): string => GRADE_SYSTEM[grade === -1 ? 'X' : grade]?.color || 'bg-gray-500';
 
-const getConfiguredExamTypes = (examConfig: any): string[] => {
-  if (!examConfig?.examTypes) return [];
-  const types: string[] = [];
-  if (examConfig.examTypes.week4) types.push('week4');
-  if (examConfig.examTypes.week8) types.push('week8');
-  if (examConfig.examTypes.endOfTerm) types.push('endOfTerm');
-  return types;
-};
-
 const getExamDisplayName = (examType: string): string => {
   switch (examType) {
     case 'week4': return 'Week 4';
@@ -176,181 +146,6 @@ const getExamDisplayName = (examType: string): string => {
     case 'endOfTerm': return 'End of Term';
     default: return examType;
   }
-};
-
-const calculateGrade = (percentage: number): number => {
-  if (percentage < 0) return -1;
-  if (percentage >= 75) return 1;
-  if (percentage >= 70) return 2;
-  if (percentage >= 65) return 3;
-  if (percentage >= 60) return 4;
-  if (percentage >= 55) return 5;
-  if (percentage >= 50) return 6;
-  if (percentage >= 45) return 7;
-  if (percentage >= 40) return 8;
-  return 9;
-};
-
-// ==================== REPORT POST-PROCESSOR ====================
-interface StudentConfigStats {
-  completionPercentage: number;
-  isComplete: boolean;
-  missingSubjects: number;
-  totalSubjects: number;
-  overallPercentage: number;
-  overallGrade: number;
-  status: 'pass' | 'fail' | 'pending';
-}
-
-const computeSubjectProgress = (subject: any, configuredExamTypes: string[]): number => {
-  if (configuredExamTypes.length === 0) return 0;
-  let present = 0;
-  configuredExamTypes.forEach(examType => {
-    const examData = subject[examType];
-    if (examData && examData.status !== 'missing') present++;
-  });
-  return Math.round((present / configuredExamTypes.length) * 100);
-};
-
-const computeStudentConfigStats = (
-  student: any,
-  configuredExamTypes: string[]
-): StudentConfigStats => {
-  const subjects: any[] = Array.isArray(student.subjects) ? student.subjects : [];
-  const totalSubjects = subjects.length;
-
-  if (totalSubjects === 0 || configuredExamTypes.length === 0) {
-    return {
-      completionPercentage: 0,
-      isComplete: false,
-      missingSubjects: totalSubjects,
-      totalSubjects,
-      overallPercentage: 0,
-      overallGrade: -1,
-      status: 'pending',
-    };
-  }
-
-  let completeSubjects = 0;
-  const subjectAverages: number[] = [];
-
-  subjects.forEach(subject => {
-    let allPresent = true;
-    const scores: number[] = [];
-
-    configuredExamTypes.forEach(examType => {
-      const examData = subject[examType];
-      if (!examData || examData.status === 'missing') {
-        allPresent = false;
-        return;
-      }
-      if (typeof examData.marks === 'number' && examData.marks >= 0) {
-        scores.push(examData.marks);
-      }
-    });
-
-    if (allPresent) completeSubjects++;
-
-    if (scores.length > 0) {
-      subjectAverages.push(Math.round(scores.reduce((a, b) => a + b, 0) / scores.length));
-    }
-  });
-
-  const completionPercentage = Math.round((completeSubjects / totalSubjects) * 100);
-  const missingSubjects = totalSubjects - completeSubjects;
-  const isComplete = completeSubjects === totalSubjects;
-
-  const overallPercentage = subjectAverages.length > 0
-    ? Math.round(subjectAverages.reduce((a, b) => a + b, 0) / subjectAverages.length)
-    : 0;
-
-  const overallGrade = overallPercentage > 0 ? calculateGrade(overallPercentage) : -1;
-  const status: 'pass' | 'fail' | 'pending' =
-    overallPercentage >= 50 ? 'pass' : overallPercentage > 0 ? 'fail' : 'pending';
-
-  return {
-    completionPercentage,
-    isComplete,
-    missingSubjects,
-    totalSubjects,
-    overallPercentage,
-    overallGrade,
-    status,
-  };
-};
-
-const processReportForConfig = (
-  rawReport: any,
-  configuredExamTypes: string[],
-  studentStats: StudentConfigStats
-): ReportCardData => {
-  const subjects: ReportCardSubject[] = [];
-  const subjectAverages: number[] = [];
-
-  (rawReport.subjects || []).forEach((s: any) => {
-    const scores: number[] = [];
-
-    configuredExamTypes.forEach(examType => {
-      const marks = s[examType];
-      if (typeof marks === 'number' && marks >= 0) {
-        scores.push(marks);
-      }
-    });
-
-    const subjectAvg = scores.length > 0
-      ? Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length)
-      : -1;
-
-    const grade = subjectAvg >= 0 ? calculateGrade(subjectAvg) : -1;
-
-    if (subjectAvg >= 0) subjectAverages.push(subjectAvg);
-
-    subjects.push({
-      subjectId: s.subjectId,
-      subjectName: s.subjectName,
-      week4: s.week4,
-      week8: s.week8,
-      endOfTerm: s.endOfTerm,
-      average: subjectAvg,
-      grade,
-      gradeDescription: getGradeDescription(grade),
-    });
-  });
-
-  const overallPercentage = subjectAverages.length > 0
-    ? Math.round(subjectAverages.reduce((a, b) => a + b, 0) / subjectAverages.length)
-    : 0;
-
-  const overallGrade = overallPercentage > 0 ? calculateGrade(overallPercentage) : -1;
-
-  return {
-    id: rawReport.id,
-    studentId: rawReport.studentId,
-    studentName: rawReport.studentName,
-    className: rawReport.className,
-    classId: rawReport.classId,
-    form: rawReport.form,
-    grade: overallGrade,
-    position: rawReport.position,
-    gender: rawReport.gender,
-    totalMarks: rawReport.totalMarks,
-    percentage: overallPercentage,
-    status: overallPercentage >= 50 ? 'pass' : 'fail',
-    improvement: rawReport.improvement,
-    subjects,
-    attendance: rawReport.attendance,
-    teachersComment: rawReport.teachersComment,
-    parentsEmail: rawReport.parentsEmail,
-    parentsPhone: rawReport.parentsPhone,
-    generatedDate: rawReport.generatedDate,
-    term: rawReport.term,
-    year: rawReport.year,
-    isComplete: studentStats.isComplete,
-    completionPercentage: studentStats.completionPercentage,
-    examConfigSummary: configuredExamTypes.length
-      ? `Based on: ${configuredExamTypes.map(getExamDisplayName).join(' + ')}`
-      : undefined,
-  };
 };
 
 // ==================== TOAST COMPONENT ====================
@@ -622,7 +417,7 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading, configured
     try {
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
       const pdfBytes = await generateReportCardPDF(report, configuredExamTypes);
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -677,6 +472,11 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading, configured
                     <h2 className="text-base font-semibold text-gray-800">KALABO BOARDING SECONDARY SCHOOL</h2>
                     <p className="text-xs text-blue-600 mt-1 uppercase">Learner Report Card</p>
                     {report.examConfigSummary && <p className="text-[10px] text-blue-500 mt-1">{report.examConfigSummary}</p>}
+                    {report.isProvisional && (
+                      <p className="text-[10px] font-semibold text-amber-600 mt-1">
+                        PROVISIONAL — {report.totalSubjects - report.completedSubjects} subject(s) still awaiting marks
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-2 mb-4">
                     <div className="grid grid-cols-2 gap-2">
@@ -745,6 +545,11 @@ const ReportModal = ({ isOpen, onClose, report, studentName, loading, configured
                     <h2 className="text-xl font-semibold text-gray-800 mt-1">KALABO BOARDING SECONDARY SCHOOL</h2>
                     <h3 className="text-lg font-medium text-blue-600 mt-2 uppercase tracking-wider">LEARNER REPORT CARD</h3>
                     {report.examConfigSummary && <p className="text-sm text-blue-500 mt-1">{report.examConfigSummary}</p>}
+                    {report.isProvisional && (
+                      <p className="text-sm font-semibold text-amber-600 mt-1">
+                        PROVISIONAL — {report.totalSubjects - report.completedSubjects} subject(s) still awaiting marks
+                      </p>
+                    )}
                   </div>
                   <div className="grid grid-cols-8 gap-3 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
                     <div className="col-span-2"><p className="text-xs text-gray-500">Student Name</p><p className="font-semibold text-gray-900 truncate">{report.studentName}</p></div>
@@ -917,8 +722,9 @@ export default function ReportCards() {
   const { learners } = useSchoolLearners();
 
   const [selectedClass, setSelectedClass] = useState<string>('');
-  const [selectedTerm, setSelectedTerm] = useState<string>('Term 1');
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  // Opens on the current academic term (was always "Term 1").
+  const [selectedTerm, setSelectedTerm] = useState<TermName>(() => getCurrentAcademicTerm().term);
+  const [selectedYear, setSelectedYear] = useState<number>(() => getCurrentAcademicTerm().year);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -948,27 +754,14 @@ export default function ReportCards() {
     term: selectedTerm,
   });
 
-  const currentExamConfig = useMemo(() => {
-    if (!examConfigs?.length) return null;
-
-    const matchingConfigs = examConfigs.filter(
-      (c: any) => c.term === selectedTerm && c.year === selectedYear
-    );
-
-    if (matchingConfigs.length === 0) {
-      console.warn(
-        `⚠️ useExamConfig returned ${examConfigs.length} config(s) but none match ${selectedTerm} ${selectedYear}. ` +
-        `Treating as "no exam config" rather than falling back to a mismatched term/year.`
-      );
-      return null;
-    }
-
-    const active = matchingConfigs.find((c: any) => c.isActive !== false);
-    return active || matchingConfigs[0];
-  }, [examConfigs, selectedTerm, selectedYear]);
+  // Same config choice and active-exam rule as every other results screen.
+  const currentExamConfig = useMemo(
+    () => pickTermConfig(examConfigs as any[], selectedTerm, selectedYear) ?? null,
+    [examConfigs, selectedTerm, selectedYear]
+  );
 
   const configuredExamTypes = useMemo(
-    () => getConfiguredExamTypes(currentExamConfig),
+    () => activeExamsFor(currentExamConfig as any) as string[],
     [currentExamConfig]
   );
 
@@ -985,13 +778,12 @@ export default function ReportCards() {
     year: selectedYear,
   });
 
-  const { generateReportCard, generateClassReportCards } = useResults();
+  const { generateClassReportCards } = useResults();
   const debouncedSearch = useDebounce(searchTerm, 300);
 
   // ---------- Report Cache ----------
   const [reportCache, setReportCache] = useState<Map<string, ReportCardData>>(new Map());
   const [loadingReports, setLoadingReports] = useState<Set<string>>(new Set());
-  const inFlightRef = useRef<Set<string>>(new Set());
 
   const cacheKeyFor = useCallback(
     (studentId: string) => `${selectedClass}|${selectedTerm}|${selectedYear}|${studentId}`,
@@ -1001,7 +793,6 @@ export default function ReportCards() {
   useEffect(() => {
     setReportCache(new Map());
     setLoadingReports(new Set());
-    inFlightRef.current = new Set();
     setSelectedStudentId(null);
     setShowReportModal(false);
   }, [selectedClass, selectedTerm, selectedYear]);
@@ -1027,40 +818,37 @@ export default function ReportCards() {
     return map;
   }, [learners]);
 
-  // ---------- Transform students using configured exams ----------
+  // ---------- Students: service values as-is (shared grid) ----------
   const transformedStudents = useMemo((): StudentProgress[] => {
     if (!students?.length) return [];
-    return students.map((student: any) => {
-      const stats = computeStudentConfigStats(student, configuredExamTypes);
-      return {
-        studentId: student.studentId || '',
-        studentName: student.studentName || '',
-        className: student.className || '',
-        classId: student.classId || '',
-        form: student.form || '',
-        overallPercentage: stats.overallPercentage,
-        overallGrade: stats.overallGrade,
-        status: stats.status,
-        isComplete: stats.isComplete,
-        completionPercentage: stats.completionPercentage,
-        subjects: Array.isArray(student.subjects)
-          ? student.subjects.map((s: any) => ({
-              subjectId: s.subjectId || '',
-              subjectName: s.subjectName || '',
-              teacherName: s.teacherName || '',
-              week4: { status: s.week4?.status || 'missing', marks: s.week4?.marks },
-              week8: { status: s.week8?.status || 'missing', marks: s.week8?.marks },
-              endOfTerm: { status: s.endOfTerm?.status || 'missing', marks: s.endOfTerm?.marks },
-              subjectProgress: computeSubjectProgress(s, configuredExamTypes),
-              grade: s.grade,
-            }))
-          : [],
-        missingSubjects: stats.missingSubjects,
-        totalSubjects: stats.totalSubjects,
-        gender: studentGenderMap.get(student.studentId) || 'Not specified',
-      };
-    });
-  }, [students, studentGenderMap, configuredExamTypes]);
+    return students.map((student: any) => ({
+      studentId: student.studentId || '',
+      documentId: student.documentId,
+      studentName: student.studentName || '',
+      className: student.className || '',
+      classId: student.classId || '',
+      form: student.form || '',
+      overallPercentage: student.overallPercentage,
+      overallGrade: student.overallGrade,
+      status: student.status,
+      isComplete: student.isComplete,
+      completionPercentage: student.completionPercentage,
+      subjects: (student.subjects || []).map((s: any) => ({
+        subjectId: s.subjectId || '',
+        subjectName: s.subjectName || '',
+        teacherName: s.teacherName || '',
+        week4: { status: s.week4?.status || 'missing', marks: s.week4?.marks },
+        week8: { status: s.week8?.status || 'missing', marks: s.week8?.marks },
+        endOfTerm: { status: s.endOfTerm?.status || 'missing', marks: s.endOfTerm?.marks },
+        subjectProgress: s.subjectProgress,
+        grade: s.grade,
+        averagePercentage: s.averagePercentage,
+      })),
+      missingSubjects: student.missingSubjects,
+      totalSubjects: student.totalSubjects,
+      gender: student.gender || studentGenderMap.get(student.documentId) || studentGenderMap.get(student.studentId) || 'Not specified',
+    }));
+  }, [students, studentGenderMap]);
 
   const configSummary = useMemo(() => {
     if (!transformedStudents.length) return null;
@@ -1074,70 +862,35 @@ export default function ReportCards() {
   }, [transformedStudents]);
 
   // ---------- Report Generation ----------
+  // All cards for the class in one pass from the shared grid (positions are
+  // computed once). Re-runs when the class list data changes.
   useEffect(() => {
     let cancelled = false;
-
     const generate = async () => {
-      if (!students.length || !selectedTerm || !selectedYear) return;
-
-      const toGen = transformedStudents.filter(s => {
-        const key = cacheKeyFor(s.studentId);
-        return !reportCache.has(key) && !inFlightRef.current.has(key);
-      });
-      if (!toGen.length) return;
-
-      toGen.forEach(s => inFlightRef.current.add(cacheKeyFor(s.studentId)));
-      setLoadingReports(new Set(inFlightRef.current));
-
-      for (let i = 0; i < toGen.length; i += 5) {
-        if (cancelled) break;
-        const batch = toGen.slice(i, i + 5);
-
-        await Promise.all(
-          batch.map(async student => {
-            const key = cacheKeyFor(student.studentId);
-            try {
-              const raw = await generateReportCard({
-                studentId: student.studentId,
-                term: selectedTerm,
-                year: selectedYear,
-                options: {
-                  includeIncomplete: true,
-                  markMissing: true,
-                  configuredExamTypes,
-                },
-              });
-
-              if (cancelled || !raw) return;
-
-              const stats = computeStudentConfigStats(student, configuredExamTypes);
-              const processed = processReportForConfig(raw, configuredExamTypes, stats);
-
-              processed.gender = processed.gender || studentGenderMap.get(student.studentId) || 'Not specified';
-
-              setReportCache(prev => {
-                const next = new Map(prev);
-                next.set(key, processed);
-                return next;
-              });
-            } catch (err) {
-              console.error(`Report failed for ${student.studentName}:`, err);
-            } finally {
-              inFlightRef.current.delete(key);
-            }
-          })
-        );
-      }
-
-      if (!cancelled) {
-        setLoadingReports(new Set(inFlightRef.current));
+      if (!selectedClass || !students.length || !selectedTerm || !selectedYear) return;
+      setLoadingReports(new Set(transformedStudents.map(s => cacheKeyFor(s.studentId))));
+      try {
+        const bulk = await generateClassReportCards({
+          classId: selectedClass,
+          term: selectedTerm,
+          year: selectedYear,
+          options: { includeIncomplete: true, markMissing: true },
+        });
+        if (cancelled) return;
+        const next = new Map<string, ReportCardData>();
+        for (const card of bulk.reportCards) next.set(cacheKeyFor(card.studentId), card);
+        setReportCache(next);
+      } catch (err: any) {
+        console.error('Report card generation failed:', err);
+        if (!cancelled) addToast('error', 'Report cards failed', err?.message || 'Could not build report cards');
+      } finally {
+        if (!cancelled) setLoadingReports(new Set());
       }
     };
-
     generate();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transformedStudents, selectedTerm, selectedYear, configuredExamTypes, cacheKeyFor, generateReportCard, studentGenderMap]);
+  }, [students, selectedClass, selectedTerm, selectedYear, cacheKeyFor, generateClassReportCards]);
 
   // ---------- Delete report ----------
   const handleDeleteReport = useCallback(async (studentId: string) => {
@@ -1164,7 +917,7 @@ export default function ReportCards() {
       return;
     }
     const student = transformedStudents.find(s => s.studentId === studentId);
-    if (!student || student.overallPercentage <= 0) {
+    if (!student || student.status === 'pending') {
       addToast('warning', 'No Results', `${studentName} has no results for this term`);
       setSmsResults(prev => ({ ...prev, [studentId]: { status: 'error', message: 'No results' } }));
       setTimeout(() => setSmsResults(prev => { const n = { ...prev }; delete n[studentId]; return n; }), 3000);
@@ -1233,6 +986,9 @@ export default function ReportCards() {
     const confirmMsg =
       `Send results via SMS to ${preview.readyCount} guardian(s)?\n\n` +
       `Skipped (no results): ${preview.skippedNoResults}\n` +
+      (preview.provisionalCount
+        ? `PROVISIONAL (marks still pending): ${preview.provisionalCount} — their SMS says PROVISIONAL\n`
+        : '') +
       `Avg length: ${preview.averageCharsPerMessage} chars (${preview.encoding})\n` +
       `Total segments: ${preview.totalSegments}\n` +
       `Estimated cost: ZMW ${preview.totalCostZmw.toFixed(2)}\n\n` +
@@ -1291,32 +1047,17 @@ export default function ReportCards() {
         classId: selectedClass,
         term: selectedTerm,
         year: selectedYear,
-        options: { includeIncomplete: true, markMissing: true, configuredExamTypes },
+        options: { includeIncomplete: true, markMissing: true },
       });
       if (!result.reportCards.length) { addToast('warning', 'Empty', 'No reports generated'); return; }
 
-      const studentByCustomId = new Map(transformedStudents.map(s => [s.studentId, s]));
-      const reports = result.reportCards.map(r => {
-        const student = studentByCustomId.get(r.studentId);
-        const stats = student
-          ? computeStudentConfigStats(student, configuredExamTypes)
-          : {
-              completionPercentage: 0,
-              isComplete: false,
-              missingSubjects: 0,
-              totalSubjects: 0,
-              overallPercentage: 0,
-              overallGrade: -1,
-              status: 'pending' as const,
-            };
-        const processed = processReportForConfig(r, configuredExamTypes, stats);
-        processed.gender = processed.gender || studentGenderMap.get(r.studentId) || 'Not specified';
-        return processed;
-      });
-
+      const reports = result.reportCards.map(r => ({
+        ...r,
+        gender: r.gender || studentGenderMap.get(r.documentId) || 'Not specified',
+      }));
       const { generateReportCardPDF } = await import('@/services/pdf/reportCardPDFLib');
       const pdfBytes = await generateReportCardPDF(reports, configuredExamTypes);
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1341,17 +1082,6 @@ export default function ReportCards() {
       transformedStudents.forEach(s => s.subjects.forEach(x => allSubj.add(x.subjectName)));
       const subjList = Array.from(allSubj).sort();
 
-      const calcAvg = (sub: SubjectProgress) => {
-        const sc: number[] = [];
-        if (configuredExamTypes.includes('week4') && sub.week4?.marks !== undefined && sub.week4.marks >= 0) sc.push(sub.week4.marks);
-        if (configuredExamTypes.includes('week8') && sub.week8?.marks !== undefined && sub.week8.marks >= 0) sc.push(sub.week8.marks);
-        if (configuredExamTypes.includes('endOfTerm') && sub.endOfTerm?.marks !== undefined && sub.endOfTerm.marks >= 0) sc.push(sub.endOfTerm.marks);
-        if (!sc.length) return -1;
-        const a = sc.reduce((a, b) => a + b, 0) / sc.length;
-        if (a >= 75) return 1; if (a >= 70) return 2; if (a >= 65) return 3; if (a >= 60) return 4;
-        if (a >= 55) return 5; if (a >= 50) return 6; if (a >= 45) return 7; if (a >= 40) return 8; return 9;
-      };
-
       const matrix: ClassResultsMatrix = {
         className: transformedStudents[0]?.className || 'Unknown',
         term: selectedTerm,
@@ -1366,8 +1096,10 @@ export default function ReportCards() {
               subjectName: n,
               week4: { marks: sub?.week4?.marks ?? -3, status: sub?.week4?.status || 'missing' },
               week8: { marks: sub?.week8?.marks ?? -3, status: sub?.week8?.status || 'missing' },
-              endOfTerm: { marks: sub?.endOfTerm?.marks ?? -3, status: sub?.endOfTerm?.status || 'missing', grade: sub?.grade || -1 },
-              average: sub ? calcAvg(sub) : -1,
+              // Grd = the subject grade from its average (same as the report card);
+              // Avg = the subject average % (it used to receive the grade by mistake).
+              endOfTerm: { marks: sub?.endOfTerm?.marks ?? -3, status: sub?.endOfTerm?.status || 'missing', grade: sub?.grade ?? -1 },
+              average: typeof sub?.averagePercentage === 'number' ? sub.averagePercentage : -1,
             };
           }),
           overallAverage: s.overallPercentage,
@@ -1380,7 +1112,7 @@ export default function ReportCards() {
 
       const { generateClassResultsMatrixPDF } = await import('@/services/pdf/classResultsMatrixPDFLib');
       const pdfBytes = await generateClassResultsMatrixPDF(matrix);
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1535,7 +1267,7 @@ export default function ReportCards() {
               <FilterBar
                 selectedClass={selectedClass} setSelectedClass={setSelectedClass} classOptions={classOptions}
                 searchTerm={searchTerm} setSearchTerm={setSearchTerm}
-                selectedTerm={selectedTerm} setSelectedTerm={setSelectedTerm}
+                selectedTerm={selectedTerm} setSelectedTerm={(v: string) => setSelectedTerm(v as TermName)}
                 selectedYear={selectedYear} setSelectedYear={setSelectedYear}
                 terms={terms} years={years} summary={configSummary}
                 isTeacher={user?.userType === 'teacher'} isMobile={isMobile}

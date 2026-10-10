@@ -3,6 +3,8 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
+import { activeExamsFor, pickTermConfig, gradeForPercentage } from '@/services/resultsGrid';
+import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import { useExamConfig } from '@/hooks/useExamConfig';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
@@ -426,16 +428,9 @@ const SubjectPerformanceMobileCard = ({ subjects }: { subjects: SubjectPerforman
 /**
  * Get list of configured exam types for a term/year
  */
-const getConfiguredExamTypes = (examConfig: any): string[] => {
-  if (!examConfig?.examTypes) return [];
-  
-  const types = [];
-  if (examConfig.examTypes.week4) types.push('week4');
-  if (examConfig.examTypes.week8) types.push('week8');
-  if (examConfig.examTypes.endOfTerm) types.push('endOfTerm');
-  
-  return types;
-};
+// Active exams: the app-wide rule (box ticked AND total marks > 0), same as
+// the monitor, Results Entry and report cards.
+const getConfiguredExamTypes = (examConfig: any): string[] => activeExamsFor(examConfig);
 
 /**
  * Calculate average grade for a student in a subject across configured exams
@@ -459,16 +454,8 @@ const calculateStudentSubjectAverageGrade = (
   // Calculate average percentage across all configured exams
   const avgPercentage = subjectResults.reduce((sum, r) => sum + r.percentage, 0) / subjectResults.length;
   
-  // Convert to grade using the grade scale
-  if (avgPercentage >= 75) return 1;
-  if (avgPercentage >= 70) return 2;
-  if (avgPercentage >= 65) return 3;
-  if (avgPercentage >= 60) return 4;
-  if (avgPercentage >= 55) return 5;
-  if (avgPercentage >= 50) return 6;
-  if (avgPercentage >= 45) return 7;
-  if (avgPercentage >= 40) return 8;
-  return 9;
+  // Same ECZ grade bands as the report cards
+  return gradeForPercentage(avgPercentage);
 };
 
 // ==================== MAIN COMPONENT ====================
@@ -487,8 +474,9 @@ export default function AdminResultsAnalysis() {
 
   // State for filters
   const [selectedClass, setSelectedClass] = useState<string>('all');
-  const [selectedTerm, setSelectedTerm] = useState<string>('Term 1');
-  const [selectedYear, setSelectedYear] = useState<number>(2026);
+  // Opens on the current academic term (was fixed to Term 1 2026).
+  const [selectedTerm, setSelectedTerm] = useState<TermName>(() => getCurrentAcademicTerm().term);
+  const [selectedYear, setSelectedYear] = useState<number>(() => getCurrentAcademicTerm().year);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
@@ -502,7 +490,8 @@ export default function AdminResultsAnalysis() {
     isLoading: loadingExamConfig 
   } = useExamConfig({ year: selectedYear, term: selectedTerm });
   
-  const currentExamConfig = examConfigs?.[0]; // Get the most recent config for this term/year
+  // The active config for exactly this term/year (same choice as every results screen)
+  const currentExamConfig = pickTermConfig(examConfigs as any[], selectedTerm, selectedYear);
   
   // Get list of configured exam types for this term
   const configuredExamTypes = useMemo(() => {
@@ -515,7 +504,7 @@ export default function AdminResultsAnalysis() {
   // Use the analytics hook with real data
   const { 
     analytics, 
-    results, 
+    results: rawResults, 
     isLoading, 
     isFetching, 
     refetch 
@@ -524,6 +513,18 @@ export default function AdminResultsAnalysis() {
     term: selectedTerm,
     year: selectedYear,
   });
+
+  // Only marks of learners who are currently active count (same rule as the
+  // monitor and report cards); marks of learners who left are ignored.
+  const results = useMemo(() => {
+    if (!learners?.length) return rawResults;
+    const active = new Set<string>();
+    learners.forEach((l: any) => {
+      if (l.id) active.add(l.id);
+      if (l.studentId) active.add(l.studentId);
+    });
+    return rawResults.filter((r: StudentResult) => active.has(r.studentId));
+  }, [rawResults, learners]);
 
   // ==================== HELPER FUNCTIONS ====================
   
@@ -1152,7 +1153,7 @@ export default function AdminResultsAnalysis() {
   // Handle filter change
   const handleFilterChange = (type: 'class' | 'term' | 'year', value: string | number) => {
     if (type === 'class') setSelectedClass(value as string);
-    if (type === 'term') setSelectedTerm(value as string);
+    if (type === 'term') setSelectedTerm(value as TermName);
     if (type === 'year') setSelectedYear(value as number);
     
     showNotification(
@@ -1449,8 +1450,8 @@ export default function AdminResultsAnalysis() {
                     <button
                       onClick={() => {
                         setSelectedClass('all');
-                        setSelectedTerm('Term 1');
-                        setSelectedYear(2026);
+                        setSelectedTerm(getCurrentAcademicTerm().term);
+                        setSelectedYear(getCurrentAcademicTerm().year);
                       }}
                       className="text-[10px] sm:text-xs text-gray-500 hover:text-gray-700 hover:underline ml-1 whitespace-nowrap"
                     >

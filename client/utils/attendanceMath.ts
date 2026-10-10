@@ -64,6 +64,13 @@ function finalizeWindow(w: WindowStats): WindowStats {
   return { ...w, rate: w.total > 0 ? ((w.present + w.late) / w.total) * 100 : 0 };
 }
 
+/** The earliest-period lesson register of a day (or undefined). */
+function firstLessonOfDay(periodic: AttendanceSession[]): AttendanceSession | undefined {
+  return periodic
+    .filter(s => typeof s.period === 'number')
+    .sort((a, b) => (a.period as number) - (b.period as number))[0];
+}
+
 // ── buildRollup ───────────────────────────────────────────────────────
 
 export function buildRollup(
@@ -113,7 +120,9 @@ export function buildRollup(
   }
 
   const lateArrivals: AttendanceDailyRollup['lateArrivals'] = [];
-  const p1 = periodic.find(s => s.period === 1);
+  // The day's first lesson register (breaks count in period numbers, and
+  // the first lesson is not always "period 1").
+  const p1 = firstLessonOfDay(periodic);
   if (daily && p1) {
     for (const [studentId, p1Status] of Object.entries(p1.roster)) {
       if (
@@ -250,7 +259,7 @@ export function computeStudentIndex(
     }
 
     if (dailyStatus === 'absent') {
-      const p1 = dayPeriodic.find(s => s.period === 1);
+      const p1 = firstLessonOfDay(dayPeriodic);
       const p1Status = p1?.roster[studentId];
       if (p1 && (p1Status === 'present' || p1Status === 'late')) {
         late.push({ date, firstPeriodSubject: p1.subject! });
@@ -368,19 +377,20 @@ export function buildRollupsForRange(
   sessions: AttendanceSession[],
   learners: Learner[],
 ): AttendanceDailyRollup[] {
-  const byClassDate = new Map<string, AttendanceSession[]>();
+  // Keyed by an object, not a "classId_date" string — class ids may
+  // themselves contain "_".
+  const byClassDate = new Map<string, { classId: string; date: string; sessions: AttendanceSession[] }>();
   for (const s of sessions) {
-    const key = `${s.classId}_${s.date}`;
-    const arr = byClassDate.get(key) ?? [];
-    arr.push(s);
-    byClassDate.set(key, arr);
+    const key = JSON.stringify([s.classId, s.date]);
+    const g = byClassDate.get(key) ?? { classId: s.classId, date: s.date, sessions: [] };
+    g.sessions.push(s);
+    byClassDate.set(key, g);
   }
 
   const learnersByClass = indexLearnersByClass(learners);
 
   const out: AttendanceDailyRollup[] = [];
-  for (const [key, classDaySessions] of byClassDate) {
-    const [classId, date] = key.split('_');
+  for (const { classId, date, sessions: classDaySessions } of byClassDate.values()) {
     const learnersById = learnersByClass.get(classId) ?? new Map();
     const className = classDaySessions[0]?.className ?? '';
     out.push(buildRollup(classId, className, date, classDaySessions, learnersById));

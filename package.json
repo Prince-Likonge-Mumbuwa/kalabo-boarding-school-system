@@ -17,6 +17,7 @@
     "build:server": "vite build --config vite.config.server.ts",
     "start": "node dist/server/node-build.mjs",
     "test": "vitest --run",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-kalabo \"vitest --run --config vitest.rules.config.ts\"",
     "format.fix": "prettier --write .",
     "typecheck": "tsc"
   },
@@ -32,6 +33,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.1",
     "@hookform/resolvers": "^5.2.1",
     "@radix-ui/react-accordion": "^1.2.11",
     "@radix-ui/react-alert-dialog": "^1.1.14",
@@ -65,6 +67,8 @@
     "@swc/core": "^1.13.3",
     "@tailwindcss/typography": "^0.5.16",
     "@tanstack/react-query": "^5.84.2",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/node": "^24.2.1",
@@ -82,6 +86,7 @@
     "framer-motion": "^12.23.12",
     "globals": "^16.3.0",
     "input-otp": "^1.4.2",
+    "jsdom": "^25.0.1",
     "lucide-react": "^0.539.0",
     "next-themes": "^0.4.6",
     "postcss": "^8.5.6",

@@ -8,6 +8,7 @@ import {
   where,
   setDoc,
   deleteDoc,
+  writeBatch,
   Timestamp,
   orderBy,
   limit,
@@ -22,6 +23,8 @@ import {
 } from '@/types/attendance';
 import { Learner } from '@/types/school';
 import { normalizeSubjectName } from './resultsService';
+import { isCountedLearner } from './resultsGrid';
+import * as engine from './assignmentEngine';
 
 // ==================== RE-EXPORTS ====================
 
@@ -53,69 +56,87 @@ const mapSessionDoc = (data: any): AttendanceSession => ({
   markedAt: toDateOrUndefined(data.markedAt) ?? data.markedAt,
 }) as AttendanceSession;
 
+// ==================== PAYLOAD ====================
+
+export interface MarkSessionInput {
+  classId: string;
+  className: string;
+  date: string;
+  kind: SessionKind;
+  subject?: string;
+  period?: number;
+  /** class_slots id of the subject (periodic) — derived when missing. */
+  slotId?: string;
+  /** The slot's subject key, e.g. 'MATH' — derived when missing. */
+  normalizedSubject?: string;
+  roster: Record<string, AttendanceStatus>;
+  excuseReasons?: Record<string, string>;
+  markedBy: string;
+  markedByName: string;
+}
+
+export function buildSessionPayload(input: MarkSessionInput): AttendanceSession {
+  const idSubject =
+    input.kind === 'periodic' && input.subject ? toNormalizedSubject(input.subject) : undefined;
+  const id = makeSessionId(input.classId, input.date, input.kind, input.period, idSubject);
+
+  // Firestore rejects `undefined`, so optional fields are omitted.
+  const payload: AttendanceSession = {
+    id,
+    classId: input.classId,
+    className: input.className,
+    date: input.date,
+    kind: input.kind,
+    markedBy: input.markedBy,
+    markedByName: input.markedByName,
+    markedAt: Timestamp.now(),
+    roster: input.roster,
+    summary: computeSessionSummary(input.roster),
+    schemaVersion: 1,
+  };
+  if (input.kind === 'periodic') {
+    if (input.subject !== undefined) payload.subject = input.subject;
+    if (input.period !== undefined) payload.period = input.period;
+    payload.normalizedSubject = input.normalizedSubject || idSubject;
+    payload.slotId = input.slotId || (input.subject ? engine.slotIdFor(input.classId, input.subject) : undefined);
+  } else {
+    payload.slotId = input.slotId || engine.slotIdForNormalized(input.classId, engine.FORM_TEACHER_SLOT);
+  }
+  if (!payload.slotId) delete payload.slotId;
+  if (!payload.normalizedSubject) delete payload.normalizedSubject;
+  if (input.excuseReasons && Object.keys(input.excuseReasons).length > 0) {
+    payload.excuseReasons = input.excuseReasons;
+  }
+  return payload;
+}
+
 // ==================== SERVICE ====================
 
 class AttendanceService {
 
   // ── WRITE ──────────────────────────────────────────────────────────
 
-  async markSession(input: {
-    classId: string;
-    className: string;
-    date: string;
-    kind: SessionKind;
-    subject?: string;
-    period?: number;
-    roster: Record<string, AttendanceStatus>;
-    excuseReasons?: Record<string, string>;
-    markedBy: string;
-    markedByName: string;
-  }): Promise<AttendanceSession> {
-    const normalizedSubject =
-      input.kind === 'periodic' && input.subject
-        ? toNormalizedSubject(input.subject)
-        : undefined;
+  /**
+   * Save one register. `slotId` is the class subject (periodic) or the form
+   * class (daily); the rules use it to let the subject's owner or live cover
+   * edit a register someone else saved. Derived when not given.
+   */
+  async markSession(input: MarkSessionInput): Promise<AttendanceSession> {
+    const [saved] = await this.markSessions([input]);
+    return saved;
+  }
 
-    const id = makeSessionId(
-      input.classId,
-      input.date,
-      input.kind,
-      input.period,
-      normalizedSubject,
-    );
-
-    const summary = computeSessionSummary(input.roster);
-
-    // Build the payload with only the keys we actually want to persist.
-    // Firestore rejects `undefined` values, so optional fields must be
-    // omitted entirely rather than set to undefined.
-    const payload: AttendanceSession = {
-      id,
-      classId: input.classId,
-      className: input.className,
-      date: input.date,
-      kind: input.kind,
-      markedBy: input.markedBy,
-      markedByName: input.markedByName,
-      markedAt: Timestamp.now(),
-      roster: input.roster,
-      summary,
-      schemaVersion: 1,
-    };
-
-    if (input.kind === 'periodic' && input.subject !== undefined) {
-      payload.subject = input.subject;
-    }
-    if (input.kind === 'periodic' && input.period !== undefined) {
-      payload.period = input.period;
-    }
-    if (input.excuseReasons && Object.keys(input.excuseReasons).length > 0) {
-      payload.excuseReasons = input.excuseReasons;
-    }
-
+  /**
+   * Save several registers in one write — used for a double / triple lesson,
+   * where the same register is recorded for every period of the block.
+   */
+  async markSessions(inputs: MarkSessionInput[]): Promise<AttendanceSession[]> {
+    const payloads = inputs.map(buildSessionPayload);
+    const batch = writeBatch(db);
     // Full replace: cleared fields must actually clear.
-    await setDoc(doc(db, SESSIONS_COLLECTION, id), payload);
-    return payload;
+    for (const p of payloads) batch.set(doc(db, SESSIONS_COLLECTION, p.id), p);
+    await batch.commit();
+    return payloads;
   }
 
   /**
@@ -150,6 +171,15 @@ class AttendanceService {
 
     await deleteDoc(ref);
     return true;
+  }
+
+  /** Delete the registers of every period of a block. Returns how many existed. */
+  async deleteSessions(
+    inputs: Array<Parameters<AttendanceService['deleteSession']>[0]>,
+  ): Promise<number> {
+    let n = 0;
+    for (const i of inputs) if (await this.deleteSession(i)) n++;
+    return n;
   }
 
   // ── READS ──────────────────────────────────────────────────────────
@@ -243,10 +273,9 @@ class AttendanceService {
   // ── LEARNER INDEX FOR DERIVATION ───────────────────────────────────
 
   async getActiveLearnersIndexed(): Promise<Learner[]> {
-    const snap = await getDocs(
-      query(collection(db, 'learners'), where('status', '==', 'active')),
-    );
-    return snap.docs.map(d => {
+    // Same rule as the results screens: status 'active' OR no status.
+    const snap = await getDocs(collection(db, 'learners'));
+    return snap.docs.filter(d => isCountedLearner(d.data() as any)).map(d => {
       const data = d.data();
       return {
         id: d.id,

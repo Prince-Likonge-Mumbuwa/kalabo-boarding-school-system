@@ -8,6 +8,8 @@ import { useAttendanceRollupsForDate } from '@/hooks/useAttendanceRollup';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useAcademicTerm } from '@/hooks/useAcademicTerm';
 import { TeacherResultsWarning } from '@/components/results/TeacherResultsWarning';
+import { NowNextCard } from '@/components/timetable/NowNextCard';
+import { useTeacherClasses } from '@/hooks/useTeacherClasses';
 import {
   BookOpen, Users, TrendingUp, AlertCircle, Loader2,
   Calendar, ChevronRight, ClipboardCheck,
@@ -495,14 +497,24 @@ export default function TeacherDashboard() {
   // they are the effective form teacher. The latter covers owner, TP, and
   // live-cover teachers — the hook's `isFormTeacher` flag already accounts
   // for that via the assignment engine.
+  // Prefer the class subjects the teacher can operate today (owner, or a
+  // live cover) — the same source the timetable and attendance use. Older
+  // class fields are the fallback while subjects load.
+  const teacherClassesQ = useTeacherClasses();
   const assignedClasses = useMemo(() => {
     if (!user?.uid || !classes.length) return [];
+    if (teacherClassesQ.data) {
+      const ids = new Set(
+        teacherClassesQ.data.filter(c => c.subjects.some(s => s.canOperate)).map(c => c.classId),
+      );
+      return classes.filter((cls: ClassFromHook) => ids.has(cls.id));
+    }
     return classes.filter((cls: ClassFromHook) =>
       cls.teachers?.includes(user.uid) ||
       cls.formTeacherId === user.uid ||
       cls.isFormTeacher === true
     );
-  }, [classes, user?.uid]);
+  }, [classes, user?.uid, teacherClassesQ.data]);
 
   const formTeacherClass = useMemo(() => {
     return classes.find((cls: ClassFromHook) =>
@@ -568,13 +580,6 @@ export default function TeacherDashboard() {
 
     const assignedClassIds = new Set(assignedClasses.map(c => c.id));
 
-    const learnersByClass = new Map<string, number>();
-    for (const l of learnersQuery.data) {
-      if (!assignedClassIds.has(l.classId)) continue;
-      learnersByClass.set(l.classId, (learnersByClass.get(l.classId) || 0) + 1);
-    }
-    const classSize = (classId: string, fallbackTotal: number) =>
-      learnersByClass.get(classId) ?? fallbackTotal;
 
     // ── Today ──────────────────────────────────────────────────────────
     const todayRollups = (todayRollupsQuery.data ?? []).filter(
@@ -590,33 +595,18 @@ export default function TeacherDashboard() {
     const byClass: AttendanceStats['byClass'] = [];
 
     for (const r of todayRollups) {
-      // Prefer the daily roll call; fall back to periodic totals when the
-      // form teacher hasn't marked today but subject teachers have.
-      let present = 0;
-      let absent = 0;
-      let late = 0;
-      let excused = 0;
-      let sourceTotal = 0;
+      // The day's attendance is the daily roll call. Lesson registers are
+      // NOT added up here: summing several lessons would count each learner
+      // several times (rates over 100%).
+      if (!r.daily) continue;
+      const present = r.daily.present;
+      const absent = r.daily.absent;
+      const late = r.daily.late;
+      const excused = r.daily.excused;
+      const sourceTotal = r.daily.total;
 
-      if (r.daily) {
-        present = r.daily.present;
-        absent = r.daily.absent;
-        late = r.daily.late;
-        excused = r.daily.excused;
-        sourceTotal = r.daily.total;
-      } else if (r.periodicTotals.sessionCount > 0) {
-        for (const bucket of Object.values(r.periodicTotals.bySubject)) {
-          present += bucket.present;
-          absent += bucket.absent;
-          late += bucket.late;
-          excused += bucket.excused;
-          sourceTotal += bucket.total;
-        }
-      } else {
-        continue;
-      }
-
-      const students = classSize(r.classId, sourceTotal);
+      // Rate over the learners in the register.
+      const students = sourceTotal;
 
       totalPresentToday += present;
       totalLateToday += late;
@@ -831,6 +821,9 @@ export default function TeacherDashboard() {
             </p>
           </div>
         </div>
+
+        {/* ===== NOW & NEXT (timetable) ===== */}
+        <NowNextCard />
 
         {/* ===== ATTENDANCE ERROR BANNER ===== */}
         {attendanceError && (

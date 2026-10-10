@@ -1,4 +1,20 @@
-// @/pages/teacher/ResultsEntry.tsx - COMPLETE FIXED VERSION
+// @/pages/teacher/ResultsEntry.tsx
+// Consistency rewrite (shared results grid):
+//   - Opens on the CURRENT academic term and honours links from the
+//     dashboard warning (class, subject, exam, term, year).
+//   - Subjects come from class slots via useTeacherClasses: Form Teacher is
+//     never a subject; a covered owner sees the subject read-only; a cover
+//     teacher before their start date sees it greyed out.
+//   - Active exams and total marks use isExamActive() — the same rule as the
+//     monitor and report cards.
+//   - Learners are the same active class list the monitor counts, keyed by
+//     Firestore document id, so saved marks load back into the boxes.
+//   - Saving sends only the marks you changed; other saved marks stay.
+//   - "Mark exam as not conducted" records -2 for every learner.
+//   - Drafts, saving, overwriting and editing work at any time: drafts are
+//     kept (and can be loaded) even when marks are already saved, and marks
+//     can be entered over a "not conducted" exam.
+//   - The subject's owner and a live cover/TP teacher can both edit.
 // Fixed: PDF generation and subject-specific completion for same teacher two subjects
 // Fixed: Progress bar now reflects total entries entered vs total expected
 // Added: Bulk results entry (paste from Excel / upload CSV) via BulkResultsEntryModal
@@ -7,6 +23,7 @@
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { 
   Save, 
   Loader2, 
@@ -22,16 +39,26 @@ import {
   History,
   UserX,
   RefreshCw,
-  Upload
+  Upload,
+  Lock,
+  Ban
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useResults, useSubjectCompletion } from '@/hooks/useResults';
 import { useExamConfig } from '@/hooks/useExamConfig';
 // FIX: import TermName from canonical source so `term` state can be strongly typed
 import type { TermName } from '@/types/exam';
-import { learnerService } from '@/services/schoolService';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
-import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
+import { useTeacherClasses } from '@/hooks/useTeacherClasses';
+import { loadClassRoster } from '@/services/resultsGridLoader';
+import {
+  activeExamsFor,
+  pickTermConfig,
+  totalMarksFor,
+  EXAM_LABELS,
+  MARK,
+} from '@/services/resultsGrid';
+import { getCurrentAcademicTerm } from '@/utils/academicTerm';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { calculateGrade, normalizeSubjectName } from '@/services/resultsService';
 import { BulkResultsEntryModal } from '@/components/results/BulkResultsEntryModal';
@@ -121,22 +148,15 @@ interface ToastState {
 // to update TermName too.
 const TERM_OPTIONS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
 
-const getAvailableExamTypes = (config: any) => {
-  if (!config?.examTypes) return [];
-  
-  const types = [];
-  if (config.examTypes.week4 === true) types.push({ id: 'week4', label: 'Week 4', shortLabel: 'W4' });
-  if (config.examTypes.week8 === true) types.push({ id: 'week8', label: 'Week 8', shortLabel: 'W8' });
-  if (config.examTypes.endOfTerm === true) types.push({ id: 'endOfTerm', label: 'End of Term', shortLabel: 'EOT' });
-  
-  return types;
-};
+// Active exams and total marks use the app-wide rule (isExamActive): the box
+// is ticked AND total marks > 0. The monitor and report cards use the same.
+const SHORT_LABEL: Record<string, string> = { week4: 'W4', week8: 'W8', endOfTerm: 'EOT' };
+const getAvailableExamTypes = (config: any) =>
+  activeExamsFor(config).map(id => ({ id, label: EXAM_LABELS[id], shortLabel: SHORT_LABEL[id] }));
 
-const getTotalMarksForExamType = (config: any, examType: string): number => {
-  if (!config) return 100;
-  const marksKey = `${examType}TotalMarks`;
-  return config[marksKey] || 100;
-};
+/** 0 when the exam has no total marks (it is then not active either). */
+const getTotalMarksForExamType = (config: any, examType: string): number =>
+  totalMarksFor(config, examType as any) ?? 0;
 
 // ==================== GRADE BADGE ====================
 const GradeBadge = ({ grade }: { grade: number | null }) => {
@@ -1063,9 +1083,9 @@ const OverwriteInfo = ({ hasExistingResults }: OverwriteInfoProps) => {
       <div className="flex items-center gap-2 sm:gap-3">
         <RefreshCw size={18} className="text-blue-600 flex-shrink-0" />
         <div className="min-w-0">
-          <p className="font-medium text-blue-800 text-sm sm:text-base">Auto-Overwrite Mode Active</p>
+          <p className="font-medium text-blue-800 text-sm sm:text-base">Saved marks loaded</p>
           <p className="text-xs sm:text-sm text-blue-700">
-            Saved results exist for this exam. Simply enter new marks and click <strong>Overwrite</strong> to automatically replace all results. No need to enter edit mode first.
+            The marks already saved for this exam are shown below. Change any mark and click <strong>Save changes</strong> — only the marks you change are replaced; the others stay as saved.
           </p>
         </div>
       </div>
@@ -1074,8 +1094,23 @@ const OverwriteInfo = ({ hasExistingResults }: OverwriteInfoProps) => {
 };
 
 // ==================== MAIN COMPONENT ====================
+const NO_TEACHER_CLASSES: never[] = [];
+
+// Link state sent by the dashboard warning / monitor.
+interface ResultsEntryLinkState {
+  classId?: string;
+  subjectId?: string;
+  subjectName?: string;
+  examType?: 'week4' | 'week8' | 'endOfTerm';
+  term?: TermName;
+  year?: number;
+}
+
 export default function ResultsEntry() {
   const { user } = useAuth();
+  const location = useLocation();
+  const linkState = (location.state || {}) as ResultsEntryLinkState;
+  const currentAcademic = useMemo(() => getCurrentAcademicTerm(), []);
   const isMobile = useMediaQuery('(max-width: 640px)');
   const isSmallMobile = useMediaQuery('(max-width: 380px)');
   
@@ -1089,12 +1124,15 @@ export default function ResultsEntry() {
   }, []);
   
   // Core State
-  const [selectedClass, setSelectedClass] = useState('');
-  const [selectedSubject, setSelectedSubject] = useState('');
-  const [examType, setExamType] = useState<'week4' | 'week8' | 'endOfTerm'>('week4');
-  // FIX: typed as TermName so it can be passed to useExamConfig (ExamConfigFilters.term)
-  const [term, setTerm] = useState<TermName>('Term 1');
-  const [year, setYear] = useState(new Date().getFullYear());
+  const [selectedClass, setSelectedClass] = useState(linkState.classId || '');
+  const [selectedSubject, setSelectedSubject] = useState(
+    linkState.subjectId ? normalizeSubjectName(linkState.subjectId) : ''
+  );
+  const [examType, setExamType] = useState<'week4' | 'week8' | 'endOfTerm'>(linkState.examType || 'week4');
+  // Defaults to the current academic term (it used to be fixed to Term 1,
+  // which saved Term 3 marks as Term 1 when nobody changed the dropdown).
+  const [term, setTerm] = useState<TermName>(linkState.term || currentAcademic.term);
+  const [year, setYear] = useState<number>(linkState.year ?? currentAcademic.year);
   
   // Data State
   const [students, setStudents] = useState<StudentResultInput[]>([]);
@@ -1113,6 +1151,16 @@ export default function ResultsEntry() {
 
   // UI State
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  // Marks as saved in Firestore for the selected exam, by learner document id.
+  // "Unsaved changes" = the boxes differ from this.
+  const [savedBaseline, setSavedBaseline] = useState<Record<string, string>>({});
+  const [reloadToken, setReloadToken] = useState(0);
+  // Which class the loaded `students` belong to (guards against loading the
+  // previous class's saved marks while the new class list is loading).
+  const [rosterClassId, setRosterClassId] = useState('');
+  // A draft chosen from the list for another class/subject/exam is applied
+  // once that exam's saved marks have loaded.
+  const pendingDraftRef = useRef<SavedDraft | null>(null);
   
   // Track last subject to detect changes (CRITICAL FIX for RE and English)
   const lastSubjectRef = useRef<string>('');
@@ -1132,10 +1180,13 @@ export default function ResultsEntry() {
 
   // Hooks
   const { classes, isLoading: loadingClasses } = useSchoolClasses({ isActive: true });
-  const { assignments, getSubjectsForClass, isFormTeacherForClass, isLoading: loadingAssignments } = useTeacherAssignments(user?.uid);
+  // Slot-aware: who may enter marks for each class + subject right now.
+  const { data: teacherClassesData, isLoading: loadingAssignments } = useTeacherClasses();
+  // Stable empty array while loading, so memos/effects don't re-run every render.
+  const teacherClasses = teacherClassesData ?? NO_TEACHER_CLASSES;
   // FIX: term is now TermName — matches ExamConfigFilters.term. No more TS2322.
   const { configs: examConfigs, isLoading: loadingExamConfig } = useExamConfig({ year, term });
-  const { saveResults, isSaving, checkExisting, isCheckingExisting, deleteResults, isDeleting } = useResults();
+  const { saveResults, isSaving, checkExisting, isCheckingExisting, deleteResults, isDeleting, markExamNotConducted, isMarkingNotConducted } = useResults();
   
   // FIXED: Added subjectId to useSubjectCompletion to prevent cross-subject contamination
   const { completionStatus, isLoading: loadingCompletion, refetch: refetchCompletion } = useSubjectCompletion({
@@ -1146,24 +1197,88 @@ export default function ResultsEntry() {
   });
 
   // Memoized values
-  const currentExamConfig = examConfigs?.[0];
+  // Same config choice as the monitor and report cards: the active config
+  // for exactly this term and year.
+  const currentExamConfig = useMemo(
+    () => pickTermConfig(examConfigs as any[], term, year),
+    [examConfigs, term, year]
+  );
   const availableExamTypes = useMemo(() => getAvailableExamTypes(currentExamConfig), [currentExamConfig]);
   const totalMarks = useMemo(() => getTotalMarksForExamType(currentExamConfig, examType), [currentExamConfig, examType]);
   
-  // Get unique subjects for selected class (handles RE and English correctly)
-  const availableSubjects = useMemo(() => {
-    if (!selectedClass || !user?.uid) return [];
-    const subjects = getSubjectsForClass(selectedClass);
-    console.log('📚 Available subjects for class:', subjects);
-    return subjects;
-  }, [selectedClass, user?.uid, getSubjectsForClass]);
+  // The teacher's subjects in the selected class (never Form Teacher), with
+  // whether they may enter marks right now.
+  const classSubjects = useMemo(() => {
+    const tc = teacherClasses.find(c => c.classId === selectedClass);
+    if (!tc) return [];
+    const bySubject = new Map<string, typeof tc.subjects[number]>();
+    for (const sub of tc.subjects) {
+      if (sub.normalizedSubjectId === 'form-teacher') continue;
+      const prev = bySubject.get(sub.normalizedSubjectId);
+      // Prefer the row that can operate (owner vs delegate of the same slot).
+      if (!prev || (!prev.canOperate && sub.canOperate)) bySubject.set(sub.normalizedSubjectId, sub);
+    }
+    return [...bySubject.values()];
+  }, [teacherClasses, selectedClass]);
+
+  const availableSubjects = useMemo(
+    () => classSubjects.map(sub => sub.normalizedSubjectId),
+    [classSubjects]
+  );
+
+  // Match the subject however it is spelled (slot key, display name or an
+  // older spelling such as 'Computer Studies' for 'ICT'), so the teacher's
+  // own subject is never shown as locked by a naming difference.
+  const selectedSubjectInfo = useMemo(() => {
+    if (!selectedSubject) return null;
+    const want = normalizeSubjectName(selectedSubject);
+    return (
+      classSubjects.find(sub => sub.normalizedSubjectId === selectedSubject) ??
+      classSubjects.find(
+        sub =>
+          normalizeSubjectName(sub.normalizedSubjectId) === want ||
+          normalizeSubjectName(sub.subject) === want,
+      ) ??
+      null
+    );
+  }, [classSubjects, selectedSubject]);
+
+  // May this teacher enter marks for the selected subject right now?
+  // The owner always may (even while covered); a cover/TP teacher may while
+  // their cover is live. Same rule as the service and Firestore rules.
+  const canOperate = !!selectedSubjectInfo && (
+    selectedSubjectInfo.canOperate || selectedSubjectInfo.relation === 'owner'
+  );
+
+  const readOnlyReason = useMemo(() => {
+    const info = selectedSubjectInfo;
+    if (!info) {
+      return selectedSubject
+        ? `${selectedSubject} is not one of your subjects in this class. Ask the admin to assign it to you.`
+        : null;
+    }
+    if (info.canOperate || info.relation === 'owner') return null;
+    const fmt = (d: Date | null) => (d ? d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '');
+    if (info.relation === 'delegate' && info.delegationState === 'pending') {
+      return `Your cover for this subject starts on ${fmt(info.startDate)}. You can enter marks from then.`;
+    }
+    return 'You do not currently have permission to enter marks for this subject.';
+  }, [selectedSubjectInfo, selectedSubject]);
+
+  // Owner whose subject is covered: still allowed to edit, just informed.
+  const sharedWithNote = useMemo(() => {
+    const info = selectedSubjectInfo;
+    if (!info || info.relation !== 'owner' || !info.coveredByTeacherName) return null;
+    const until = info.coveredUntil
+      ? ` until ${info.coveredUntil.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}`
+      : '';
+    return `${info.coveredByTeacherName} is covering this subject${until}. You can both enter and edit marks.`;
+  }, [selectedSubjectInfo]);
 
   const isOnlyFormTeacher = useMemo(() => {
-    if (!selectedClass || !user?.uid) return false;
-    const subjects = getSubjectsForClass(selectedClass);
-    const isFormTeacher = isFormTeacherForClass(selectedClass);
-    return subjects.length === 0 && isFormTeacher;
-  }, [selectedClass, user?.uid, getSubjectsForClass, isFormTeacherForClass]);
+    const tc = teacherClasses.find(c => c.classId === selectedClass);
+    return !!tc && tc.isFormTeacher && classSubjects.length === 0;
+  }, [teacherClasses, selectedClass, classSubjects]);
 
   // FIXED: Use subjectId for matching, not subjectName
   const currentSubjectCompletion = useMemo(() => {
@@ -1192,22 +1307,25 @@ export default function ResultsEntry() {
     );
   }, [drafts, selectedClass, selectedSubject, examType, term, year]);
 
-  // Get assigned classes for dropdown
+  // Classes where the teacher holds a subject (or is form teacher).
   const assignedClasses = useMemo(() => {
     if (!user?.uid || !classes.length) return [];
-    const assignedClassIds = new Set(assignments.map(a => a.classId));
+    const assignedClassIds = new Set(teacherClasses.map(c => c.classId));
     return classes.filter((cls: ClassInfo) => assignedClassIds.has(cls.id));
-  }, [classes, assignments, user?.uid]);
+  }, [classes, teacherClasses, user?.uid]);
+
+  // Whole exam recorded as not conducted for this subject?
+  const examNotConducted = !!(currentSubjectCompletion as any)?.notConducted?.[examType];
 
   // ==================== EFFECTS ====================
   
-  // Track unsaved changes
+  // Unsaved changes = boxes that differ from what is saved for this exam.
   useEffect(() => {
     if (students.length > 0) {
-      const hasChanges = students.some(s => s.marks && s.marks !== '');
+      const hasChanges = students.some(s => (s.marks || '') !== (savedBaseline[s.id] ?? ''));
       setHasUnsavedChanges(hasChanges);
     }
-  }, [students]);
+  }, [students, savedBaseline]);
 
   // Load drafts from localStorage
   useEffect(() => {
@@ -1277,37 +1395,36 @@ export default function ResultsEntry() {
     }
   }, [availableExamTypes, examType, selectedSubject]);
 
-  // Load students when class changes
+  // Load the class list when the class changes — the same active learners
+  // the monitor and report cards count, keyed by Firestore document id.
   useEffect(() => {
     const loadStudents = async () => {
       if (!selectedClass) {
-        setStudents([]);
-        setSelectedClassData(null);
+        // Functional updates keep the same objects when already empty, so
+        // this effect cannot trigger an endless re-render.
+        setStudents(prev => (prev.length ? [] : prev));
+        setSelectedClassData(prev => (prev ? null : prev));
+        setSavedBaseline(prev => (Object.keys(prev).length ? {} : prev));
         return;
       }
-
       setLoadingStudents(true);
       try {
         const classInfo = assignedClasses.find(c => c.id === selectedClass);
         setSelectedClassData(classInfo || null);
-        
         if (!classInfo) {
-          setSelectedClass('');
-          setStudents([]);
+          // Not (yet) one of this teacher's classes — wait for data, or clear
+          // a stale selection once everything has loaded.
+          if (!loadingClasses && !loadingAssignments) {
+            setSelectedClass('');
+            setStudents([]);
+          }
           return;
         }
-        
-        const learners = await learnerService.getLearnersByClass(selectedClass);
-        learners.sort((a, b) => a.name.localeCompare(b.name));
-        
-        setStudents(
-          learners.map(learner => ({
-            id: learner.id,
-            studentId: learner.studentId,
-            name: learner.name,
-            marks: '',
-          }))
-        );
+        setRosterClassId('');
+        const roster = await loadClassRoster(selectedClass);
+        setStudents(roster.map(l => ({ id: l.id, studentId: l.studentId, name: l.name, marks: '' })));
+        setSavedBaseline({});
+        setRosterClassId(selectedClass);
         setHasUnsavedChanges(false);
       } catch (error) {
         console.error('Error loading students:', error);
@@ -1318,64 +1435,87 @@ export default function ResultsEntry() {
         setLoadingStudents(false);
       }
     };
-
     loadStudents();
-  }, [selectedClass, assignedClasses, showToast]);
+  }, [selectedClass, assignedClasses, loadingClasses, loadingAssignments, showToast]);
 
-  // Load existing results when subject/exam type changes (for display only)
+  // Load the saved marks for the selected exam into the boxes (and remember
+  // them as the "saved" baseline). Runs when the class, subject, exam, term
+  // or year changes, and after every save/delete.
   useEffect(() => {
-    const loadExistingResults = async () => {
-      if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
-      
-      // Only load if there are existing results AND no unsaved changes
-      if (hasFirestoreResults && !hasUnsavedChanges) {
-        try {
-          const existingResponse = await checkExisting({
-            classId: selectedClass,
-            subjectId: selectedSubject,
-            examType,
-            term,
-            year,
-          });
-
-          if (existingResponse?.results?.length) {
-            // Display existing marks in the input fields (so teacher can see what's saved)
-            setStudents(prevStudents =>
-              prevStudents.map(student => {
-                const existing = existingResponse.results.find(
-                  (r: any) => r.studentId === student.studentId || r.student_id === student.studentId
-                );
-                return {
-                  ...student,
-                  marks: existing ? (existing.marks === -1 ? 'X' : String(existing.marks)) : '',
-                };
-              })
-            );
-            console.log(`📋 Loaded ${existingResponse.results.length} existing results for display`);
-          }
-        } catch (error) {
-          console.error('Error loading existing results:', error);
+    let cancelled = false;
+    const loadSaved = async () => {
+      if (!selectedClass || !selectedSubject || !students.length || rosterClassId !== selectedClass) return;
+      try {
+        const existing = await checkExisting({
+          classId: selectedClass,
+          subjectId: selectedSubject,
+          examType,
+          term,
+          year,
+        });
+        if (cancelled) return;
+        const baseline: Record<string, string> = {};
+        const rosterByCustom = new Map(students.filter(st => st.studentId).map(st => [st.studentId, st.id]));
+        for (const r of existing?.results ?? []) {
+          // Rows are keyed by learner document id; very old rows may hold the custom id.
+          const learnerId = students.some(st => st.id === r.studentId) ? r.studentId : rosterByCustom.get(r.studentId);
+          if (!learnerId) continue;
+          if (r.marks === MARK.ABSENT) baseline[learnerId] = 'X';
+          else if (typeof r.marks === 'number' && r.marks >= 0) baseline[learnerId] = String(r.marks);
+          // -2 (not conducted) is shown as a banner, not in the boxes.
         }
+        setSavedBaseline(baseline);
+        const pending = pendingDraftRef.current;
+        const draftFits =
+          pending &&
+          pending.classId === selectedClass &&
+          pending.subject === selectedSubject &&
+          pending.examType === examType &&
+          pending.term === term &&
+          pending.year === year;
+        const draftMarks = new Map((draftFits ? pending!.results : []).map(r => [r.id, r.marks]));
+        setStudents(prev => prev.map(st => ({
+          ...st,
+          marks: draftMarks.has(st.id) && draftMarks.get(st.id) !== '' ? draftMarks.get(st.id)! : (baseline[st.id] ?? ''),
+        })));
+        if (draftFits) {
+          setActiveDraftId(pending!.id);
+          pendingDraftRef.current = null;
+        } else {
+          setActiveDraftId(null);
+        }
+      } catch (error) {
+        console.error('Error loading existing results:', error);
+        showToast('error', 'Could not load the saved marks for this exam. Please refresh.');
       }
     };
-    
-    loadExistingResults();
-  }, [selectedClass, selectedSubject, examType, term, year, hasFirestoreResults, hasUnsavedChanges, checkExisting, selectedClassData, user]);
+    loadSaved();
+    return () => { cancelled = true; };
+    // rosterClassId (not students) so typing does not reload saved marks
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClass, selectedSubject, examType, term, year, rosterClassId, reloadToken, checkExisting, showToast]);
 
-  // Load draft data (only if no Firestore results)
+  // Drafts work at any time. A draft is opened automatically only when
+  // nothing is saved yet for this exam; otherwise the teacher loads it from
+  // the drafts list (it is applied on top of the saved marks).
   useEffect(() => {
-    if (currentDraft && currentDraft.id !== activeDraftId && !hasFirestoreResults && !hasUnsavedChanges) {
-      setStudents(currentDraft.results);
-      setActiveDraftId(currentDraft.id);
+    if (
+      currentDraft &&
+      currentDraft.id !== activeDraftId &&
+      !hasFirestoreResults &&
+      !hasUnsavedChanges &&
+      rosterClassId === currentDraft.classId
+    ) {
+      applyDraftMarks(currentDraft);
     }
-  }, [currentDraft, activeDraftId, hasUnsavedChanges, hasFirestoreResults]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDraft, activeDraftId, hasUnsavedChanges, hasFirestoreResults, rosterClassId]);
 
-  // Auto-save draft (only if no Firestore results, or as backup)
+  // Auto-save a draft of UNSAVED changes (also when marks are already saved,
+  // so edits to saved marks are never lost before Save is clicked).
   useEffect(() => {
     if (!selectedClass || !selectedSubject || !students.length || !selectedClassData) return;
-    
-    // Don't auto-save draft if there are Firestore results (to avoid confusion)
-    if (hasFirestoreResults) return;
+    if (!hasUnsavedChanges) return;
 
     const filledCount = students.filter(s => s.marks && s.marks !== '').length;
     if (filledCount === 0) return;
@@ -1388,7 +1528,7 @@ export default function ResultsEntry() {
         className: selectedClassData.name,
         subject: selectedSubject,
         examType,
-        term,                // TermName is assignable to TermName — no cast needed
+        term,
         year,
         totalMarks,
         results: students.map(s => ({ ...s })),
@@ -1399,20 +1539,18 @@ export default function ResultsEntry() {
 
       const existingIndex = drafts.findIndex(d => d.id === draftId);
       let newDrafts: SavedDraft[];
-      
       if (existingIndex >= 0) {
         newDrafts = [...drafts];
         newDrafts[existingIndex] = newDraft;
       } else {
         newDrafts = [newDraft, ...drafts].slice(0, 10);
       }
-      
       saveDrafts(newDrafts);
       setActiveDraftId(draftId);
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [students, selectedClass, selectedSubject, examType, term, year, totalMarks, selectedClassData, drafts, currentDraft, saveDrafts, hasFirestoreResults]);
+  }, [students, selectedClass, selectedSubject, examType, term, year, totalMarks, selectedClassData, drafts, currentDraft, saveDrafts, hasUnsavedChanges]);
 
   const focusNextInput = useCallback((currentStudentId: string) => {
     const currentIndex = students.findIndex(s => s.id === currentStudentId);
@@ -1515,38 +1653,59 @@ export default function ResultsEntry() {
     }
   }, [hasUnsavedChanges]);
 
-  // ==================== SAVE RESULTS WITH AUTO-OVERWRITE ====================
+  // Put a draft's marks into the boxes (on top of whatever is saved).
+  function applyDraftMarks(draft: SavedDraft) {
+    const byId = new Map(draft.results.map(r => [r.id, r.marks]));
+    setStudents(prev => prev.map(st => (byId.has(st.id) && byId.get(st.id) !== '' ? { ...st, marks: byId.get(st.id)! } : st)));
+    setActiveDraftId(draft.id);
+  }
+
+  // ==================== SAVE RESULTS ====================
+  // Only marks that differ from what is saved are sent. Blank boxes are never
+  // sent, so clearing a box does not delete a saved mark (use Delete for that).
+  const changedResults = useMemo(
+    () =>
+      students
+        .filter(st => st.marks !== '' && (st.marks || '') !== (savedBaseline[st.id] ?? ''))
+        .map(st => ({
+          studentId: st.id, // Firestore document id
+          studentName: st.name,
+          marks: st.marks.toLowerCase() === 'x' ? MARK.ABSENT : parseInt(st.marks),
+        })),
+    [students, savedBaseline]
+  );
+
   const handleSaveResults = useCallback(async () => {
     if (!selectedClass || !selectedSubject || !selectedClassData || !user) return;
-
-    const results = students
-      .filter(s => s.marks !== '')
-      .map(s => ({
-        studentId: s.studentId,
-        studentName: s.name,
-        marks: s.marks.toLowerCase() === 'x' ? -1 : parseInt(s.marks),
-      }));
-
-    if (results.length === 0) {
-      showToast('warning', 'Please enter marks for at least one student.');
+    if (!canOperate) {
+      showToast('warning', readOnlyReason || 'You cannot enter marks for this subject right now.');
+      return;
+    }
+    if (changedResults.length === 0) {
+      showToast('info', 'No changes to save.');
       return;
     }
 
-    // If there are existing results, show a confirmation before overwriting
-    if (hasFirestoreResults) {
+    const replacing = changedResults.filter(r => savedBaseline[r.studentId] !== undefined).length;
+    if (replacing > 0) {
       setModal({
         type: 'confirmOverwrite',
-        title: 'Overwrite Existing Results?',
-        description: `Results already exist for ${selectedSubject} (${examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'}). Saving will OVERWRITE all existing results. This action cannot be undone. Are you sure?`,
+        title: 'Replace saved marks?',
+        description:
+          `${replacing} learner${replacing === 1 ? ' already has a' : 's already have'} a saved ${currentExamLabel} mark for ${selectedSubject} ` +
+          `that you changed. Saving replaces ${replacing === 1 ? 'that mark' : 'those marks'}` +
+          `${changedResults.length > replacing ? ` and adds ${changedResults.length - replacing} new` : ''}. ` +
+          `Marks you did not change stay as they are.`,
         onConfirm: async () => {
           setModal(null);
-          await performSave(results);
+          await performSave(changedResults);
         },
       });
     } else {
-      await performSave(results);
+      await performSave(changedResults);
     }
-  }, [selectedClass, selectedSubject, selectedClassData, user, students, examType, term, year, totalMarks, hasFirestoreResults, showToast]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClass, selectedSubject, selectedClassData, user, canOperate, readOnlyReason, changedResults, savedBaseline, showToast, examType, term, year, totalMarks, currentDraft, drafts]);
 
   const performSave = async (results: Array<{ studentId: string; studentName: string; marks: number }>) => {
     try {
@@ -1558,17 +1717,13 @@ export default function ResultsEntry() {
         teacherId: user!.uid,
         teacherName: user!.fullName || user!.email || 'Unknown',
         examType,
-        examName: `${examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'} - ${selectedSubject}`,
+        examName: `${currentExamLabel} - ${selectedSubject}`,
         term,
         year,
         totalMarks,
         results,
-        overwrite: true, // ALWAYS overwrite existing results
+        overwrite: true,
       });
-
-      // Clear students after successful save
-      setStudents(prev => prev.map(s => ({ ...s, marks: '' })));
-      setHasUnsavedChanges(false);
 
       // Clear draft if exists
       if (currentDraft) {
@@ -1576,20 +1731,69 @@ export default function ResultsEntry() {
         saveDrafts(newDrafts);
       }
 
-      // Refresh completion status
+      // Reload what is now saved, and the completion numbers.
+      setReloadToken(t => t + 1);
       await refetchCompletion();
 
-      showToast('success', `Results ${saveResult.overwritten ? 'updated' : 'saved'} successfully.`);
-
+      if (saveResult.skipped?.length) {
+        showToast(
+          'warning',
+          `Saved ${saveResult.count}. Not saved: ` +
+            saveResult.skipped.map(sk => `${sk.studentName} (${sk.reason})`).join('; ')
+        );
+      } else {
+        showToast('success', `${saveResult.count} mark${saveResult.count === 1 ? '' : 's'} saved.`);
+      }
     } catch (error: any) {
       console.error('Error saving results:', error);
       showToast('error', `Failed to save: ${error.message || 'Please try again'}`);
     }
   };
 
+  // ==================== MARK EXAM NOT CONDUCTED ====================
+  const handleMarkNotConducted = useCallback(() => {
+    if (!selectedClass || !selectedSubject || !selectedClassData || !user || !canOperate) return;
+    setModal({
+      type: 'confirmOverwrite',
+      title: `${currentExamLabel} not conducted?`,
+      description:
+        `Record that the ${currentExamLabel} for ${selectedSubject} in ${selectedClassData.name} was not conducted. ` +
+        `Every learner is marked "NC" and the exam counts as done on the monitor and report cards. ` +
+        `You can undo this with Delete.`,
+      onConfirm: async () => {
+        setModal(null);
+        try {
+          await markExamNotConducted({
+            classId: selectedClass,
+            className: selectedClassData.name,
+            subjectId: selectedSubject,
+            subjectName: selectedSubject,
+            teacherId: user.uid,
+            teacherName: user.fullName || user.email || 'Unknown',
+            examType,
+            examName: `${currentExamLabel} - ${selectedSubject}`,
+            term,
+            year,
+            totalMarks,
+          });
+          setReloadToken(t => t + 1);
+          await refetchCompletion();
+          showToast('success', `${currentExamLabel} recorded as not conducted.`);
+        } catch (error: any) {
+          showToast('error', error.message || 'Could not record the exam as not conducted.');
+        }
+      },
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClass, selectedSubject, selectedClassData, user, canOperate, examType, term, year, totalMarks]);
+
   // ==================== DELETE RESULTS ====================
   const handleDeleteResults = useCallback(() => {
     if (!selectedClass || !selectedSubject || !selectedClassData) return;
+    if (!canOperate) {
+      showToast('warning', readOnlyReason || 'You cannot change marks for this subject.');
+      return;
+    }
     
     if (hasUnsavedChanges) {
       showToast('warning', 'Please save or clear your current entries before deleting saved results.');
@@ -1624,7 +1828,31 @@ export default function ResultsEntry() {
         }
       },
     });
-  }, [selectedClass, selectedSubject, selectedClassData, examType, term, year, deleteResults, hasUnsavedChanges, refetchCompletion, showToast]);
+  }, [selectedClass, selectedSubject, selectedClassData, examType, term, year, deleteResults, hasUnsavedChanges, refetchCompletion, showToast, canOperate, readOnlyReason]);
+
+  const performLoadDraft = useCallback((draft: SavedDraft) => {
+    const sameExam =
+      draft.classId === selectedClass &&
+      draft.subject === selectedSubject &&
+      draft.examType === examType &&
+      draft.term === term &&
+      draft.year === year &&
+      rosterClassId === draft.classId;
+    if (sameExam) {
+      applyDraftMarks(draft);
+      showToast('info', 'Draft loaded. Review the marks, then click Save.');
+      return;
+    }
+    // Switch to the draft's class/subject/exam; it is applied once that
+    // exam's saved marks have loaded.
+    pendingDraftRef.current = draft;
+    setSelectedClass(draft.classId);
+    setSelectedSubject(draft.subject);
+    setExamType(draft.examType);
+    setTerm(draft.term);
+    setYear(draft.year);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClass, selectedSubject, examType, term, year, rosterClassId, showToast]);
 
   const handleLoadDraft = useCallback((draft: SavedDraft) => {
     if (hasUnsavedChanges) {
@@ -1640,19 +1868,8 @@ export default function ResultsEntry() {
     } else {
       performLoadDraft(draft);
     }
-  }, [hasUnsavedChanges]);
+  }, [hasUnsavedChanges, performLoadDraft]);
 
-  const performLoadDraft = useCallback((draft: SavedDraft) => {
-    setSelectedClass(draft.classId);
-    setSelectedSubject(draft.subject);
-    setExamType(draft.examType);
-    // FIX: draft.term is now TermName — no cast needed
-    setTerm(draft.term);
-    setYear(draft.year);
-    setStudents(draft.results);
-    setActiveDraftId(draft.id);
-    setHasUnsavedChanges(false);
-  }, []);
 
   const handleDeleteDraft = useCallback((draftId: string) => {
     const draft = drafts.find(d => d.id === draftId);
@@ -1688,7 +1905,7 @@ export default function ResultsEntry() {
     setHasUnsavedChanges(true);
     showToast(
       'success',
-      `${count} mark${count === 1 ? '' : 's'} added to the table. Review them, then click ${hasFirestoreResults ? 'Overwrite' : 'Save'}.`
+      `${count} mark${count === 1 ? '' : 's'} added to the table. Review them, then click ${hasFirestoreResults ? 'Save changes' : 'Save'}.`
     );
   }, [hasFirestoreResults, showToast]);
 
@@ -1779,18 +1996,22 @@ export default function ResultsEntry() {
   }, [user, allExamData, examType, students, totalMarks, selectedClassData, selectedSubject, term, year, showToast]);
 
   const handleClearAllMarks = useCallback(() => {
+    const hasSaved = Object.keys(savedBaseline).length > 0;
     setModal({
       type: 'confirmCancelEdit',
-      title: 'Clear all marks?',
-      description: 'This will erase all marks you have entered so far. Your local draft will also be cleared. No Firestore data is affected.',
+      title: hasSaved ? 'Discard your changes?' : 'Clear all marks?',
+      description: hasSaved
+        ? 'The boxes go back to the marks that are saved. Your draft for this exam is also removed. Saved marks are not affected.'
+        : 'This will erase all marks you have entered so far. Your draft for this exam is also removed. Nothing saved is affected.',
       onConfirm: () => {
         setModal(null);
-        setStudents(students.map(s => ({ ...s, marks: '' })));
-        setHasUnsavedChanges(false);
-        showToast('info', 'All marks cleared');
+        setStudents(prev => prev.map(s => ({ ...s, marks: savedBaseline[s.id] ?? '' })));
+        if (currentDraft) saveDrafts(drafts.filter(d => d.id !== currentDraft.id));
+        setActiveDraftId(null);
+        showToast('info', hasSaved ? 'Changes discarded' : 'All marks cleared');
       },
     });
-  }, [students, showToast]);
+  }, [savedBaseline, currentDraft, drafts, saveDrafts, showToast]);
 
   // Computed values for UI
   const filledCount = students.filter(s => s.marks && s.marks !== '').length;
@@ -1826,8 +2047,8 @@ export default function ResultsEntry() {
             </div>
             <button
               onClick={handleSaveResults}
-              disabled={isSaving || filledCount === 0}
-              className="px-3 py-1 bg-yellow-500 text-white rounded-lg text-sm hover:bg-yellow-600 transition-colors"
+              disabled={isSaving}
+              className="px-3 py-1 bg-yellow-500 text-white rounded-lg text-sm hover:bg-yellow-600 transition-colors disabled:opacity-50"
             >
               Save Now
             </button>
@@ -1861,7 +2082,9 @@ export default function ResultsEntry() {
               {/* Bulk Entry Button */}
               <button
                 onClick={() => setShowBulkEntry(true)}
+                disabled={!canOperate}
                 className={`
+                  disabled:opacity-40 disabled:cursor-not-allowed
                   inline-flex items-center justify-center gap-1 sm:gap-2
                   bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50
                   font-medium transition-all active:scale-[0.98]
@@ -1917,7 +2140,7 @@ export default function ResultsEntry() {
               {/* Save Button - ALWAYS enabled when there are entries */}
               <button
                 onClick={handleSaveResults}
-                disabled={isSaving || filledCount === 0}
+                disabled={isSaving}
                 className={`
                   inline-flex items-center justify-center gap-1 sm:gap-2
                   ${hasFirestoreResults ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'}
@@ -1935,15 +2158,36 @@ export default function ResultsEntry() {
                   <Save size={16} />
                 )}
                 <span className="hidden xs:inline">
-                  {hasFirestoreResults ? 'Overwrite' : 'Save'}
+                  {hasFirestoreResults ? 'Save changes' : 'Save'}
+                  {changedResults.length > 0 ? ` (${changedResults.length})` : ''}
                 </span>
               </button>
+
+              {/* Not conducted — only before any real mark is saved */}
+              {canOperate && !examNotConducted && Object.keys(savedBaseline).length === 0 && (
+                <button
+                  onClick={handleMarkNotConducted}
+                  disabled={isMarkingNotConducted || hasUnsavedChanges}
+                  className={`
+                    inline-flex items-center justify-center gap-1 sm:gap-2
+                    bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50
+                    font-medium transition-all active:scale-[0.98]
+                    disabled:opacity-40 disabled:cursor-not-allowed
+                    px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base
+                    ${isSmallMobile ? 'flex-1' : ''}
+                  `}
+                  title="Record that this exam was not held for this subject"
+                >
+                  {isMarkingNotConducted ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}
+                  <span className="hidden xs:inline">Not conducted</span>
+                </button>
+              )}
             </div>
           )}
         </div>
 
         {/* Drafts Section - only show if no Firestore results */}
-        {drafts.length > 0 && selectedSubject && !hasFirestoreResults && (
+        {drafts.length > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4">
             <div className="flex items-center gap-1 sm:gap-2 mb-2 sm:mb-3">
               <History size={14} className="text-gray-500 flex-shrink-0" />
@@ -2034,11 +2278,13 @@ export default function ResultsEntry() {
                   {!selectedClass ? 'Select class first' : 
                    availableSubjects.length === 0 ? 'No subjects (form teacher only)' : 'Select subject...'}
                 </option>
-                {availableSubjects.map(subject => (
-                  <option key={subject} value={subject} className="truncate">{subject}</option>
+                {classSubjects.map(sub => (
+                  <option key={sub.normalizedSubjectId} value={sub.normalizedSubjectId} className="truncate">
+                    {sub.normalizedSubjectId}{sub.canOperate || sub.relation === 'owner' ? '' : ' (view only)'}
+                  </option>
                 ))}
               </select>
-              {selectedClass && availableSubjects.length === 0 && (
+              {selectedClass && availableSubjects.length === 0 && isOnlyFormTeacher && (
                 <p className="text-[10px] text-amber-600 mt-1">
                   You're the form teacher but don't teach any subjects in this class.
                 </p>
@@ -2093,13 +2339,39 @@ export default function ResultsEntry() {
           </div>
         </div>
 
+        {/* Read-only: covered owner, or cover not started yet */}
+        {selectedClass && selectedSubject && readOnlyReason && (
+          <div className="bg-gray-50 border-l-4 border-gray-400 p-3 rounded-lg flex items-start gap-2">
+            <Lock size={18} className="text-gray-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-gray-700">{readOnlyReason}</p>
+          </div>
+        )}
+
+        {/* Owner whose subject is covered: still editable */}
+        {selectedClass && selectedSubject && sharedWithNote && (
+          <div className="bg-purple-50 border-l-4 border-purple-400 p-3 rounded-lg text-sm text-purple-800">
+            {sharedWithNote}
+          </div>
+        )}
+
+        {/* Whole exam recorded as not conducted */}
+        {selectedClass && selectedSubject && examNotConducted && (
+          <div className="bg-amber-50 border-l-4 border-amber-500 p-3 rounded-lg flex items-start gap-2">
+            <Ban size={18} className="text-amber-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-800">
+              The {currentExamLabel} for {selectedSubject} was recorded as <strong>not conducted</strong>. It counts as done on the
+              monitor and report cards. {canOperate ? 'If it did take place, just enter the marks and save — they replace "not conducted" for those learners. Delete removes it for everyone.' : ''}
+            </p>
+          </div>
+        )}
+
         {/* Subject Progress - Always shows when subject selected */}
         {selectedClass && selectedSubject && availableSubjects.length > 0 && (
           <SubjectProgress 
             completion={currentSubjectCompletion}
             selectedExamType={examType}
             onExamTypeChange={handleExamTypeChange}
-            hasDraft={!!currentDraft && !hasFirestoreResults}
+            hasDraft={!!currentDraft}
             availableExamTypes={availableExamTypes}
             examConfig={currentExamConfig}
             subjectName={selectedSubject}
@@ -2130,7 +2402,7 @@ export default function ResultsEntry() {
                     <span className="font-medium text-gray-900 text-xs sm:text-sm truncate">
                       {selectedClassData?.name} • {selectedSubject}
                     </span>
-                    {currentDraft && !hasFirestoreResults && (
+                    {currentDraft && activeDraftId === currentDraft.id && (
                       <span className="text-[10px] sm:text-xs bg-yellow-100 text-yellow-700 px-1.5 sm:px-2 py-0.5 rounded-full whitespace-nowrap">
                         Draft
                       </span>
@@ -2158,12 +2430,12 @@ export default function ResultsEntry() {
                         style={{ width: `${completionPercentage}%` }}
                       />
                     </div>
-                    {filledCount > 0 && !hasFirestoreResults && (
+                    {hasUnsavedChanges && canOperate && (
                       <button
                         onClick={handleClearAllMarks}
                         className="text-[10px] sm:text-xs text-gray-500 hover:text-gray-700 hover:underline"
                       >
-                        Clear
+                        {Object.keys(savedBaseline).length > 0 ? 'Discard changes' : 'Clear'}
                       </button>
                     )}
                   </div>
@@ -2173,10 +2445,6 @@ export default function ResultsEntry() {
                 {isMobile ? (
                   <div className="divide-y divide-gray-100">
                     {students.map((student, index) => {
-                      const existingMark = currentSubjectCompletion?.enteredStudentIds?.[examType]?.includes(student.studentId)
-                        ? currentSubjectCompletion?.savedMarks?.[student.studentId]
-                        : null;
-
                       return (
                         <StudentRow
                           key={student.id}
@@ -2187,8 +2455,8 @@ export default function ResultsEntry() {
                           inputRef={registerInput(student.id)}
                           onEnterPress={() => focusNextInput(student.id)}
                           isMobile={true}
-                          disabled={false}
-                          showExistingMark={existingMark}
+                          disabled={!canOperate}
+                          showExistingMark={null}
                           onMarkAbsent={handleMarkAbsent}
                         />
                       );
@@ -2209,10 +2477,6 @@ export default function ResultsEntry() {
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {students.map((student, index) => {
-                          const existingMark = currentSubjectCompletion?.enteredStudentIds?.[examType]?.includes(student.studentId)
-                            ? currentSubjectCompletion?.savedMarks?.[student.studentId]
-                            : null;
-
                           return (
                             <StudentRow
                               key={student.id}
@@ -2223,8 +2487,8 @@ export default function ResultsEntry() {
                               inputRef={registerInput(student.id)}
                               onEnterPress={() => focusNextInput(student.id)}
                               isMobile={false}
-                              disabled={false}
-                              showExistingMark={existingMark}
+                              disabled={!canOperate}
+                              showExistingMark={null}
                               onMarkAbsent={handleMarkAbsent}
                             />
                           );
@@ -2241,7 +2505,7 @@ export default function ResultsEntry() {
                   <span>0-{totalMarks}: marks</span>
                   {hasFirestoreResults && (
                     <span className="ml-auto text-amber-600 font-medium">
-                      ⚡ Overwrite mode: Saving will replace existing results
+                      Saved marks are shown. Only marks you change are replaced.
                     </span>
                   )}
                   {!hasFirestoreResults && (
@@ -2253,7 +2517,7 @@ export default function ResultsEntry() {
                   <div className="px-3 sm:px-4 py-3 bg-blue-50 border-t border-blue-200 text-xs sm:text-sm text-blue-700">
                     <div className="flex items-center gap-2">
                       <RefreshCw size={16} />
-                      <span>⚡ Results exist for this exam. Simply enter new marks and click <strong>Overwrite</strong> to replace all existing results.</span>
+                      <span>Marks are saved for this exam. Change any mark and click <strong>Save changes</strong>; a blank box never deletes a saved mark — use <strong>Delete</strong> to remove this exam's marks.</span>
                     </div>
                   </div>
                 )}

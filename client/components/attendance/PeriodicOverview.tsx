@@ -10,7 +10,6 @@ import {
 import type {
   AttendanceSession,
   AttendanceStatus,
-  PeriodicAttendanceRecord,
 } from '@/types/attendance';
 
 // ============================================================================
@@ -21,6 +20,8 @@ import type {
  * Minimal shape needed to render a student row.
  * Both PeriodicAttendanceRecord and a session-derived row fit this.
  */
+type PeriodicAttendanceRecord = OverviewRow;
+
 interface OverviewRow {
   id: string;
   studentId: string;

@@ -311,6 +311,11 @@ export function useInvalidateSessionCaches() {
         qc.invalidateQueries({
           queryKey: ['attendance_sessions_for_date', classId, date],
         }),
+        // Dashboards, admin rollups and timetable coverage read these.
+        qc.invalidateQueries({ queryKey: ['attendance_sessions'] }),
+        qc.invalidateQueries({ queryKey: ['timetable', 'day-board'] }),
+        qc.invalidateQueries({ queryKey: ['timetable', 'coverage'] }),
+        qc.invalidateQueries({ queryKey: ['timetable', 'coverage-teachers'] }),
       ]);
     },
     [qc],

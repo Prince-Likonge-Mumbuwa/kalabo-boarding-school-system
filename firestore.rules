@@ -1,0 +1,688 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==================== HELPERS ====================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData(userId) {
+      return get(/databases/$(database)/documents/users/$(userId)).data;
+    }
+
+    function isAdmin(userId) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(userId)) &&
+        getUserData(userId).userType == 'admin';
+    }
+
+    function isTeacher(userId) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(userId)) &&
+        getUserData(userId).userType == 'teacher';
+    }
+
+    // Collections with their own explicit rules. They are EXCLUDED from the
+    // catch-all, because Firestore ORs matching rules — otherwise the
+    // catch-all would silently override the restrictions below.
+    function hasExplicitRules(collection) {
+      return collection in [
+        'users', 'teachers', 'classes', 'learners', 'results',
+        'teacher_assignments', 'class_slots', 'assignment_events', 'system',
+        'attendance_sessions',
+        'reportCards', 'report_cards', 'attendanceTrends', 'examConfigs',
+        'messages', 'campaigns', 'sms_logs',
+        // Timetable feature
+        'periods', 'school_holidays', 'timetable_entries',
+        'timetable_submissions'
+      ];
+    }
+
+    // ==================== ASSIGNMENT ENGINE: AUTHORITY ====================
+
+    function engineDoc() {
+      return /databases/$(database)/documents/system/assignmentEngine;
+    }
+
+    // Switch: set system/assignmentEngine.enforceAuthority = true
+    // once grade/attendance code writes normalizedSubject + enteredBy.
+    function authorityEnforced() {
+      return exists(engineDoc())
+        && get(engineDoc()).data.get('enforceAuthority', false) == true;
+    }
+
+    // Slot doc id = {classId}__{normalizedSubject}
+    function slotPath(classId, subj) {
+      return /databases/$(database)/documents/class_slots/$(classId + '__' + subj);
+    }
+
+    // Cover / TP is live only between its dates (server time),
+    // so handback to the Primary Owner is instant.
+    function delegateLive(s) {
+      return s.get('delegateTeacherId', null) != null
+        && s.get('delegateStart', null) != null
+        && s.get('delegateEnd', null) != null
+        && request.time >= s.delegateStart
+        && request.time <= s.delegateEnd;
+    }
+
+    function operatorOf(s) {
+      return delegateLive(s) ? s.delegateTeacherId : s.get('ownerTeacherId', null);
+    }
+
+    function isOperator(classId, subj) {
+      return isAuthenticated()
+        && exists(slotPath(classId, subj))
+        && operatorOf(get(slotPath(classId, subj)).data) == request.auth.uid;
+    }
+
+    // May this user enter / edit MARKS for this class + subject?
+    // The Primary Owner always may (even while covered); a cover / TP
+    // teacher may while their cover is live.
+    function canEnterMarks(classId, subj) {
+      return isAuthenticated()
+        && exists(slotPath(classId, subj))
+        && (
+          get(slotPath(classId, subj)).data.get('ownerTeacherId', null) == request.auth.uid
+          || operatorOf(get(slotPath(classId, subj)).data) == request.auth.uid
+        );
+    }
+
+    // Owner or live cover/TP of a slot, by slot document id.
+    function slotDoc(slotId) {
+      return /databases/$(database)/documents/class_slots/$(slotId);
+    }
+    function isOwnerOrOperatorOfSlot(slotId) {
+      return isAuthenticated()
+        && slotId is string
+        && exists(slotDoc(slotId))
+        && (
+          get(slotDoc(slotId)).data.get('ownerTeacherId', null) == request.auth.uid
+          || operatorOf(get(slotDoc(slotId)).data) == request.auth.uid
+        );
+    }
+
+    // Teacher may write results for this class/subject?
+    function teacherMayCreate(d) {
+      return isTeacher(request.auth.uid) && (
+        !authorityEnforced() || (
+          canEnterMarks(d.classId, d.normalizedSubject)
+          && d.enteredBy == request.auth.uid
+        )
+      );
+    }
+
+    function teacherMayUpdate(before, after) {
+      return isTeacher(request.auth.uid) && (
+        !authorityEnforced() || (
+          canEnterMarks(before.classId, before.normalizedSubject)
+          && after.classId == before.classId
+          && after.normalizedSubject == before.normalizedSubject
+          && after.get('enteredBy', null) == before.get('enteredBy', null)
+          && after.lastEditedBy == request.auth.uid
+        )
+      );
+    }
+
+    // Teacher may delete a result row?
+    //   Authority enforced  → the slot's owner or live cover/TP.
+    //   Not yet enforced    → only rows this teacher saved (teacherId or
+    //                         enteredBy), so one teacher can't wipe another's.
+    function teacherMayDelete(d) {
+      return isTeacher(request.auth.uid) && (
+        (authorityEnforced()
+          && canEnterMarks(d.classId, d.get('normalizedSubject', '')))
+        || (!authorityEnforced()
+          && (d.get('teacherId', '') == request.auth.uid
+              || d.get('enteredBy', '') == request.auth.uid))
+      );
+    }
+
+    // ==================== RESULT SHAPE VALIDATION ====================
+    // Applied to teacher writes only (admins can repair data freely).
+    // Only fields every version of the app has always written are required,
+    // so a teacher on an older cached build is not locked out.
+    //   marks: >= 0 real mark, -1 absent, -2 not conducted
+    function isValidResultShape(d) {
+      return d.keys().hasAll([
+        'studentId', 'classId', 'subjectId', 'examType',
+        'term', 'year', 'marks', 'totalMarks'
+      ])
+      && d.studentId is string && d.studentId.size() > 0
+      && d.classId is string && d.classId.size() > 0
+      && d.subjectId is string && d.subjectId.size() > 0
+      && d.examType in ['week4', 'week8', 'endOfTerm']
+      && d.term in ['Term 1', 'Term 2', 'Term 3']
+      && d.year is int
+      && d.marks is number
+      && d.totalMarks is number && d.totalMarks > 0
+      && (d.marks == -1 || d.marks == -2 || (d.marks >= 0 && d.marks <= d.totalMarks));
+    }
+
+    // ==================== TEACHER ASSIGNMENT SHAPE VALIDATION ====================
+
+    function isValidRoleType(v) {
+      return v == 'substantive' || v == 'tp' || v == 'leave-cover';
+    }
+
+    function isValidStatus(v) {
+      return v == 'active' || v == 'suspended' || v == 'ended';
+    }
+
+    function isValidEndReason(v) {
+      return v == null || v in [
+        'replaced', 'expired', 'handover', 'removed', 'cancelled',
+        'transferred', 'returned-to-duty', 'tp-completed',
+        'owner-replaced', 'promoted-to-owner'
+      ];
+    }
+
+    function isValidAssignmentShape(d) {
+      return d.keys().hasAll([
+        'teacherId', 'classId', 'subject', 'normalizedSubject',
+        'isFormTeacher', 'roleType', 'status'
+      ])
+      && d.teacherId is string
+      && d.classId is string
+      && d.subject is string
+      && d.normalizedSubject is string
+      && d.isFormTeacher is bool
+      && isValidRoleType(d.roleType)
+      && isValidStatus(d.status)
+      && (!d.keys().hasAny(['endReason']) || isValidEndReason(d.endReason));
+    }
+
+    function isValidAssignmentUpdate() {
+      let d = request.resource.data;
+      return
+        (!d.keys().hasAny(['roleType'])         || isValidRoleType(d.roleType))
+        && (!d.keys().hasAny(['status'])        || isValidStatus(d.status))
+        && (!d.keys().hasAny(['endReason'])     || isValidEndReason(d.endReason))
+        && (!d.keys().hasAny(['teacherId'])     || d.teacherId is string)
+        && (!d.keys().hasAny(['classId'])       || d.classId is string)
+        && (!d.keys().hasAny(['subject'])       || d.subject is string)
+        && (!d.keys().hasAny(['isFormTeacher']) || d.isFormTeacher is bool);
+    }
+
+    // ==================== USERS ====================
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow list: if isAuthenticated();
+
+      allow create: if isAdmin(request.auth.uid) || (
+        isAuthenticated()
+        && request.auth.uid == userId
+        && request.resource.data.get('userType', '') != 'admin'
+      );
+
+      allow update: if isAdmin(request.auth.uid) || (
+        isAuthenticated()
+        && request.auth.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'userType', 'status',
+          'assignedClasses', 'assignedClassId', 'assignedClassName',
+          'isFormTeacher', 'formClassId', 'formClassName'
+        ])
+      );
+
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    // ==================== TEACHERS ====================
+    match /teachers/{teacherId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isAdmin(request.auth.uid) ||
+        request.auth.uid == teacherId
+      );
+    }
+
+    // ==================== CLASSES ====================
+    match /classes/{classId} {
+      allow read: if true;
+
+      allow create: if isAdmin(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+
+      allow update: if isAdmin(request.auth.uid) || (
+        isTeacher(request.auth.uid)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'teachers', 'formTeacherId', 'formTeacherName'
+        ])
+      );
+    }
+
+    // ==================== LEARNERS ====================
+    match /learners/{learnerId} {
+      allow read: if true;
+      allow write: if isAuthenticated() && (
+        isAdmin(request.auth.uid) || isTeacher(request.auth.uid)
+      );
+    }
+
+    // ==================== RESULTS ====================
+    match /results/{resultId} {
+      allow read: if true;
+
+      allow create: if isAdmin(request.auth.uid)
+        || (teacherMayCreate(request.resource.data)
+            && isValidResultShape(request.resource.data));
+
+      allow update: if isAdmin(request.auth.uid)
+        || (teacherMayUpdate(resource.data, request.resource.data)
+            && isValidResultShape(request.resource.data));
+
+      // Previously admin-only, which made the teacher "Delete results"
+      // button on Results Entry fail with permission-denied.
+      allow delete: if isAdmin(request.auth.uid)
+        || teacherMayDelete(resource.data);
+    }
+
+    // ==================== ASSIGNMENT ENGINE ====================
+
+    match /class_slots/{slotId} {
+      // Public read: the Parent Portal (no sign-in) needs a class's subject
+      // list so a parent's report card lists the same subjects as the
+      // admin's. Slots hold class/subject/teacher names and cover dates —
+      // the same teacher names already shown on public result rows.
+      allow read: if true;
+      allow create, update: if isAdmin(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    match /teacher_assignments/{assignmentId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAdmin(request.auth.uid)
+        && isValidAssignmentShape(request.resource.data);
+
+      allow update: if isAdmin(request.auth.uid)
+        && isValidAssignmentUpdate();
+
+      allow delete: if false;
+    }
+
+    match /assignment_events/{eventId} {
+      allow read: if isAdmin(request.auth.uid);
+      allow create: if isAdmin(request.auth.uid);
+      allow update, delete: if false;
+    }
+
+    match /system/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin(request.auth.uid);
+    }
+
+    // ==================== ATTENDANCE SESSIONS ====================
+    //
+    // One doc per (class, date, kind, [period, subject]). This is the ONLY
+    // attendance collection the app writes. Rollups and indexes are derived
+    // client-side from this collection.
+    //
+    // Session doc shape:
+    //   { classId, className, date, kind, subject?, period?,
+    //     normalizedSubject?, slotId?,
+    //     markedBy, markedByName, markedAt, roster, excuseReasons?,
+    //     summary, schemaVersion }
+    //   period  = lesson number 1..8 (breaks are not periods; lessons end
+    //             by 13:00)
+    //   slotId  = class_slots id of the subject (periodic) or the form
+    //             class '{classId}__form-teacher' (daily). Older registers
+    //             have none.
+    //
+    // Visibility: any authenticated user (teachers + admins).
+    // Create:     a teacher, as themselves. Once authority is enforced, only
+    //             for a subject / form class they own or currently cover.
+    // Update:     the original marker, the subject's owner or live cover, or
+    //             an admin. Changing class/date/kind/period/subject is not
+    //             allowed (would move the doc to a different session).
+    // Delete:     the marker or the subject's owner / live cover (within
+    //             7 days), or an admin.
+
+    function isValidSessionShape(d) {
+      return d.keys().hasAll([
+        'classId', 'className', 'date', 'kind',
+        'markedBy', 'markedByName', 'markedAt', 'roster',
+        'summary', 'schemaVersion'
+      ])
+      && d.classId is string
+      && d.className is string
+      && d.date is string
+      && (d.kind == 'daily' || d.kind == 'periodic')
+      && d.markedBy is string
+      && d.markedByName is string
+      && d.roster is map
+      && d.summary is map
+      && d.schemaVersion == 1
+      && (
+        d.kind == 'daily'
+        // period = lesson number P1..P8 (breaks are not numbered)
+        || (d.period is int && d.period >= 1 && d.period <= 8
+            && d.subject is string && d.subject.size() > 0)
+      );
+    }
+
+    // The register's subject (periodic) or form class (daily), when the app
+    // recorded it. Older registers have no slotId.
+    function sessionSlotOk(d) {
+      return d.get('slotId', null) != null && isOwnerOrOperatorOfSlot(d.slotId);
+    }
+
+    function sessionIdentityUnchanged(before, after) {
+      return after.classId == before.classId
+        && after.date == before.date
+        && after.kind == before.kind
+        && after.get('period', null) == before.get('period', null)
+        && after.get('subject', null) == before.get('subject', null);
+    }
+
+    match /attendance_sessions/{sessionId} {
+      allow read: if isAuthenticated();
+
+      // A teacher creates registers as themselves. Once authority is
+      // enforced, only for a subject / form class they own or cover.
+      allow create: if isAdmin(request.auth.uid)
+        || (
+          isTeacher(request.auth.uid)
+          && isValidSessionShape(request.resource.data)
+          && request.resource.data.markedBy == request.auth.uid
+          && (!authorityEnforced() || sessionSlotOk(request.resource.data))
+        );
+
+      // Edit: the original marker, or the owner / live cover of the
+      // register's subject (so owner and cover don't lock each other out).
+      // The register's identity (class/date/kind/period/subject) is fixed,
+      // and the editor records themselves as the marker.
+      allow update: if (
+        isAdmin(request.auth.uid)
+        || (
+          isTeacher(request.auth.uid)
+          && (resource.data.markedBy == request.auth.uid || sessionSlotOk(resource.data))
+          && sessionIdentityUnchanged(resource.data, request.resource.data)
+          && request.resource.data.markedBy == request.auth.uid
+        )
+      ) && isValidSessionShape(request.resource.data);
+
+      // The marker or the subject's owner / live cover (within 7 days),
+      // or an admin.
+      allow delete: if isAdmin(request.auth.uid)
+        || (
+          isTeacher(request.auth.uid)
+          && (resource.data.markedBy == request.auth.uid || sessionSlotOk(resource.data))
+          && request.time < resource.data.markedAt + duration.value(7, 'd')
+        );
+    }
+
+    // ==================== TIMETABLE — PERIODS ====================
+    //
+    // School-wide bell schedule. Teachers need to read it (MyTimetable
+    // grid, attendance picker) but only admins may write.
+    //
+    // Lessons are numbered 1..8 (order); break / lunch / assembly rows are
+    // not periods and carry order 0. The school day ends at 13:00.
+    //
+    // Doc shape:
+    //   { order: int (lesson 1..8, otherwise 0), name: string, startTime: 'HH:mm',
+    //     endTime: 'HH:mm', kind: 'lesson'|'break'|'assembly'|'lunch',
+    //     academicYear: int, isActive: bool, createdAt, updatedAt }
+
+    function isValidPeriodShape(d) {
+      return d.keys().hasAll(['order', 'name', 'startTime', 'endTime', 'kind', 'academicYear', 'isActive'])
+        && d.order is int && d.order >= 0 && d.order <= 20
+        && d.name is string && d.name.size() > 0
+        && d.startTime is string
+        && d.endTime is string
+        && d.kind in ['lesson', 'break', 'assembly', 'lunch']
+        && d.academicYear is int
+        && d.isActive is bool;
+    }
+
+    match /periods/{periodId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAdmin(request.auth.uid)
+        && isValidPeriodShape(request.resource.data);
+
+      allow update: if isAdmin(request.auth.uid)
+        && isValidPeriodShape(request.resource.data);
+
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    // ==================== TIMETABLE — SCHOOL HOLIDAYS ====================
+    //
+    // Public + school-specific holidays. Same read/write split as periods.
+    //
+    // Doc shape:
+    //   { name: string, startDate: 'YYYY-MM-DD', endDate: 'YYYY-MM-DD',
+    //     kind: 'public'|'school'|'exam-week', createdBy, createdAt, updatedAt }
+
+    function isValidHolidayShape(d) {
+      return d.keys().hasAll(['name', 'startDate', 'endDate', 'kind'])
+        && d.name is string && d.name.size() > 0
+        && d.startDate is string && d.startDate.size() == 10
+        && d.endDate is string && d.endDate.size() == 10
+        && d.kind in ['public', 'school', 'exam-week'];
+    }
+
+    match /school_holidays/{holidayId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAdmin(request.auth.uid)
+        && isValidHolidayShape(request.resource.data);
+
+      allow update: if isAdmin(request.auth.uid)
+        && isValidHolidayShape(request.resource.data);
+
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    // ==================== TIMETABLE — ENTRIES ====================
+    //
+    // One row per (slot, term, year, day, period). Keyed by slot, never by
+    // teacher, so cover / TP / new-assignment changes auto-adjust without
+    // any write here.
+    //
+    // One row = one subject in ONE period. Doubles / triples are worked
+    // out by the app from consecutive periods (isDouble is always false on
+    // new rows; old rows with true are split by the Timetable data check).
+    //
+    // Approval workflow (see timetable_submissions):
+    //   Teacher submits   → rows 'pending' (+ a submission doc)
+    //   Admin approves    → rows 'active'; the subject's previous live
+    //                       rows → 'archived'
+    //   Admin rejects     → rows 'rejected' (with rejectedReason)
+    //
+    // Doc shape:
+    //   { slotId, classId, className, subject, normalizedSubject,
+    //     term: 'Term 1'|'Term 2'|'Term 3', year: int,
+    //     dayOfWeek: int 1..5, periodIndex: int >= 1, isDouble: bool,
+    //     venue?: string,
+    //     status: 'draft'|'pending'|'active'|'rejected'|'archived',
+    //     submittedByUid, submittedAt, approvedByUid, approvedAt,
+    //     rejectedReason, batchId?, createdAt, updatedAt }
+
+    function isValidTerm(v) {
+      return v == 'Term 1' || v == 'Term 2' || v == 'Term 3';
+    }
+
+    function isValidEntryStatus(v) {
+      return v == 'draft' || v == 'pending' || v == 'active' || v == 'rejected'
+        || v == 'archived';
+    }
+
+    function isValidEntryShape(d) {
+      return d.keys().hasAll([
+        'slotId', 'classId', 'className', 'subject', 'normalizedSubject',
+        'term', 'year', 'dayOfWeek', 'periodIndex', 'isDouble', 'status'
+      ])
+      && d.slotId is string
+      && d.classId is string
+      && d.className is string
+      && d.subject is string
+      && d.normalizedSubject is string
+      && isValidTerm(d.term)
+      && d.year is int
+      && d.dayOfWeek is int && d.dayOfWeek >= 1 && d.dayOfWeek <= 5
+      && d.periodIndex is int && d.periodIndex >= 1
+      && d.isDouble is bool
+      && isValidEntryStatus(d.status);
+    }
+
+    match /timetable_entries/{entryId} {
+
+      // Any authenticated user may read. The service filters server-side
+      // (teachers see their slots' rows; admins see the approval queue).
+      allow read: if isAuthenticated();
+
+      // Teacher creates their own rows, in pending/draft only (once
+      // authority is enforced: only for subjects they own or cover).
+      // Admin creates anything, in any status (used when seeding / fixing).
+      allow create: if isAdmin(request.auth.uid)
+        || (
+          isTeacher(request.auth.uid)
+          && isValidEntryShape(request.resource.data)
+          && request.resource.data.submittedByUid == request.auth.uid
+          && request.resource.data.status in ['pending', 'draft']
+          && (!authorityEnforced()
+              || isOwnerOrOperatorOfSlot(request.resource.data.slotId))
+        );
+
+      // Teacher updates only their own row, and cannot escape
+      // pending/draft/rejected → active. This blocks a malicious client
+      // from self-approving.
+      allow update: if isAdmin(request.auth.uid)
+        || (
+          isTeacher(request.auth.uid)
+          && isValidEntryShape(request.resource.data)
+          && resource.data.submittedByUid == request.auth.uid
+          && resource.data.status in ['pending', 'draft', 'rejected']
+          && request.resource.data.status in ['pending', 'draft', 'rejected']
+          && request.resource.data.submittedByUid == request.auth.uid
+        );
+
+      // Teacher deletes their own non-active rows; admin deletes any.
+      allow delete: if isAdmin(request.auth.uid)
+        || (
+          isTeacher(request.auth.uid)
+          && resource.data.submittedByUid == request.auth.uid
+          && resource.data.status in ['pending', 'draft', 'rejected']
+        );
+    }
+
+    // ==================== TIMETABLE — SUBMISSIONS ====================
+    //
+    // One doc per teacher submission. Approving it replaces the whole live
+    // timetable of the subjects in scopeSlotIds.
+    //   Teacher: creates their own (pending); may shrink or supersede their
+    //            own pending one when they resubmit; may delete it.
+    //   Admin:   approves / rejects.
+
+    function isValidSubmissionShape(d) {
+      return d.keys().hasAll(['teacherId', 'term', 'year', 'scopeSlotIds', 'status'])
+        && d.teacherId is string
+        && isValidTerm(d.term)
+        && d.year is int
+        && d.scopeSlotIds is list
+        && d.status in ['pending', 'approved', 'rejected', 'superseded'];
+    }
+
+    match /timetable_submissions/{submissionId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAdmin(request.auth.uid)
+        || (
+          isTeacher(request.auth.uid)
+          && isValidSubmissionShape(request.resource.data)
+          && request.resource.data.teacherId == request.auth.uid
+          && request.resource.data.status == 'pending'
+        );
+
+      allow update: if isAdmin(request.auth.uid)
+        || (
+          isTeacher(request.auth.uid)
+          && isValidSubmissionShape(request.resource.data)
+          && resource.data.teacherId == request.auth.uid
+          && request.resource.data.teacherId == request.auth.uid
+          && resource.data.status == 'pending'
+          && request.resource.data.status in ['pending', 'superseded']
+        );
+
+      allow delete: if isAdmin(request.auth.uid)
+        || (
+          isTeacher(request.auth.uid)
+          && resource.data.teacherId == request.auth.uid
+          && resource.data.status == 'pending'
+        );
+    }
+
+    // ==================== REPORT CARDS ====================
+    match /reportCards/{reportCardId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isAdmin(request.auth.uid) || isTeacher(request.auth.uid)
+      );
+    }
+
+    match /report_cards/{reportCardId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isAdmin(request.auth.uid) || isTeacher(request.auth.uid)
+      );
+    }
+
+    // ==================== ATTENDANCE TRENDS ====================
+    match /attendanceTrends/{trendId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isAdmin(request.auth.uid) || isTeacher(request.auth.uid)
+      );
+    }
+
+    // ==================== EXAM CONFIGURATION ====================
+    match /examConfigs/{configId} {
+      // Public read: the Parent Portal must use the same active exams as
+      // the admin's report card. Configs hold only dates and mark totals.
+      allow read: if true;
+      // Admin only: only the admin Exam Management page writes configs, and
+      // a teacher changing them would change every class's results.
+      allow write: if isAdmin(request.auth.uid);
+    }
+
+    // ==================== SMS ENGINE (LOCKED DOWN) ====================
+    match /messages/{messageId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+
+      match /recipients/{recipientId} {
+        allow read: if isAuthenticated();
+        allow write: if false;
+      }
+    }
+
+    match /sms_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // ==================== BACKSTOP CATCH-ALL ====================
+    match /{collection}/{documentId} {
+      allow read: if isAuthenticated();
+      allow write: if !hasExplicitRules(collection)
+        && (isAdmin(request.auth.uid) || isTeacher(request.auth.uid));
+    }
+
+    match /{collection}/{documentId}/{nested=**} {
+      allow read: if isAuthenticated();
+      allow write: if !hasExplicitRules(collection)
+        && (isAdmin(request.auth.uid) || isTeacher(request.auth.uid));
+    }
+  }
+}
