@@ -84,12 +84,12 @@ export default function ResultsDataCheck() {
     });
 
   return (
-    <DashboardLayout activeTab="results-monitor">
+    <DashboardLayout activeTab="results-sba">
       <div className="p-3 sm:p-6 lg:p-8 space-y-5 max-w-5xl">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <Link to="/dashboard/admin/results-monitor" className="text-xs text-blue-600 inline-flex items-center gap-1 mb-1">
-              <ArrowLeft size={12} /> Results Monitor
+              <ArrowLeft size={12} /> Results &amp; SBA
             </Link>
             <h1 className="text-2xl font-bold text-gray-900">Results data check</h1>
             <p className="text-sm text-gray-600">

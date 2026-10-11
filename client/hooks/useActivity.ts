@@ -251,7 +251,7 @@ export const useActivity = (options?: {
     queryKey: ['activities', resultsLimit, showRead, types],
     queryFn: fetchRecentActivities,
     staleTime: 30 * 1000, // 30 seconds
-    refetchInterval: 60 * 1000, // Auto-refresh every minute
+    refetchInterval: 5 * 60 * 1000, // Auto-refresh every 5 minutes
   });
 
   const statsQuery = useQuery({

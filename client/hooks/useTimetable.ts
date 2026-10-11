@@ -25,6 +25,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { getCurrentAcademicTerm, getAllTermsForYear, type TermName } from '@/utils/academicTerm';
 
@@ -43,7 +44,6 @@ import {
   getTimetableForTeacher,
   getTimetableForClass,
   getTodayTimetableForTeacher,
-  getCurrentPeriod,
   getMyTimetableClasses,
   submitTimetable,
   approveSubmission,
@@ -276,7 +276,7 @@ export function useMyTimetable(opts: { term?: TermName; year?: number } = {}) {
     queryFn: () => getTimetableForTeacher(user!.uid, term, year),
     enabled: !!user?.uid,
     staleTime: 60_000,
-    refetchInterval: 60_000, // covers start/expire; keep fresh
+    refetchInterval: 5 * 60_000, // covers start/expire by date
   });
 }
 
@@ -338,20 +338,26 @@ export function useTodayTimetable(dateYMD?: string) {
 }
 
 /**
- * The period the teacher is *in* right now. Recomputes each minute.
+ * The period the teacher is *in* right now. Worked out from today's
+ * timetable (already loaded) and the clock — no extra database reads.
  */
 export function useCurrentPeriod() {
-  const { user } = useAuth();
-  const now = new Date();
-  const minuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
-
-  return useQuery<ResolvedTimetableEntry | null>({
-    queryKey: timetableKeys.currentPeriod(user?.uid ?? '', minuteKey),
-    queryFn: () => getCurrentPeriod(user!.uid, new Date()),
-    enabled: !!user?.uid,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-  });
+  const today = useTodayTimetable();
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  const toMin = (hhmm: string) => {
+    const [h, m] = hhmm.split(':').map(Number);
+    return h * 60 + m;
+  };
+  const data =
+    (today.data ?? []).find(
+      r => r.period && minutes >= toMin(r.period.startTime) && minutes < toMin(r.period.endTime),
+    ) ?? null;
+  return { data, isLoading: today.isLoading, refetch: today.refetch };
 }
 
 /** The teacher's own pending / rejected submissions this term. */
@@ -433,7 +439,7 @@ export function usePendingSubmissions() {
     queryKey: timetableKeys.pendingSubmissions(),
     queryFn: () => getPendingSubmissions(),
     staleTime: 30_000,
-    refetchInterval: 30_000,
+    refetchInterval: 2 * 60_000,
   });
 }
 
@@ -475,8 +481,8 @@ export function useTimetableCoverage(dateYMD?: string) {
   return useQuery<CoverageRow[]>({
     queryKey: timetableKeys.coverage(date),
     queryFn: () => getCoverageForDate(date),
-    staleTime: 30_000,
-    refetchInterval: 60_000,
+    staleTime: 60_000,
+    refetchInterval: 2 * 60_000,
   });
 }
 
@@ -489,8 +495,8 @@ export function useTeacherCoverage(dateYMD?: string) {
   return useQuery<TeacherCoverageRow[]>({
     queryKey: timetableKeys.teacherCoverage(date),
     queryFn: () => getCoverageForTeachers(date),
-    staleTime: 30_000,
-    refetchInterval: 60_000,
+    staleTime: 60_000,
+    refetchInterval: 2 * 60_000,
   });
 }
 

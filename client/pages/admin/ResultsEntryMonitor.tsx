@@ -1,5 +1,6 @@
 // @/pages/admin/ResultsEntryMonitor.tsx
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { useEmbedded } from '@/components/workspace/embedded';
 import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -31,6 +32,10 @@ const EXAM_LABELS: Record<ExamType, string> = {
 const TERM_OPTIONS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
 
 export default function ResultsEntryMonitor() {
+  // As a tab of "Results & SBA" the workspace shows the page title.
+  const embedded = useEmbedded();
+  // The workspace owns the page's h1; inside it this is a section heading.
+  const TitleTag = embedded ? 'h2' : 'h1';
   // Year is auto-detected from the current academic calendar.
   const autoTerm = getCurrentAcademicTerm();
 
@@ -86,21 +91,21 @@ export default function ResultsEntryMonitor() {
   const header = (
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 flex items-center gap-2">
-          <Activity className="text-blue-600" size={28} />
-          Results Entry Monitor
+        <TitleTag className={embedded ? 'text-base font-semibold text-gray-900 flex items-center gap-2' : 'text-2xl sm:text-3xl font-bold text-gray-900 flex items-center gap-2'}>
+          {!embedded && <Activity className="text-blue-600" size={28} />}
+          {embedded ? termLabel : 'Results Entry Monitor'}
           {isTermCurrent && (
             <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
               Live
             </span>
           )}
-        </h1>
+        </TitleTag>
         <p className="text-sm text-gray-600 mt-1">
-          Who has entered what, for {termLabel}
+          {embedded ? 'Who has entered which marks, by teacher, class and subject.' : <>Who has entered what, for {termLabel}</>}
         </p>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {/* Term selector */}
         <div className="relative">
           <Calendar
@@ -136,7 +141,7 @@ export default function ResultsEntryMonitor() {
 
         <Link
           to="/dashboard/admin/results-data-check"
-          className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium"
+          className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium whitespace-nowrap"
         >
           Data check
         </Link>
@@ -145,9 +150,9 @@ export default function ResultsEntryMonitor() {
           onClick={() => refetch()}
           disabled={isFetching}
           className="
-            inline-flex items-center gap-2 px-4 py-2
+            inline-flex items-center gap-2 px-3 sm:px-4 py-2
             border border-gray-300 rounded-lg hover:bg-gray-50
-            text-sm font-medium disabled:opacity-50
+            text-sm font-medium disabled:opacity-50 whitespace-nowrap
           "
         >
           <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />

@@ -36,7 +36,11 @@ service cloud.firestore {
         'messages', 'campaigns', 'sms_logs',
         // Timetable feature
         'periods', 'school_holidays', 'timetable_entries',
-        'timetable_submissions'
+        'timetable_submissions',
+        // Year transition
+        'enrollments', 'promotion_runs', 'promotion_run_items',
+        // Admissions
+        'staff_roles', 'admission_settings', 'admissions'
       ];
     }
 
@@ -313,6 +317,75 @@ service cloud.firestore {
     match /system/{docId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin(request.auth.uid);
+    }
+
+    // ==================== YEAR TRANSITION ====================
+    //
+    // enrollments/{learnerId}_{year}: the class each learner was in during a
+    // CLOSED academic year (written by the admin's year transition). Public
+    // read: the Parent Portal (signed out) shows a past term's report card
+    // from the class the child was in that year. Holds names, class and the
+    // school's student id only — the same data already public on learners.
+    match /enrollments/{enrollmentId} {
+      allow read: if true;
+      allow write: if isAdmin(request.auth.uid);
+    }
+
+    // promotion_runs/{fromYear}-{toYear}: the stored plan, progress and undo
+    // information of a year transition. Admin only.
+    match /promotion_runs/{runId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin(request.auth.uid);
+    }
+
+    // The run's learner lines, in chunks of 250 (one document would be too
+    // large for a big school).
+    match /promotion_run_items/{chunkId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin(request.auth.uid);
+    }
+
+    // ==================== ADMISSIONS ====================
+    //
+    // staff_roles/{teacherId}__admissions-officer: school-wide roles given by
+    // the admin. An ACTIVE admissions officer may enrol learners.
+    function isAdmissionsOfficer() {
+      return isTeacher(request.auth.uid)
+        && exists(/databases/$(database)/documents/staff_roles/$(request.auth.uid + '__admissions-officer'))
+        && get(/databases/$(database)/documents/staff_roles/$(request.auth.uid + '__admissions-officer')).data.status == 'active';
+    }
+
+    match /staff_roles/{roleId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin(request.auth.uid);
+    }
+
+    // admission_settings/{year}: the intake (open/closed, levels, places).
+    // Officers may only move the admission counter on by one, which is what
+    // makes two simultaneous admissions take turns.
+    match /admission_settings/{year} {
+      allow read: if isAuthenticated();
+      allow create, delete: if isAdmin(request.auth.uid);
+      allow update: if isAdmin(request.auth.uid)
+        || (
+          isAdmissionsOfficer()
+          && resource.data.isOpen == true
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seq', 'lastAdmissionAt'])
+          && request.resource.data.seq == resource.data.seq + 1
+        );
+    }
+
+    // admissions/{year}-{seq}: one record per admission (the printed slip).
+    // Officers create their own; only the admin may change or cancel one.
+    match /admissions/{admissionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin(request.auth.uid)
+        || (
+          isAdmissionsOfficer()
+          && request.resource.data.admittedBy == request.auth.uid
+          && request.resource.data.status == 'admitted'
+        );
+      allow update, delete: if isAdmin(request.auth.uid);
     }
 
     // ==================== ATTENDANCE SESSIONS ====================

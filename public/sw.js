@@ -1,89 +1,57 @@
-const CACHE_NAME = 'kalaboboarding-v1';
-const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-];
+// Service worker for the installed (PWA) app.
+//
+// Update-safe caching:
+//   • Pages (index.html) — network first, so every visit gets the newest
+//     version of the app; the cached copy is used only when offline.
+//   • /assets/* — files with a content hash in their name never change, so
+//     they are served from cache (fast) once downloaded.
+//   • Everything else — network first, cache as offline fallback.
+// The previous version served index.html from cache forever, which kept
+// people on an old build after every update.
 
-// Install event - cache assets
-self.addEventListener('install', (event) => {
-  console.log('Service Worker installing...');
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log('Caching essential assets');
-      return cache.addAll(ASSETS_TO_CACHE);
-    })
-  );
+const CACHE_NAME = 'kalaboboarding-v2';
+
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
-// Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
-  console.log('Service Worker activating...');
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
+    caches
+      .keys()
+      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n))))
+      .then(() => self.clients.claim()),
   );
-  self.clients.claim();
 });
 
-// Fetch event - serve from cache, fallback to network
+const putInCache = (request, response) => {
+  if (response && response.status === 200 && response.type === 'basic') {
+    const copy = response.clone();
+    caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+  }
+  return response;
+};
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return; // Firebase etc. go straight to the network
+  if (url.pathname.startsWith('/api/')) return;
 
-  // Skip cross-origin requests
-  if (!request.url.startsWith(self.location.origin)) {
+  // Hashed build files: cache first.
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.match(request).then((hit) => hit || fetch(request).then((res) => putInCache(request, res))),
+    );
     return;
   }
 
-  // For GET requests, try cache first, then network
-  if (request.method === 'GET') {
-    event.respondWith(
-      caches.match(request).then((response) => {
-        if (response) {
-          return response;
-        }
-
-        return fetch(request).then((response) => {
-          // Only cache successful responses
-          if (!response || response.status !== 200 || response.type === 'error') {
-            return response;
-          }
-
-          // Clone the response
-          const responseToCache = response.clone();
-
-          // Cache the response for future use
-          if (request.url.includes('.js') || request.url.includes('.css')) {
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseToCache);
-            });
-          }
-
-          return response;
-        }).catch(() => {
-          // Return a custom offline page or cached fallback if available
-          return caches.match('/');
-        });
-      })
-    );
-  }
-});
-
-// Background sync for forms (if implemented)
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'sync-forms') {
-    event.waitUntil(
-      // Sync pending form submissions
-      Promise.resolve()
-    );
-  }
+  // Pages and other files: network first, cached copy only when offline.
+  const isPage = request.mode === 'navigate';
+  event.respondWith(
+    fetch(request)
+      .then((res) => putInCache(isPage ? '/index.html' : request, res))
+      .catch(() => caches.match(isPage ? '/index.html' : request).then((hit) => hit || caches.match('/index.html'))),
+  );
 });

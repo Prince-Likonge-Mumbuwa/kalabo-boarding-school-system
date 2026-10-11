@@ -4,7 +4,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import * as engine from '@/services/assignmentEngine';
 
 /** Re-evaluate authority every minute so an expiring cover flips back on screen. */
-const AUTHORITY_TICK_MS = 60 * 1000;
+const AUTHORITY_TICK_MS = 5 * 60 * 1000; // covers change by date; 5 min is plenty
 
 export function invalidateAllAssignmentViews(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ['class_slots'] });

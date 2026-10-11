@@ -25,8 +25,7 @@
     "noFallthroughCasesInSwitch": false,
     "strictNullChecks": false,
 
-    /* Path mapping */
-    "baseUrl": ".",
+    /* Path mapping (relative to this file; no baseUrl needed) */
     "paths": {
       "@/*": ["./client/*"],
       "@shared/*": ["./shared/*"]

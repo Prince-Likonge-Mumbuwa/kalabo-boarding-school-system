@@ -52,7 +52,7 @@ interface UseResultsEntryMonitorOptions {
   enabled?: boolean;
 }
 
-const AUTHORITY_TICK_MS = 60 * 1000;
+const AUTHORITY_TICK_MS = 3 * 60 * 1000; // whole-school read: every 3 min, Refresh for now
 
 const EXAM_NAMES: Record<ExamType, string> = {
   week4: 'Week 4 Test',

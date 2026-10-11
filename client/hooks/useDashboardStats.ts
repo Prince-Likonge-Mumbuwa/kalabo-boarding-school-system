@@ -9,7 +9,7 @@ export const useDashboardStats = () => {
     queryKey: ['dashboardStats'],
     queryFn: classService.getDashboardStats,
     staleTime: 5 * 60 * 1000, // 5 minutes
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // whole-school read: not on every tab switch
   });
 
   const refreshStats = async () => {

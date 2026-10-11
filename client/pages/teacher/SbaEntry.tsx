@@ -22,6 +22,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { learnerService } from '@/services/schoolService';
+import { getSchoolYear } from '@/services/promotionService';
 import {
   useSbaAssignmentsForTeacher,
   useSbaResults,
@@ -537,7 +538,16 @@ export default function SbaEntry() {
   const lastSubjectRef = useRef<string>('');
 
   const { classes } = useSchoolClasses({ isActive: true });
-  const currentYear = new Date().getFullYear();
+  // The school's academic year: set by the year transition (so classes and
+  // exam years agree even if the transition runs before/after 1 January);
+  // the calendar year until the first transition.
+  const [currentYear, setCurrentYear] = useState(() => new Date().getFullYear());
+  useEffect(() => {
+    let cancelled = false;
+    getSchoolYear().then(y => { if (!cancelled && y) setCurrentYear(y); }).catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const selectedClassForm = useMemo(() => {
     const cls = classes.find(c => c.id === selectedClassId);

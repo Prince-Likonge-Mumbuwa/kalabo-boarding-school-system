@@ -3,6 +3,7 @@ import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useAuth } from '@/hooks/useAuth';
+import { TeacherRolesSection } from '@/components/admissions/TeacherRolesSection';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useCallback } from 'react';
@@ -1572,6 +1573,13 @@ export default function TeacherManagement() {
                         )}
                       </div>
                     </div>
+
+                    {/* School-wide roles (Admissions officer) */}
+                    <TeacherRolesSection
+                      teacher={{ id: activeTeacher.id, name: activeTeacher.name, email: activeTeacher.email }}
+                      isAdmin={!!isUserAdmin}
+                      actor={{ uid: user?.uid || '', name: user?.fullName || 'Admin' }}
+                    />
 
                     {/* Class Assignments */}
                     <div>

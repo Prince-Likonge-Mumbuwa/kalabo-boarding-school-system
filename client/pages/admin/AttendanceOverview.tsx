@@ -20,6 +20,7 @@
 // ============================================================================
 
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { useEmbedded } from '@/components/workspace/embedded';
 import { useMemo, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { CompactStats } from '@/components/attendance/CompactStats';
@@ -518,7 +519,7 @@ function SubjectTruancyView({ truancy }: { truancy: SubjectAlertRow[] }) {
 // NEW — PERIODS TAB
 // ============================================================================
 
-function PeriodsTab() {
+export function PeriodsTab() {
   const { year } = getCurrentAcademicTerm();
   const periodsQ = usePeriods(year, { includeInactive: true });
   const upsert = useUpsertPeriod();
@@ -769,7 +770,7 @@ function PeriodEditorDialog({
 // NEW — HOLIDAYS TAB
 // ============================================================================
 
-function HolidaysTab() {
+export function HolidaysTab() {
   const { year } = getCurrentAcademicTerm();
   const holidaysQ = useSchoolHolidays({ year });
   const upsert = useUpsertHoliday();
@@ -986,7 +987,7 @@ function HolidayEditorDialog({
 // NEW — APPROVALS TAB
 // ============================================================================
 
-function ApprovalsTab() {
+export function ApprovalsTab() {
   const pendingQ = usePendingSubmissions();
   const approve = useApproveSubmission();
   const reject = useRejectSubmission();
@@ -1194,8 +1195,12 @@ function SubmissionRow({
 
 export default function AttendanceOverview() {
   useAuth();
+  // As a tab of "Attendance" this page shows attendance only:
+  // Periods, Holidays and Approvals are tabs of the workspace itself.
+  const embedded = useEmbedded();
 
-  const [topTab, setTopTab] = useState<TopTab>('attendance');
+  const [topTabState, setTopTab] = useState<TopTab>('attendance');
+  const topTab: TopTab = embedded ? 'attendance' : topTabState;
   const [viewMode, setViewMode] = useState<ViewMode>('daily');
   const [selectedDate, setSelectedDate] = useState(() => formatLocalYMD(new Date()));
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>(() => ({
@@ -1386,15 +1391,19 @@ export default function AttendanceOverview() {
 
   return (
     <DashboardLayout activeTab="attendance">
-      <div className="min-h-screen bg-gray-50">
-        <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+      <div className={embedded ? 'bg-gray-50' : 'min-h-screen bg-gray-50'}>
+        <div className={embedded ? 'px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6' : 'bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6'}>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
-                Attendance Overview
-              </h1>
-              <p className="text-sm sm:text-base text-gray-600 mt-1">
-                Monitor attendance and manage the school timetable
+              {!embedded && (
+                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+                  Attendance Overview
+                </h1>
+              )}
+              <p className={embedded ? 'text-sm text-gray-600' : 'text-sm sm:text-base text-gray-600 mt-1'}>
+                {embedded
+                  ? 'Registers taken by teachers: daily and lesson attendance, late arrivals and missed lessons.'
+                  : 'Monitor attendance and manage the school timetable'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -1419,7 +1428,8 @@ export default function AttendanceOverview() {
 
         <div className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
 
-          {/* ── Top-level tab strip ────────────────────────────── */}
+          {/* ── Top-level tab strip (standalone page only) ─────── */}
+          {!embedded && (
           <div className="bg-white rounded-xl border border-gray-200 p-1 inline-flex w-full sm:w-auto overflow-x-auto">
             <div className="flex gap-1 min-w-max">
               <button
@@ -1468,6 +1478,7 @@ export default function AttendanceOverview() {
               </Link>
             </div>
           </div>
+          )}
 
           {/* ── Periods tab ─────────────────────────────────────── */}
           {topTab === 'periods' && <PeriodsTab />}

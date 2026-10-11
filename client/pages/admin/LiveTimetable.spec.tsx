@@ -69,7 +69,7 @@ describe("Who's teaching", () => {
   it('teacher lookup says where they are now', () => {
     renderPage();
     fireEvent.change(screen.getByPlaceholderText(/Where is/), { target: { value: 'phiri' } });
-    expect(screen.getByText(/now in 8A \(Mathematics\)/)).toBeTruthy();
+    expect(screen.getByText(/timetabled now in 8A \(Mathematics\)/)).toBeTruthy();
   });
 
   it('whole-day view and weekends', () => {
@@ -80,5 +80,16 @@ describe("Who's teaching", () => {
     h.board = { ...h.board, dayOfWeek: null, classes: [] };
     renderPage();
     expect(screen.getByText('No lessons on weekends.')).toBeTruthy();
+  });
+
+  it('as a tab of Attendance it leaves the title to the workspace', async () => {
+    const { EmbeddedContext } = await import('@/components/workspace/embedded');
+    render(<MemoryRouter><EmbeddedContext.Provider value={true}><LiveTimetable /></EmbeddedContext.Provider></MemoryRouter>);
+    expect(screen.queryByRole('heading', { name: /Who.s teaching/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Attendance/ })).toBeNull();
+    // The page's own controls are all still there.
+    expect(screen.getByRole('button', { name: 'P2 • now' })).toBeTruthy();
+    expect(screen.getByLabelText('Refresh')).toBeTruthy();
+    expect(screen.getByText(/a timetable entry alone does not show the teacher was in class/)).toBeTruthy();
   });
 });

@@ -30,6 +30,7 @@ import {
   writeBatch,
   setDoc,
 } from 'firebase/firestore';
+import { loadClosedMembership } from '@/services/enrollmentService';
 import { db } from '@/lib/firebase';
 import { slotKeyFor } from '@/services/resultsGridLoader';
 import { isCountedLearner } from '@/services/resultsGrid';
@@ -90,6 +91,9 @@ export async function runDataCheck(term: string, year: number): Promise<DataChec
     getDocs(collection(db, 'classes')),
     getDoc(doc(db, 'system', 'assignmentEngine')),
   ]);
+  // A closed year's cohort has moved on: its marks belong to the class the
+  // learner was in that year, not their current class.
+  const closedMembership = await loadClosedMembership(year);
 
   const classNames = new Map(classSnap.docs.map(d => [d.id, (d.data().name as string) || d.id]));
   const learners = learnerSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
@@ -128,7 +132,11 @@ export async function runDataCheck(term: string, year: number): Promise<DataChec
     if (!r.normalizedSubject) report.results.missingNormalizedSubject.push(d.id);
 
     const learner = learnerById.get(r.studentId) ?? learnerById.get(byCustom.get(r.studentId)?.[0] ?? '');
-    if (!learner || learner.classId !== r.classId || !isCountedLearner(learner)) {
+    const closedClass = learner ? closedMembership.get(learner.id) : undefined;
+    const onRoster = closedClass !== undefined
+      ? closedClass === r.classId
+      : !!learner && learner.classId === r.classId && isCountedLearner(learner);
+    if (!onRoster) {
       report.results.offRoster.push({ id: d.id, studentId: r.studentId, classId: r.classId, subjectId: r.subjectId });
     }
 

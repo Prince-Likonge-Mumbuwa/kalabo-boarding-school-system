@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { useEmbedded } from '@/components/workspace/embedded';
 import { useSchoolDayBoard, useTeacherCoverage } from '@/hooks/useTimetable';
 import { UncoveredPeriodsTable, PeriodChip } from '@/components/timetable/TimetableShared';
 import { formatLocalYMD, type BoardLesson, type BoardStatus } from '@/services/timetableService';
@@ -38,6 +39,8 @@ function Teacher({ l }: { l: BoardLesson }) {
 }
 
 export default function LiveTimetable() {
+  // As a tab of "Attendance" the workspace shows the page title.
+  const embedded = useEmbedded();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30_000);
@@ -65,12 +68,16 @@ export default function LiveTimetable() {
       <div className="p-3 sm:p-6 lg:p-8 space-y-4 max-w-7xl">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <Link to="/dashboard/admin/attendance-overview" className="text-xs text-blue-600 inline-flex items-center gap-1 mb-1">
-              <ArrowLeft size={12} /> Attendance &amp; Timetable
-            </Link>
-            <h1 className="text-2xl font-bold text-gray-900">Who’s teaching</h1>
+            {!embedded && (
+              <>
+                <Link to="/dashboard/admin/attendance-overview" className="text-xs text-blue-600 inline-flex items-center gap-1 mb-1">
+                  <ArrowLeft size={12} /> Attendance
+                </Link>
+                <h1 className="text-2xl font-bold text-gray-900">Who’s teaching</h1>
+              </>
+            )}
             <p className="text-sm text-gray-600">
-              Lessons from approved timetables, with cover. A lesson counts as taught when its register is taken.
+              Who is timetabled to teach each lesson (approved timetables, including cover). A lesson counts as taught only when its register is taken — a timetable entry alone does not show the teacher was in class.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -118,7 +125,7 @@ export default function LiveTimetable() {
             <div className="bg-white border border-gray-200 rounded-xl p-3 space-y-2">
               <label className="flex items-center gap-2 text-sm">
                 <Search size={14} className="text-gray-400" />
-                <input value={q} onChange={e => setQ(e.target.value)} placeholder="Where is… (teacher name)" className="flex-1 outline-none" />
+                <input value={q} onChange={e => setQ(e.target.value)} placeholder="Where is… (teacher name)" aria-label="Find a teacher's timetabled lesson" className="flex-1 outline-none" />
               </label>
               {found.map(t => {
                 const nowL = date === today ? t.lessons.find(l => auto?.running && l.row.entry.periodIndex === auto.period.order) : null;
@@ -128,7 +135,7 @@ export default function LiveTimetable() {
                       {t.teacher}
                       {date === today && (
                         <span className="font-normal text-gray-600">
-                          {' — '}{nowL ? `now in ${nowL.row.entry.className} (${nowL.row.entry.subject})` : 'not in a lesson right now'}
+                          {' — '}{nowL ? `timetabled now in ${nowL.row.entry.className} (${nowL.row.entry.subject})` : 'no lesson timetabled right now'}
                         </span>
                       )}
                     </div>

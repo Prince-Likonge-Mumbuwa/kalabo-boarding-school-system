@@ -1,6 +1,9 @@
 import { useState, ReactNode } from 'react';
+import { useEmbedded } from '@/components/workspace/embedded';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useAdmissionsOfficer } from '@/hooks/useAdmissionsOfficer';
+import { useTeacherClasses, holdsFormTeacherSlot } from '@/hooks/useTeacherClasses';
 import {
   Menu,
   X,
@@ -18,6 +21,7 @@ import {
   GraduationCap,
   ClipboardCheck,
   Activity,
+  UserPlus,
 } from 'lucide-react';
 
 // Union of all navigable tab ids — keeps activeTab type-safe across pages.
@@ -36,6 +40,11 @@ type ActiveTab =
   | 'analysis'
   | 'sba'
   | 'sba-overview'
+  | 'year-transition'
+  | 'admissions'
+  | 'admissions-classes'
+  | 'results-sba'
+  | 'attendance-timetable'
   | (string & {}); // allow any string for forward-compatibility without losing hints
 
 interface DashboardLayoutProps {
@@ -43,7 +52,18 @@ interface DashboardLayoutProps {
   activeTab?: ActiveTab;
 }
 
-export function DashboardLayout({ children, activeTab = 'dashboard' }: DashboardLayoutProps) {
+/**
+ * The app frame (sidebar + top bar). Inside a tabbed workspace the
+ * workspace has already drawn the frame, so a page used as a tab renders
+ * only its content.
+ */
+export function DashboardLayout(props: DashboardLayoutProps) {
+  const embedded = useEmbedded();
+  if (embedded) return <>{props.children}</>;
+  return <DashboardShell {...props} />;
+}
+
+function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutProps) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -54,32 +74,40 @@ export function DashboardLayout({ children, activeTab = 'dashboard' }: Dashboard
   };
 
   const isAdmin = user?.userType === 'admin';
+  const { isOfficer } = useAdmissionsOfficer();
+  // "My Class" is only for a class's form teacher (or the teacher covering them).
+  const { data: teacherClasses } = useTeacherClasses({ enabled: user?.userType === 'teacher' });
+  const isFormTeacher = holdsFormTeacherSlot(teacherClasses);
 
+  // Related admin pages are grouped into tabbed workspaces; each item opens
+  // its workspace's usual first tab. (Old page addresses still work and
+  // open the matching tab.)
   const adminMenuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard/admin' },
-    { id: 'classes', label: 'Class Management', icon: BookOpen, path: '/dashboard/admin/classes' },
+    // Admissions + Class Management
+    { id: 'admissions-classes', label: 'Admissions & Classes', icon: BookOpen, path: '/dashboard/admin/classes' },
     { id: 'teachers', label: 'Teachers', icon: Users, path: '/dashboard/admin/teachers' },
-    // Timetable management (Periods / Holidays / Approvals) lives inside
-    // this page as sub-tabs, so no extra admin nav item is needed here.
-    { id: 'attendance', label: 'Attendance Overview', icon: CalendarCheck, path: '/dashboard/admin/attendance-overview' },
-    { id: 'live-timetable', label: "Who's Teaching", icon: Clock, path: '/dashboard/admin/timetable-live' },
+    // Attendance Overview + Who's Teaching + Periods / Holidays / Approvals
+    { id: 'attendance-timetable', label: 'Attendance', icon: CalendarCheck, path: '/dashboard/admin/attendance-overview' },
     { id: 'exams', label: 'Exam Management', icon: Calendar, path: '/dashboard/admin/exams' },
-    // NEW: standalone Results Entry Monitor — who has entered what, per term.
-    { id: 'results-monitor', label: 'Results Monitor', icon: Activity, path: '/dashboard/admin/results-monitor' },
-    { id: 'results', label: 'Results Analysis', icon: BarChart3, path: '/dashboard/admin/results-analysis' },
+    // Results Monitor + Results Analysis + SBA Overview
+    { id: 'results-sba', label: 'Results & SBA', icon: BarChart3, path: '/dashboard/admin/results-monitor' },
     { id: 'reports', label: 'Report Cards', icon: FileText, path: '/dashboard/admin/report-cards' },
-    { id: 'sba-overview', label: 'SBA Overview', icon: ClipboardCheck, path: '/dashboard/admin/sba-overview' },
+    // New academic year: promote learners, graduate the final year.
+    { id: 'year-transition', label: 'Year Transition', icon: GraduationCap, path: '/dashboard/admin/year-transition' },
   ];
 
   const teacherMenuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard/teacher' },
-    { id: 'my-class', label: 'My Class', icon: GraduationCap, path: '/dashboard/teacher/my-class' },
+    ...(isFormTeacher ? [{ id: 'my-class', label: 'My Class', icon: GraduationCap, path: '/dashboard/teacher/my-class' }] : []),
     // NEW: teacher's weekly timetable (per-class grid, submit for approval)
     { id: 'my-timetable', label: 'My Timetable', icon: Calendar, path: '/dashboard/teacher/my-timetable' },
     { id: 'attendance', label: 'Attendance Tracking', icon: Clock, path: '/dashboard/teacher/attendance' },
     { id: 'results', label: 'Results Entry', icon: PenTool, path: '/dashboard/teacher/results-entry' },
     { id: 'analysis', label: 'Results Analysis', icon: BarChart3, path: '/dashboard/teacher/results-analysis' },
     { id: 'sba', label: 'SBA Entry', icon: ClipboardCheck, path: '/dashboard/teacher/sba-entry' },
+    // Only for teachers the admin made admissions officers.
+    ...(isOfficer ? [{ id: 'admissions', label: 'Admissions', icon: UserPlus, path: '/dashboard/teacher/admissions' }] : []),
   ];
 
   const menuItems = isAdmin ? adminMenuItems : teacherMenuItems;
@@ -133,7 +161,8 @@ export function DashboardLayout({ children, activeTab = 'dashboard' }: Dashboard
                   navigate(item.path);
                   setSidebarOpen(false);
                 }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors duration-200 ${
+                aria-current={isActive ? 'page' : undefined}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
                   isActive
                     ? 'bg-blue-600 text-white'
                     : 'text-gray-300 hover:bg-gray-800 hover:text-white'
@@ -178,8 +207,10 @@ export function DashboardLayout({ children, activeTab = 'dashboard' }: Dashboard
           >
             {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
-          <div className="md:hidden">
-            <h1 className="font-bold text-gray-900">Dashboard</h1>
+          <div className="md:hidden min-w-0">
+            <p className="font-bold text-gray-900 truncate">
+              {menuItems.find(i => i.id === activeTab)?.label ?? 'Dashboard'}
+            </p>
           </div>
           <div className="ml-auto" />
         </header>

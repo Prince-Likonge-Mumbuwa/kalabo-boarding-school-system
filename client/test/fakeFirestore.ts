@@ -55,7 +55,11 @@ const snapDoc = (col: string, id: string, data: Data | undefined) => ({
   data: () => (data === undefined ? undefined : structuredClone(data)),
 });
 
+/** Test hook: runs before every getDocs (e.g. to simulate another user writing meanwhile). */
+export const fakeHooks: { beforeGetDocs: null | ((q: any) => void) } = { beforeGetDocs: null };
+
 export async function getDocs(q: any) {
+  fakeHooks.beforeGetDocs?.(q);
   const col = q.path;
   const constraints: any[] = q.constraints ?? [];
   let rows = [...colOf(col).entries()];

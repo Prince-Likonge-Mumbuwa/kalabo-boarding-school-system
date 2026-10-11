@@ -564,6 +564,8 @@ export const useResultsAnalytics = (options?: {
   teacherId?: string;
   term?: string;
   year?: number;
+  /** Also compute class / subject comparisons (each re-reads the whole term). */
+  includeComparisons?: boolean;
 }) => {
   const resultsQuery = useQuery({
     queryKey: ['results', 'analytics', options],
@@ -593,6 +595,9 @@ export const useResultsAnalytics = (options?: {
       term: options?.term,
       year: options?.year,
     }),
+    // Off unless asked for: no screen shows it, and it re-read every result
+    // of the term on each dashboard visit.
+    enabled: !!options?.includeComparisons,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -603,7 +608,7 @@ export const useResultsAnalytics = (options?: {
       year: options?.year,
       classId: options?.classId,
     }),
-    enabled: !options?.teacherId,
+    enabled: !!options?.includeComparisons && !options?.teacherId,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -636,7 +641,7 @@ export const useResultsAnalytics = (options?: {
     subjectAnalysis: subjectAnalysisQuery.data || [],
     results: resultsQuery.data || [],
     
-    isLoading: resultsQuery.isLoading || classComparisonQuery.isLoading || subjectAnalysisQuery.isLoading,
+    isLoading: resultsQuery.isLoading,
     isFetching: resultsQuery.isFetching || classComparisonQuery.isFetching || subjectAnalysisQuery.isFetching,
     isError: resultsQuery.isError || classComparisonQuery.isError || subjectAnalysisQuery.isError,
     error: resultsQuery.error || classComparisonQuery.error || subjectAnalysisQuery.error,

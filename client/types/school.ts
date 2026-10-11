@@ -69,6 +69,18 @@ export interface Learner {
   transferredToClass?: string;
   archivedAt?: Date;
 
+  // Year transition (see types/promotion.ts)
+  /** Academic year the learner's current class placement belongs to. */
+  academicYear?: number;
+  /** Academic year the learner was admitted for. */
+  admissionYear?: number;
+  /** Ids the learner had before (F1A_007 before becoming F2A_007). */
+  previousStudentIds?: string[];
+  /** Last year at the school (graduates and leavers). */
+  exitYear?: number;
+  exitReason?: string;
+  lastPromotionRunId?: string | null;
+
   // Backward compatibility fields (kept for existing code)
   name?: string; // Maps to fullName
   parentPhone?: string; // Maps to guardianPhone
