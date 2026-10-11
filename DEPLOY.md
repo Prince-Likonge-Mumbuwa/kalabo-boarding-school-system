@@ -1,5 +1,24 @@
 # Publishing the website (Hostinger)
 
+## The build works with either output folder
+
+`pnpm build` puts the finished website in **both** places:
+
+- `dist/spa/`
+- `dist/` itself, beside `dist/server`
+
+So Hostinger's *output directory* can be `dist` or `dist/spa`; either gives a
+working site with nothing to move by hand. (Earlier, publishing `dist` put
+the site in `public_html/spa/` while the page looked for its files in
+`/assets/`, and the site stayed blank.) When `dist` is published, the server
+code in `/server/` is blocked from the web.
+
+That is enough if you keep Hostinger's own GitHub deploy. The automatic
+upload below is an alternative that also runs the tests and a browser check
+before anything goes live.
+
+## Automatic upload with GitHub Actions (optional)
+
 Every push to the **main** branch publishes the site automatically through
 GitHub Actions (`.github/workflows/deploy.yml`):
 
