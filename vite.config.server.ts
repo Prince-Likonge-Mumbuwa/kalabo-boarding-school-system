@@ -1,8 +1,22 @@
 import { defineConfig } from "vite";
 import path from "path";
+import fs from "fs";
 
 // Server build configuration
 export default defineConfig({
+  // The server needs none of the website's public files. (Copying them here
+  // also put a second .htaccess in dist/server.)
+  publicDir: false,
+  plugins: [
+    {
+      // If the whole dist folder is ever published, the server code must not
+      // be downloadable: this replaces any older dist/server/.htaccess.
+      name: "deny-web-access",
+      closeBundle() {
+        fs.writeFileSync(path.resolve(__dirname, "dist/server/.htaccess"), "Require all denied\n");
+      },
+    },
+  ],
   build: {
     lib: {
       entry: path.resolve(__dirname, "server/node-build.ts"),
