@@ -26,8 +26,12 @@ export default defineConfig(({ mode }) => ({
           // Charts: leave to the bundler so they load only with the pages
           // that draw charts (results analysis).
           if (/[\\/](recharts[a-z-]*|d3-[a-z]+|victory-vendor|internmap|decimal\.js-light|react-smooth|recharts-scale)[\\/]/.test(id)) return;
-          if (/[\\/](react|react-dom|react-router|react-router-dom|scheduler|@tanstack)[\\/]/.test(id)) return "react";
-          // Everything else shared (icons, UI primitives, small helpers).
+          // Everything else shared — React itself, the router, icons, UI
+          // primitives and small helpers — goes in ONE file. React must not
+          // be split into its own file: the router (React file) and the UI
+          // libraries (vendor file) import each other, and the two files
+          // then load in the wrong order and the app crashes on start
+          // ("Cannot read properties of undefined (reading 'forwardRef')").
           return "vendor";
         },
       },
