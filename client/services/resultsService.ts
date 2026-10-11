@@ -42,6 +42,7 @@ import {
   slotKeyFor,
   type LoadedClassGrid,
 } from '@/services/resultsGridLoader';
+import { classIdForYear } from '@/services/enrollmentService';
 
 // ==================== ENHANCED TYPES ====================
 
@@ -947,7 +948,9 @@ class ResultsService {
 
     const [classDoc, roster] = await Promise.all([
       getDoc(doc(this.classesCollection, data.classId)),
-      loadClassRoster(data.classId),
+      // The class's learners in the term's year (a closed year keeps the
+      // cohort it had then, even after the year transition).
+      loadClassRoster(data.classId, { year }),
     ]);
     const form = classDoc.data()?.level?.toString() || '1';
     const byDocId = new Map(roster.map(l => [l.id, l]));
@@ -1082,7 +1085,7 @@ class ResultsService {
         `Delete them first if the exam was not conducted.`
       );
     }
-    const roster = await loadClassRoster(data.classId);
+    const roster = await loadClassRoster(data.classId, { year: Number(data.year) });
     return this.saveClassResults(
       {
         ...data,
@@ -1312,7 +1315,9 @@ class ResultsService {
       console.warn(`⚠️ Student not found: ${inputStudentId}`);
       return null;
     }
-    const classId = studentDoc.data.classId;
+    // The class the learner was in THAT year: after a year transition the
+    // learner sits in a new class, but a past term's card belongs to the old one.
+    const classId = await classIdForYear(studentDoc.documentId, studentDoc.data.classId, Number(year));
     if (!classId) return null;
 
     const loaded = await this.loadGrid(classId, term, year, { publicView: options?.publicView });
@@ -1342,6 +1347,13 @@ class ResultsService {
     const positions = classPositions(loaded.grid);
     const learnerDocs = await getDocs(query(this.learnersCollection, where('classId', '==', classId)));
     const dataById = new Map(learnerDocs.docs.map(d => [d.id, d.data()]));
+    // A past year's cohort has moved on to other classes: read those
+    // learners directly (guardian phone, gender).
+    const missing = loaded.grid.learners.filter(l => !dataById.has(l.id));
+    if (missing.length > 0) {
+      const snaps = await Promise.all(missing.map(l => getDoc(doc(this.learnersCollection, l.id)).catch(() => null)));
+      for (const snap of snaps) if (snap?.exists()) dataById.set(snap.id, snap.data());
+    }
     const includeIncomplete = options?.includeIncomplete ?? true;
 
     const cards = await Promise.all(

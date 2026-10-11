@@ -1,6 +1,7 @@
 // @/pages/admin/AdminResultsAnalysis.tsx 
 
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { useEmbedded } from '@/components/workspace/embedded';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
 import { activeExamsFor, pickTermConfig, gradeForPercentage } from '@/services/resultsGrid';
@@ -460,6 +461,8 @@ const calculateStudentSubjectAverageGrade = (
 
 // ==================== MAIN COMPONENT ====================
 export default function AdminResultsAnalysis() {
+  // As a tab of "Results & SBA" the workspace shows the page title.
+  const embedded = useEmbedded();
   const { user } = useAuth();
   const isUserAdmin = user?.userType === 'admin';
   const isMobile = useMediaQuery('(max-width: 768px)');
@@ -1225,9 +1228,11 @@ export default function AdminResultsAnalysis() {
         <div className="mb-4 sm:mb-6 lg:mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
             <div className="min-w-0">
-              <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 tracking-tight truncate">
-                School Results Analysis
-              </h1>
+              {!embedded && (
+                <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 tracking-tight truncate">
+                  School Results Analysis
+                </h1>
+              )}
               <p className="text-xs sm:text-sm text-gray-600 mt-1 flex items-center gap-1 sm:gap-2 flex-wrap">
                 <School size={14} className="text-gray-400 flex-shrink-0" />
                 <span className="truncate">Average of All Configured Tests • {selectedTerm} {selectedYear}</span>

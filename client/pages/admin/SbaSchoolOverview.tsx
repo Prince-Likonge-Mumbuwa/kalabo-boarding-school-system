@@ -2,6 +2,7 @@
 // Admin school-wide SBA overview — ECSEOL 2026
 
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { useEmbedded } from '@/components/workspace/embedded';
 import { useState, useMemo, useCallback } from 'react';
 import {
   Loader2,
@@ -188,6 +189,8 @@ function ToastContainer({
 // ==================== MAIN PAGE ====================
 
 export default function SbaSchoolOverview() {
+  // As a tab of "Results & SBA" the workspace shows the page title.
+  const embedded = useEmbedded();
   const isMobile = useMediaQuery('(max-width: 640px)');
   const [examYear, setExamYear] = useState(CURRENT_YEAR + 1); // Most SBA tracked for next year's cohort
   const [activeTab, setActiveTab] = useState<'classes' | 'subjects'>('classes');
@@ -242,11 +245,15 @@ export default function SbaSchoolOverview() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 tracking-tight">
-              SBA School Overview
-            </h1>
+            {!embedded && (
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 tracking-tight">
+                SBA School Overview
+              </h1>
+            )}
             <p className="text-xs sm:text-sm text-gray-600 mt-0.5">
-              Monitor School Based Assessment progress across all classes and subjects
+              {embedded
+                ? 'School-Based Assessment (SBA) marks for the Form 4 exam year — separate from term test results.'
+                : 'Monitor School Based Assessment progress across all classes and subjects'}
             </p>
           </div>
 

@@ -1,5 +1,7 @@
 import "./global.css";
 
+import { lazy, Suspense } from "react";
+
 import { Toaster } from "@/components/ui/toaster";
 import { createRoot } from "react-dom/client";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -9,41 +11,60 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { adminWorkspaceRoutes } from "@/routes/adminWorkspaceRoutes";
 import Landing from "./pages/Landing";
 import SignIn from "./pages/SignIn";
-import SignUp from "./pages/SignUp";
-import ForgotPassword from "./pages/ForgotPassword";
-import ParentPortal from "./pages/ParentPortal";
+const SignUp = lazy(() => import("./pages/SignUp"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
+const ParentPortal = lazy(() => import("./pages/ParentPortal"));
 
 // Admin Pages
-import AdminDashboard from "./pages/AdminDashboard";
-import AttendanceOverview from "./pages/admin/AttendanceOverview";
-import ClassManagement from "./pages/admin/ClassManagement";
-import TeacherManagement from "./pages/admin/TeacherManagement";
-import ExamManagement from "./pages/admin/ExamManagement";
-import ResultsEntryMonitor from "./pages/admin/ResultsEntryMonitor";
-import ResultsDataCheck from "./pages/admin/ResultsDataCheck";
-import TimetableDataCheck from "./pages/admin/TimetableDataCheck";
-import LiveTimetable from "./pages/admin/LiveTimetable";
-import ReportCards from "./pages/admin/ReportCards";
-import AdminResultsAnalysis from "./pages/admin/AdminResultsAnalysis";
-import SbaSchoolOverview from "./pages/admin/SbaSchoolOverview";
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
+const TeacherManagement = lazy(() => import("./pages/admin/TeacherManagement"));
+const ExamManagement = lazy(() => import("./pages/admin/ExamManagement"));
+const ResultsDataCheck = lazy(() => import("./pages/admin/ResultsDataCheck"));
+const TimetableDataCheck = lazy(() => import("./pages/admin/TimetableDataCheck"));
+const ReportCards = lazy(() => import("./pages/admin/ReportCards"));
+const YearTransition = lazy(() => import("./pages/admin/YearTransition"));
+const OfficerAdmissions = lazy(() => import("./pages/teacher/Admissions"));
 
 // Teacher Pages
-import TeacherDashboard from "./pages/TeacherDashboard";
-import AttendanceTracking from "./pages/teacher/AttendanceTracking";
-import ResultsEntry from "./pages/teacher/ResultsEntry";
-import TeacherResultsAnalysis from "./pages/teacher/TeacherResultsAnalysis";
-import MyClass from "@/pages/teacher/MyClass";
-import SbaEntry from "./pages/teacher/SbaEntry";
-import MyTimetable from "./pages/teacher/MyTimetable";   // ← NEW
+const TeacherDashboard = lazy(() => import("./pages/TeacherDashboard"));
+const AttendanceTracking = lazy(() => import("./pages/teacher/AttendanceTracking"));
+const ResultsEntry = lazy(() => import("./pages/teacher/ResultsEntry"));
+const TeacherResultsAnalysis = lazy(() => import("./pages/teacher/TeacherResultsAnalysis"));
+const MyClass = lazy(() => import("@/pages/teacher/MyClass"));
+const SbaEntry = lazy(() => import("./pages/teacher/SbaEntry"));
+const MyTimetable = lazy(() => import("./pages/teacher/MyTimetable"));
 
 // Settings Page (works for both admin and teacher)
-import Settings from "./pages/Settings";
+const Settings = lazy(() => import("./pages/Settings"));
 
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+// Pages load on demand (each page is its own download), so the first
+// screen appears quickly even on a slow connection.
+//
+// Query defaults: data stays fresh for a minute and is kept for 10 minutes,
+// and is not re-fetched just because the window regains focus — that alone
+// used to re-read Firestore every time a teacher switched apps.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60_000,
+      gcTime: 10 * 60_000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
+
+const PageLoading = () => (
+  <div className="min-h-screen flex items-center justify-center text-sm text-gray-500">
+    <div className="h-6 w-6 rounded-full border-2 border-blue-600 border-t-transparent animate-spin mr-3" />
+    Loading…
+  </div>
+);
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -53,6 +74,7 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <PWAInstallPrompt />
+          <Suspense fallback={<PageLoading />}>
           <Routes>
             {/* Public Routes */}
             <Route path="/" element={<Landing />} />
@@ -68,21 +90,11 @@ const App = () => (
               </ProtectedRoute>
             } />
 
-            <Route path="/dashboard/admin/classes" element={
-              <ProtectedRoute allowedRoles={['admin']}>
-                <ClassManagement />
-              </ProtectedRoute>
-            } />
 
-            {/*
-              Attendance Overview also hosts the timetable admin tabs:
-              Periods, Holidays, and Approvals. No separate route needed.
-            */}
-            <Route path="/dashboard/admin/attendance-overview" element={
-              <ProtectedRoute allowedRoles={['admin']}>
-                <AttendanceOverview />
-              </ProtectedRoute>
-            } />
+
+            {/* Admin workspaces (tabbed): Admissions & Classes, Results & SBA,
+                Attendance. Old page addresses open their tab. */}
+            {adminWorkspaceRoutes()}
 
             <Route path="/dashboard/admin/teachers" element={
               <ProtectedRoute allowedRoles={['admin']}>
@@ -96,21 +108,7 @@ const App = () => (
               </ProtectedRoute>
             } />
 
-            {/* Admin Results Entry Monitor — standalone feature */}
-            {/* Shows, per teacher, who has entered what and what is missing. */}
-            {/* Reads directly from class_slots + results, not from exam configs. */}
-            <Route path="/dashboard/admin/results-monitor" element={
-              <ProtectedRoute allowedRoles={['admin']}>
-                <ResultsEntryMonitor />
-              </ProtectedRoute>
-            } />
 
-            {/* Admin: who is teaching now / on a date */}
-            <Route path="/dashboard/admin/timetable-live" element={
-              <ProtectedRoute allowedRoles={['admin']}>
-                <LiveTimetable />
-              </ProtectedRoute>
-            } />
 
             {/* Admin timetable data check (read-only check, explicit fixes) */}
             <Route path="/dashboard/admin/timetable-data-check" element={
@@ -132,16 +130,20 @@ const App = () => (
               </ProtectedRoute>
             } />
 
-            <Route path="/dashboard/admin/results-analysis" element={
-              <ProtectedRoute allowedRoles={['admin']}>
-                <AdminResultsAnalysis />
+
+
+
+            {/* Admissions officer (a teacher with the role) */}
+            <Route path="/dashboard/teacher/admissions" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <OfficerAdmissions />
               </ProtectedRoute>
             } />
 
-            {/* Admin SBA Overview — school-wide tracking */}
-            <Route path="/dashboard/admin/sba-overview" element={
+            {/* Year transition: promotion, graduation, admissions */}
+            <Route path="/dashboard/admin/year-transition" element={
               <ProtectedRoute allowedRoles={['admin']}>
-                <SbaSchoolOverview />
+                <YearTransition />
               </ProtectedRoute>
             } />
 
@@ -209,6 +211,7 @@ const App = () => (
             {/* Catch-all route */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </Suspense>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

@@ -253,7 +253,15 @@ function finalize(byClass: Map<string, TeacherClass>): TeacherClass[] {
 
 // ==================== HOOK ====================
 
-export const useTeacherClasses = () => {
+/**
+ * True when the teacher holds a class's Form Teacher (class teacher) slot —
+ * as its owner, or as the teacher covering it. This is what gives a teacher
+ * the "My Class" page.
+ */
+export const holdsFormTeacherSlot = (classes: TeacherClass[] | undefined | null): boolean =>
+  !!classes?.some(c => c.subjects.some(s => s.normalizedSubjectId === engine.FORM_TEACHER_SLOT));
+
+export const useTeacherClasses = (opts: { enabled?: boolean } = {}) => {
   const { user } = useAuth();
 
   return useQuery({
@@ -267,10 +275,11 @@ export const useTeacherClasses = () => {
       }
       return fromLegacyRows(user.uid);
     },
-    enabled: !!user?.uid,
+    enabled: !!user?.uid && opts.enabled !== false,
     staleTime: 60 * 1000,
-    // Re-evaluate authority every minute so covers start/expire on screen.
-    refetchInterval: 60 * 1000,
+    // Covers start/expire by date: re-check every 5 minutes (was every
+    // minute, on every page — a lot of reads for little change).
+    refetchInterval: 5 * 60 * 1000,
   });
 };
 

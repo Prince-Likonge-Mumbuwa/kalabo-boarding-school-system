@@ -49,7 +49,7 @@ export const useSchoolTeachers = (classId?: string) => {
     queryFn: teacherService.getTeachers,
     staleTime: 30 * 1000,
     gcTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // whole-school read: not on every tab switch
   });
 
   const classTeachersQuery = useQuery({
@@ -76,7 +76,7 @@ export const useSchoolTeachers = (classId?: string) => {
       return slots.map(slot => ({ slot, authority: engine.resolveAuthority(slot, now) }));
     },
     staleTime: 30 * 1000,
-    refetchInterval: 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
   });
 
   // ── Assign: single subject ──────────────────────────────────────

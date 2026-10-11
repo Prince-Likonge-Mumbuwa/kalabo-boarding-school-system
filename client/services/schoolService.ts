@@ -54,6 +54,7 @@ import {
 // ==================== IMPORT NORMALIZATION UTILITY ====================
 import { normalizeSubjectName } from './resultsService';
 import * as assignmentEngine from './assignmentEngine';
+import { admissionYearFor, getSchoolYear } from './promotionService';
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -270,13 +271,17 @@ const generateSequentialStudentId = async (
       limit(1)
     );
 
-    const snapshot = await getDocs(q);
+    const [snapshot, classSnap] = await Promise.all([getDocs(q), getDoc(doc(db, 'classes', classId))]);
     let nextIndex = 1;
 
     if (!snapshot.empty) {
       const lastLearner = snapshot.docs[0].data();
       nextIndex = (lastLearner.studentIndex || 0) + 1;
     }
+    // Admissions keeps a per-class counter (classes.nextStudentIndex) so
+    // that numbers given out at the same moment never repeat; respect it.
+    const counter = classSnap.exists() ? Number(classSnap.data()?.nextStudentIndex) || 0 : 0;
+    nextIndex = Math.max(nextIndex, counter);
 
     const prefix = generateClassPrefix(classType, level, section);
     const indexStr = nextIndex.toString().padStart(3, '0');
@@ -376,6 +381,12 @@ const mapLearnerDoc = (id: string, data: DocumentData): Learner => {
     transferredAt: toDate(data.transferredAt),
     transferredToClass: data.transferredToClass,
     archivedAt: toDate(data.archivedAt),
+    academicYear: typeof data.academicYear === 'number' ? data.academicYear : undefined,
+    admissionYear: typeof data.admissionYear === 'number' ? data.admissionYear : undefined,
+    previousStudentIds: Array.isArray(data.previousStudentIds) ? data.previousStudentIds : [],
+    exitYear: typeof data.exitYear === 'number' ? data.exitYear : undefined,
+    exitReason: data.exitReason ?? undefined,
+    lastPromotionRunId: data.lastPromotionRunId ?? null,
 
     name: data.fullName || data.name || '',
     parentPhone: data.guardianPhone || data.parentPhone || '',
@@ -484,11 +495,17 @@ const classService = {
         q = query(classesRef, orderBy('year', 'desc'), orderBy('name', 'asc'));
       }
 
-      const snapshot = await getDocs(q);
-      const classes = await Promise.all(snapshot.docs.map(async docSnapshot => {
+      // One learners query for all classes (was one query per class).
+      const [snapshot, allLearners] = await Promise.all([getDocs(q), learnerService.getAllLearners()]);
+      const learnersByClass = new Map<string, Learner[]>();
+      for (const l of allLearners) {
+        const arr = learnersByClass.get(l.classId) ?? [];
+        arr.push(l);
+        learnersByClass.set(l.classId, arr);
+      }
+      const classes = snapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data() as DocumentData;
-        const learners = await learnerService.getLearnersByClass(docSnapshot.id);
-        const genderStats = calculateGenderStats(learners);
+        const genderStats = calculateGenderStats(learnersByClass.get(docSnapshot.id) ?? []);
 
         return {
           id: docSnapshot.id,
@@ -507,7 +524,7 @@ const classService = {
           createdAt: toDate(data.createdAt),
           updatedAt: toDate(data.updatedAt),
         } as Class;
-      }));
+      });
 
       if (filters?.searchTerm) {
         const searchLower = filters.searchTerm.toLowerCase();
@@ -733,9 +750,20 @@ const classService = {
 
   getDashboardStats: async (): Promise<DashboardStats> => {
     try {
+      // getClasses already read every active learner; add up its counts
+      // instead of reading them all a second time.
       const classes = await classService.getClasses({ isActive: true });
-      const allLearners = await learnerService.getAllLearners();
-      const genderStats = calculateGenderStats(allLearners);
+      const sum = (k: 'boys' | 'girls' | 'unspecified' | 'total') =>
+        classes.reduce((n, c: any) => n + (c.genderStats?.[k] ?? 0), 0);
+      const total = sum('total');
+      const genderStats = {
+        boys: sum('boys'),
+        girls: sum('girls'),
+        unspecified: sum('unspecified'),
+        total,
+        boysPercentage: total > 0 ? Math.round((sum('boys') / total) * 100) : 0,
+        girlsPercentage: total > 0 ? Math.round((sum('girls') / total) * 100) : 0,
+      };
 
       const usersRef = collection(db, 'users');
       const teachersQuery = query(usersRef, where('userType', '==', 'teacher'));
@@ -975,9 +1003,14 @@ const learnerService = {
         classData.level,
         classData.section
       );
+      // Stamp the academic year so a later year transition knows whether
+      // this learner belongs to the closing year or was admitted for the new one.
+      const admissionYear = await admissionYearFor(data.dateOfFirstEntry);
 
       const learnerRef = doc(collection(db, 'learners'));
       batch.set(learnerRef, {
+        academicYear: admissionYear,
+        admissionYear,
         studentId,
         studentIndex: nextIndex,
         classPrefix: generateClassPrefix(classData.type, classData.level, classData.section),
@@ -1016,6 +1049,7 @@ const learnerService = {
       const classRef = doc(db, 'classes', data.classId);
       batch.update(classRef, {
         students: firestoreIncrement(1),
+        nextStudentIndex: nextIndex + 1,
         updatedAt: serverTimestamp()
       });
 
@@ -1060,8 +1094,10 @@ const learnerService = {
       );
       const snapshot = await getDocs(q);
       let nextIndex = snapshot.empty ? 1 : (snapshot.docs[0].data().studentIndex || 0) + 1;
+      nextIndex = Math.max(nextIndex, Number(classData.nextStudentIndex) || 0);
 
       const classPrefix = generateClassPrefix(classData.type, classData.level, classData.section);
+      const schoolYear = await getSchoolYear();
 
       for (const [index, learner] of learnersData.entries()) {
         try {
@@ -1101,8 +1137,13 @@ const learnerService = {
             ? learner.allergies.split(',').map(a => a.trim()).filter(a => a)
             : [];
 
+          const entryYear = Number(String(learner.dateOfFirstEntry || '').slice(0, 4));
+          const admissionYear = Number.isFinite(entryYear) && entryYear > schoolYear ? entryYear : schoolYear;
+
           const learnerRef = doc(collection(db, 'learners'));
           batch.set(learnerRef, {
+            academicYear: admissionYear,
+            admissionYear,
             studentId,
             studentIndex: nextIndex,
             classPrefix,
@@ -1151,6 +1192,7 @@ const learnerService = {
         const classRef = doc(db, 'classes', classId);
         batch.update(classRef, {
           students: firestoreIncrement(success),
+          nextStudentIndex: nextIndex,
           updatedAt: serverTimestamp()
         });
       }
@@ -1191,7 +1233,9 @@ const learnerService = {
         toClassData.section
       );
 
+      const oldStudentId = (learnerDoc.data() as DocumentData).studentId;
       batch.update(learnerRef, {
+        ...(oldStudentId && oldStudentId !== newStudentId ? { previousStudentIds: arrayUnion(oldStudentId) } : {}),
         classId: toClassId,
         className: toClassData.name,
         classType: toClassData.type,
@@ -1214,6 +1258,7 @@ const learnerService = {
       const toClassRef = doc(db, 'classes', toClassId);
       batch.update(toClassRef, {
         students: firestoreIncrement(1),
+        ...(nextIndex > 0 ? { nextStudentIndex: nextIndex + 1 } : {}),
         updatedAt: serverTimestamp()
       });
 
@@ -1421,18 +1466,19 @@ const learnerService = {
   getLearnerByStudentId: async (studentId: string): Promise<Learner | null> => {
     try {
       const learnersRef = collection(db, 'learners');
-      const q = query(
-        learnersRef,
-        where('studentId', '==', studentId),
-        limit(1)
-      );
+      const q = query(learnersRef, where('studentId', '==', studentId));
 
-      const snapshot = await getDocs(q);
+      let snapshot = await getDocs(q);
+      if (snapshot.empty) {
+        // An id a learner had before a year transition (e.g. F1A_007 → F2A_007).
+        snapshot = await getDocs(query(learnersRef, where('previousStudentIds', 'array-contains', studentId)));
+      }
       if (snapshot.empty) {
         return null;
       }
 
-      const docSnapshot = snapshot.docs[0];
+      const docSnapshot =
+        snapshot.docs.find(d => (d.data().status ?? 'active') === 'active') ?? snapshot.docs[0];
       return mapLearnerDoc(docSnapshot.id, docSnapshot.data() as DocumentData);
     } catch (error) {
       console.error('Error fetching learner by student ID:', error);

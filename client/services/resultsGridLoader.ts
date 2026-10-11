@@ -15,6 +15,7 @@ import * as engine from '@/services/assignmentEngine';
 import { examConfigService } from '@/services/examConfigService';
 import { normalizeSubjectName } from '@/services/resultsService';
 import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
+import { loadClosedClassEnrollments } from '@/services/enrollmentService';
 import type { ExamConfig } from '@/types/exam';
 import {
   ALL_EXAM_TYPES,
@@ -87,8 +88,30 @@ export const learnerFromDoc = (id: string, d: DocumentData): RawLearner => ({
  * Learners counted for a class. Queried by classId only (no orderBy), so
  * learners without `studentIndex` are not silently dropped, then filtered to
  * active / no-status learners and sorted by name.
+ *
+ * Pass `year` when the roster is for a term: if that academic year has been
+ * closed by a year transition, the class held a different cohort then, and
+ * the roster comes from the year's closed enrollments (the learners, ids and
+ * names the class had that year) instead of its current learners.
  */
-export async function loadClassRoster(classId: string): Promise<GridLearner[]> {
+export async function loadClassRoster(
+  classId: string,
+  opts: { year?: number } = {}
+): Promise<GridLearner[]> {
+  if (opts.year !== undefined && opts.year !== null) {
+    const closed = await loadClosedClassEnrollments(classId, Number(opts.year));
+    if (closed) {
+      return buildRoster(closed.map(e => ({
+        id: e.learnerId,
+        studentId: e.studentId,
+        name: e.fullName || 'Unknown',
+        status: 'active',
+        gender: e.gender,
+        studentIndex: e.studentIndex,
+        classId: e.classId,
+      })));
+    }
+  }
   const snap = await getDocs(query(collection(db, 'learners'), where('classId', '==', classId)));
   return buildRoster(snap.docs.map(d => learnerFromDoc(d.id, d.data())));
 }
@@ -279,7 +302,7 @@ export async function loadClassGrid(
   let degraded = !!(ctx as any).degraded;
   const [classInfo, learners, results] = await Promise.all([
     opts.classInfo ? Promise.resolve(opts.classInfo) : loadClassInfo(classId),
-    loadClassRoster(classId),
+    loadClassRoster(classId, { year: ctx.year }),
     opts.termResults
       ? Promise.resolve(opts.termResults.filter(r => r.classId === classId))
       : loadClassResults(classId, ctx.term, ctx.year),

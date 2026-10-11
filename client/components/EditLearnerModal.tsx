@@ -14,6 +14,8 @@ import {
   Save
 } from 'lucide-react';
 import { Learner } from '@/types/school';
+import type { Enrollment } from '@/types/promotion';
+import { loadLearnerEnrollments } from '@/services/enrollmentService';
 
 interface EditLearnerModalProps {
   isOpen: boolean;
@@ -33,6 +35,17 @@ export const EditLearnerModal = ({
   isLoading = false
 }: EditLearnerModalProps) => {
   const currentYear = new Date().getFullYear();
+
+  // Class history from closed years (written by the year transition).
+  const [history, setHistory] = useState<Enrollment[]>([]);
+  useEffect(() => {
+    if (!isOpen || !learner?.id) return;
+    let cancelled = false;
+    loadLearnerEnrollments(learner.id)
+      .then(rows => { if (!cancelled) setHistory(rows); })
+      .catch(() => { if (!cancelled) setHistory([]); });
+    return () => { cancelled = true; };
+  }, [isOpen, learner?.id]);
   const [formData, setFormData] = useState({
     fullName: '',
     preferredName: '',
@@ -176,6 +189,13 @@ export const EditLearnerModal = ({
                 {learner.studentId && (
                   <p className="text-xs font-mono text-gray-500 mt-1">
                     Student ID: {learner.studentId}
+                  </p>
+                )}
+                {history.length > 0 && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    History:{' '}
+                    {history.map(h => `${h.year} ${h.className} (${h.studentId})`).join(' → ')}
+                    {' → '}{learner.academicYear ?? ''} {className}
                   </p>
                 )}
               </div>

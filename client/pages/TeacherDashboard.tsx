@@ -4,7 +4,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useResultsAnalytics } from '@/hooks/useResults';
 import { attendanceService } from '@/services/attendanceService';
-import { useAttendanceRollupsForDate } from '@/hooks/useAttendanceRollup';
+import { buildRollupsForDate } from '@/utils/attendanceMath';
+import { loadClassRoster } from '@/services/resultsGridLoader';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useAcademicTerm } from '@/hooks/useAcademicTerm';
 import { TeacherResultsWarning } from '@/components/results/TeacherResultsWarning';
@@ -18,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useState, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueries } from '@tanstack/react-query';
 
 // ==================== TYPES ====================
 interface ClassFromHook {
@@ -531,7 +532,6 @@ export default function TeacherDashboard() {
     return `${y}-${m}-${day}`;
   }, []);
 
-  const todayRollupsQuery = useAttendanceRollupsForDate(today);
 
   // Last-7-days range for weekly stats
   const weekAgo = useMemo(() => {
@@ -543,21 +543,44 @@ export default function TeacherDashboard() {
     return `${y}-${m}-${day}`;
   }, []);
 
-  // Gate on `user?.uid` only. `assignedClasses` may still be empty while
-  // useSchoolClasses resolves; the filter is applied in memory below.
-  const weekSessionsQuery = useQuery({
-    queryKey: ['attendance_sessions', 'teacher_dashboard_week', weekAgo, today],
-    queryFn: () => attendanceService.getSessionsByDateRange(weekAgo, today),
-    staleTime: 5 * 60_000,
-    enabled: !!user?.uid,
+  // Only the teacher's own classes are read (one small query per class),
+  // not the whole school's registers and learners.
+  const assignedIds = useMemo(() => assignedClasses.map(c => c.id).sort(), [assignedClasses]);
+  const weekQs = useQueries({
+    queries: assignedIds.map(classId => ({
+      queryKey: ['attendance_sessions', 'class_range', classId, weekAgo, today],
+      queryFn: () => attendanceService.getSessionsForClassRange(classId, weekAgo, today),
+      staleTime: 2 * 60_000,
+    })),
   });
-
-  const learnersQuery = useQuery({
-    queryKey: ['learners', 'active_indexed'],
-    queryFn: () => attendanceService.getActiveLearnersIndexed(),
-    staleTime: 5 * 60_000,
-    enabled: !!user?.uid,
+  const rosterQs = useQueries({
+    queries: assignedIds.map(classId => ({
+      queryKey: ['class_roster', classId],
+      queryFn: () => loadClassRoster(classId),
+      staleTime: 5 * 60_000,
+    })),
   });
+  const weekSessions = useMemo(
+    () => (weekQs.every(q => q.data) ? weekQs.flatMap(q => q.data!) : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [weekQs.map(q => q.dataUpdatedAt).join()],
+  );
+  const myLearners = useMemo(
+    () =>
+      rosterQs.every(q => q.data)
+        ? rosterQs.flatMap((q, i) => q.data!.map(l => ({ ...l, fullName: l.name, classId: assignedIds[i] }) as any))
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rosterQs.map(q => q.dataUpdatedAt).join(), assignedIds],
+  );
+  const todayRollups = useMemo(
+    () => (weekSessions && myLearners ? buildRollupsForDate(today, weekSessions.filter(s => s.date === today), myLearners) : undefined),
+    [weekSessions, myLearners, today],
+  );
+  const firstError = [...weekQs, ...rosterQs].find(q => q.error)?.error as Error | undefined;
+  const todayRollupsQuery = { data: todayRollups, isLoading: !todayRollups && !firstError, isError: !!firstError, error: firstError ?? null, refetch: () => Promise.all(weekQs.map(q => q.refetch())) };
+  const weekSessionsQuery = { data: weekSessions, isLoading: !weekSessions && !firstError, isError: !!firstError, error: firstError ?? null, refetch: () => Promise.all(weekQs.map(q => q.refetch())) };
+  const learnersQuery = { data: myLearners, isLoading: !myLearners && !firstError, isError: !!firstError, error: firstError ?? null, refetch: () => Promise.all(rosterQs.map(q => q.refetch())) };
 
   // ── Derive attendance stats ──────────────────────────────────────────
   const attendanceStats = useMemo((): AttendanceStats => {

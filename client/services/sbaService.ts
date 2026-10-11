@@ -411,7 +411,10 @@ class SbaService {
       const customSnap = await getDocs(customQ);
 
       if (!customSnap.empty) {
-        const d = customSnap.docs[0];
+        // Graduates keep their old id with the year added, but older data
+        // may still share an id: always prefer the active learner.
+        const d =
+          customSnap.docs.find(x => (x.data().status ?? 'active') === 'active') ?? customSnap.docs[0];
         const data = d.data();
         return {
           documentId: d.id,

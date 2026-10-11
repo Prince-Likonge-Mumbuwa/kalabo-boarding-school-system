@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "enrollments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "classId", "order": "ASCENDING" },
+        { "fieldPath": "year", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "attendance_sessions",
       "queryScope": "COLLECTION",
       "fields": [

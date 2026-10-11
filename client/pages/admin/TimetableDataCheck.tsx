@@ -71,12 +71,12 @@ export default function TimetableDataCheck() {
   const bad = report ? report.duplicates.length + report.notLessons.length + report.orphans.length : 0;
 
   return (
-    <DashboardLayout activeTab="attendance">
+    <DashboardLayout activeTab="attendance-timetable">
       <div className="p-3 sm:p-6 lg:p-8 space-y-5 max-w-5xl">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <Link to="/dashboard/admin/attendance-overview" className="text-xs text-blue-600 inline-flex items-center gap-1 mb-1">
-              <ArrowLeft size={12} /> Attendance &amp; Timetable
+              <ArrowLeft size={12} /> Attendance
             </Link>
             <h1 className="text-2xl font-bold text-gray-900">Timetable data check</h1>
             <p className="text-sm text-gray-600">

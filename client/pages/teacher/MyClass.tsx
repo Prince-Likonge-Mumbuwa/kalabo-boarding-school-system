@@ -2,7 +2,8 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
-import { useTeacherClasses } from '@/hooks/useTeacherClasses';
+import { useTeacherClasses, holdsFormTeacherSlot } from '@/hooks/useTeacherClasses';
+import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useState, useMemo, useEffect } from 'react';
@@ -652,7 +653,13 @@ export default function MyClass() {
     );
   }
 
-  // No class assigned
+  // Not a form teacher: this page is only for class teachers (the menu
+  // hides it); someone opening the address directly goes to the dashboard.
+  if (!holdsFormTeacherSlot(teacherClasses)) {
+    return <Navigate to="/dashboard/teacher" replace />;
+  }
+
+  // Form teacher of a class that is not active / could not be found
   if (!myClass || !myClassInfo) {
     return (
       <DashboardLayout activeTab="my-class">

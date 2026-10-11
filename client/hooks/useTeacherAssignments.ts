@@ -154,9 +154,9 @@ export const useTeacherAssignments = (
     staleTime: 30 * 1000,
     gcTime: 5 * 60 * 1000,
     retry: 2,
-    refetchOnWindowFocus: true,
-    // Covers start/expire by date — re-evaluate every minute.
-    refetchInterval: 60 * 1000,
+    refetchOnWindowFocus: false, // whole-school read: not on every tab switch
+    // Covers start/expire by date — re-evaluate every 5 minutes.
+    refetchInterval: 5 * 60 * 1000,
   });
 
   const rows = assignmentsQuery.data?.rows ?? [];

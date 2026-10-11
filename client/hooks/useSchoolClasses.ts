@@ -127,7 +127,7 @@ export const useSchoolClasses = (filters?: ClassFilters) => {
     },
     staleTime: 30 * 1000,
     gcTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // whole-school read: not on every tab switch
   });
 
   // Mutation: Create new class

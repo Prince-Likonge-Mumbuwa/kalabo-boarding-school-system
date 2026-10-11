@@ -1421,7 +1421,8 @@ export default function ResultsEntry() {
           return;
         }
         setRosterClassId('');
-        const roster = await loadClassRoster(selectedClass);
+        // Roster for the selected year: a closed year keeps its own cohort.
+        const roster = await loadClassRoster(selectedClass, { year });
         setStudents(roster.map(l => ({ id: l.id, studentId: l.studentId, name: l.name, marks: '' })));
         setSavedBaseline({});
         setRosterClassId(selectedClass);
@@ -1436,7 +1437,7 @@ export default function ResultsEntry() {
       }
     };
     loadStudents();
-  }, [selectedClass, assignedClasses, loadingClasses, loadingAssignments, showToast]);
+  }, [selectedClass, year, assignedClasses, loadingClasses, loadingAssignments, showToast]);
 
   // Load the saved marks for the selected exam into the boxes (and remember
   // them as the "saved" baseline). Runs when the class, subject, exam, term

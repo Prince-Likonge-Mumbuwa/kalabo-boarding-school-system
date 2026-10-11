@@ -1,5 +1,6 @@
 // @/pages/admin/ClassManagement.tsx - Updated for Date of Birth migration
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { useEmbedded } from '@/components/workspace/embedded';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
@@ -91,6 +92,8 @@ type AddLearnerPayload = {
 };
 
 export default function ClassManagement() {
+  // As a tab of "Admissions & Classes" the workspace shows the page title.
+  const embedded = useEmbedded();
   const { user } = useAuth();
   const isUserAdmin = user?.userType === 'admin';
   const isMobile = useMediaQuery('(max-width: 640px)');
@@ -886,9 +889,11 @@ export default function ClassManagement() {
           <div className="mb-6 sm:mb-8">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
-                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 tracking-tight">
-                  Class Management
-                </h1>
+                {!embedded && (
+                  <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 tracking-tight">
+                    Class Management
+                  </h1>
+                )}
                 <p className="text-sm sm:text-base text-gray-600 mt-1 sm:mt-2 flex items-center gap-2 flex-wrap">
                   <span>
                     {classesWithStats.length} class
