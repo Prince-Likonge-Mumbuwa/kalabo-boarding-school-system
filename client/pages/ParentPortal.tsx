@@ -31,6 +31,7 @@ import {
   Mail,
   Download,
 } from 'lucide-react';
+import { SCHOOL_LOGO_URL } from '@/lib/schoolLogo';
 
 const TERMS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
 
@@ -208,7 +209,7 @@ const ParentPortal = () => {
               <div className="inline-block mb-4">
                 <div className="w-24 h-24 mx-auto bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl flex items-center justify-center p-3 border border-white/30">
                   <img
-                    src="/images/school-logo.png"
+                    src={SCHOOL_LOGO_URL}
                     alt="School Logo"
                     className="w-full h-full object-contain"
                   />

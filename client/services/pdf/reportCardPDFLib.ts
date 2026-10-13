@@ -10,43 +10,14 @@ import {
 } from 'pdf-lib';
 
 import { ReportCardData } from '@/pages/admin/ReportCards';
+import { embedSchoolLogo } from '@/lib/schoolLogo';
 
 /* ============================================================
    SCHOOL LOGO
    ============================================================ */
 
-const embedSchoolLogo = async (
-  pdfDoc: PDFDocument
-): Promise<PDFImage | null> => {
-  try {
-    const logoUrl = '/images/school-logo.png';
+// The school logo comes from @/lib/schoolLogo (bundled with the app).
 
-    const response = await fetch(logoUrl);
-
-    if (!response.ok) {
-      console.warn('Logo image not found at /images/school-logo.png');
-      return null;
-    }
-
-    const logoImageBytes = await response.arrayBuffer();
-
-    try {
-      return await pdfDoc.embedPng(logoImageBytes);
-    } catch {
-      try {
-        return await pdfDoc.embedJpg(logoImageBytes);
-      } catch {
-        console.warn(
-          'Logo image format not supported. Please use PNG or JPG.'
-        );
-        return null;
-      }
-    }
-  } catch (error) {
-    console.warn('Could not load school logo:', error);
-    return null;
-  }
-};
 
 /* ============================================================
    MAIN FUNCTION

@@ -1,6 +1,7 @@
 // @/utils/pdfGenerator.ts
 import { PDFDocument, rgb, StandardFonts, PDFImage } from 'pdf-lib';
 import { Learner } from '@/types/school';
+import { embedSchoolLogo } from '@/lib/schoolLogo';
 
 interface PDFGenerationOptions {
   classId: string;
@@ -12,38 +13,8 @@ interface PDFGenerationOptions {
   academicYear: string;
 }
 
-/**
- * Helper function to embed school logo
- */
-const embedSchoolLogo = async (pdfDoc: PDFDocument): Promise<PDFImage | null> => {
-  try {
-    // Try to load logo from public/images/school-logo.png
-    const logoUrl = '/images/school-logo.png';
-    const response = await fetch(logoUrl);
-    
-    if (!response.ok) {
-      console.warn('Logo image not found at /images/school-logo.png');
-      return null;
-    }
-    
-    const logoImageBytes = await response.arrayBuffer();
-    
-    // Try to embed as PNG first, then as JPG
-    try {
-      return await pdfDoc.embedPng(logoImageBytes);
-    } catch {
-      try {
-        return await pdfDoc.embedJpg(logoImageBytes);
-      } catch {
-        console.warn('Logo image format not supported. Please use PNG or JPG.');
-        return null;
-      }
-    }
-  } catch (error) {
-    console.warn('Could not load logo image:', error);
-    return null;
-  }
-};
+// The school logo comes from @/lib/schoolLogo (bundled with the app).
+
 
 /**
  * Generate a PDF class list with learner information

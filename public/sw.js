@@ -9,7 +9,9 @@
 // The previous version served index.html from cache forever, which kept
 // people on an old build after every update.
 
-const CACHE_NAME = 'kalaboboarding-v2';
+// v3: drops copies saved by older versions, which could hold the app page
+// saved under a program file's name after a broken deploy.
+const CACHE_NAME = 'kalaboboarding-v3';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -23,6 +25,11 @@ self.addEventListener('activate', (event) => {
       .then(() => self.clients.claim()),
   );
 });
+
+// A program file answered with a web page means the server is misconfigured
+// or mid-deploy. Never keep such an answer: it would break the app on every
+// visit, even after the server is fixed.
+const isPageResponse = (response) => (response.headers.get('content-type') || '').includes('text/html');
 
 const putInCache = (request, response) => {
   if (response && response.status === 200 && response.type === 'basic') {
@@ -42,7 +49,10 @@ self.addEventListener('fetch', (event) => {
   // Hashed build files: cache first.
   if (url.pathname.startsWith('/assets/')) {
     event.respondWith(
-      caches.match(request).then((hit) => hit || fetch(request).then((res) => putInCache(request, res))),
+      caches.match(request).then((hit) => {
+        if (hit && !isPageResponse(hit)) return hit;
+        return fetch(request).then((res) => (isPageResponse(res) ? res : putInCache(request, res)));
+      }),
     );
     return;
   }

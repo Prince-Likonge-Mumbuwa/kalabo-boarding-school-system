@@ -12,6 +12,7 @@ import {
   RGB,
 } from 'pdf-lib';
 import type { SbaSchoolOverview } from '@/types/sba';
+import { embedSchoolLogo } from '@/lib/schoolLogo';
 
 // ==================== BRANDING ====================
 
@@ -65,24 +66,8 @@ type TableRow = { [key: string]: string | number | undefined };
 
 // ==================== LOGO ====================
 
-async function embedSchoolLogo(doc: PDFDocument): Promise<PDFImage | null> {
-  try {
-    const res = await fetch('/images/school-logo.png');
-    if (!res.ok) return null;
-    const bytes = await res.arrayBuffer();
-    try {
-      return await doc.embedPng(bytes);
-    } catch {
-      try {
-        return await doc.embedJpg(bytes);
-      } catch {
-        return null;
-      }
-    }
-  } catch {
-    return null;
-  }
-}
+// The school logo comes from @/lib/schoolLogo (bundled with the app).
+
 
 // ==================== DRAWING HELPERS ====================
 
