@@ -1,5 +1,6 @@
 // @/services/pdf/teacherListPDF.ts - COMPLETE FIXED VERSION
 import { PDFDocument, rgb, StandardFonts, PDFImage } from 'pdf-lib';
+import { embedSchoolLogo } from '@/lib/schoolLogo';
 
 // ==================== TYPES ====================
 
@@ -86,47 +87,8 @@ const sanitizeForWinAnsi = (input: unknown): string => {
 
 // ==================== HELPERS ====================
 
-/**
- * Helper function to embed school logo with better error handling
- */
-const embedSchoolLogo = async (pdfDoc: PDFDocument): Promise<PDFImage | null> => {
-  try {
-    const paths = [
-      '/images/school-logo.png',
-      '/public/images/school-logo.png',
-      '/assets/images/school-logo.png',
-      '/school-logo.png',
-    ];
+// The school logo comes from @/lib/schoolLogo (bundled with the app).
 
-    for (const path of paths) {
-      try {
-        const response = await fetch(path);
-        if (response.ok) {
-          const logoImageBytes = await response.arrayBuffer();
-
-          try {
-            return await pdfDoc.embedPng(logoImageBytes);
-          } catch {
-            try {
-              return await pdfDoc.embedJpg(logoImageBytes);
-            } catch {
-              console.warn(`Logo at ${path} is not a supported format`);
-              continue;
-            }
-          }
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    console.warn('Logo image not found. Continuing without logo.');
-    return null;
-  } catch (error) {
-    console.warn('Could not load logo image:', error);
-    return null;
-  }
-};
 
 /**
  * Helper function to format date

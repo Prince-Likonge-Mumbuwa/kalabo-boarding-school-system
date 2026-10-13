@@ -21,6 +21,7 @@ import {
   UserCheck,
   GraduationCap
 } from 'lucide-react';
+import { SCHOOL_LOGO_URL } from '@/lib/schoolLogo';
 
 // Modal Dialog Component
 interface DialogProps {
@@ -449,7 +450,7 @@ export default function SignUp() {
               <div className="inline-block mb-3">
                 <div className="w-16 h-16 mx-auto bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl flex items-center justify-center p-1.5 border border-white/30">
                   <img 
-                    src="/images/school-logo.png" 
+                    src={SCHOOL_LOGO_URL} 
                     alt="KalaboBoarding School Logo" 
                     className="w-full h-full object-contain"
                   />

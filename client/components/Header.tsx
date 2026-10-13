@@ -2,6 +2,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Menu, X } from 'lucide-react';
 import { useState } from 'react';
+import { SCHOOL_LOGO_URL } from '@/lib/schoolLogo';
 
 export function Header() {
   const { isAuthenticated, user, logout } = useAuth();
@@ -22,7 +23,7 @@ export function Header() {
           <Link to="/" className="flex items-center gap-3 group">
             <div className="w-10 h-10 rounded-lg bg-white shadow-md flex items-center justify-center overflow-hidden p-1.5 group-hover:shadow-lg transition-all">
               <img 
-                src="/images/school-logo.png" 
+                src={SCHOOL_LOGO_URL} 
                 alt="KalaboBoarding School Logo" 
                 className="w-full h-full object-contain"
               />

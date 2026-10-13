@@ -5,6 +5,7 @@
 // Printed through a hidden iframe so the app itself is not printed.
 
 import type { AdmissionRecord } from '@/types/admissions';
+import { SCHOOL_LOGO_URL } from '@/lib/schoolLogo';
 
 export const SCHOOL_NAME = 'Kalabo Boarding Secondary School';
 
@@ -66,7 +67,7 @@ function half(r: AdmissionRecord, copy: string, logoUrl: string): string {
   </section>`;
 }
 
-export function admissionSlipHtml(r: AdmissionRecord, logoUrl = '/images/school-logo-192.png'): string {
+export function admissionSlipHtml(r: AdmissionRecord, logoUrl = SCHOOL_LOGO_URL): string {
   return `<!doctype html><html><head><meta charset="utf-8" />
 <title>Admission slip ${esc(r.admissionNumber)}</title>
 <style>
@@ -110,7 +111,7 @@ export function printAdmissionSlip(r: AdmissionRecord): void {
   document.body.appendChild(iframe);
   const docu = iframe.contentDocument!;
   docu.open();
-  docu.write(admissionSlipHtml(r, `${window.location.origin}/images/school-logo-192.png`));
+  docu.write(admissionSlipHtml(r, new URL(SCHOOL_LOGO_URL, window.location.origin).href));
   docu.close();
   const go = () => {
     iframe.contentWindow?.focus();

@@ -1,6 +1,7 @@
 // @/services/pdf/markSchedulePDF.ts - COMPLETE FIXED VERSION
 // Features: Clean minimalism, proper alignment, correct math, professional layout
 import { PDFDocument, rgb, StandardFonts, PDFImage } from 'pdf-lib';
+import { embedSchoolLogo } from '@/lib/schoolLogo';
 
 interface MarkScheduleOptions {
   className: string;
@@ -62,25 +63,8 @@ const getGradeColor = (grade: number): [number, number, number] => {
 };
 
 // ==================== HELPER FUNCTIONS ====================
-const embedSchoolLogo = async (pdfDoc: PDFDocument): Promise<PDFImage | null> => {
-  try {
-    const logoUrl = '/images/school-logo.png';
-    const response = await fetch(logoUrl);
-    if (!response.ok) return null;
-    const logoImageBytes = await response.arrayBuffer();
-    try {
-      return await pdfDoc.embedPng(logoImageBytes);
-    } catch {
-      try {
-        return await pdfDoc.embedJpg(logoImageBytes);
-      } catch {
-        return null;
-      }
-    }
-  } catch {
-    return null;
-  }
-};
+// The school logo comes from @/lib/schoolLogo (bundled with the app).
+
 
 const truncateText = (text: string, maxLength: number): string => {
   if (text.length <= maxLength) return text;

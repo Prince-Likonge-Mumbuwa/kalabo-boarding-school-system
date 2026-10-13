@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/hooks/useAuth';
 import { Mail, Lock, ArrowRight, Eye, EyeOff, XCircle, AlertCircle, CheckCircle } from 'lucide-react';
+import { SCHOOL_LOGO_URL } from '@/lib/schoolLogo';
 
 // Modal Dialog Component
 interface DialogProps {
@@ -311,7 +312,7 @@ export default function SignIn() {
               <div className="inline-block mb-4">
                 <div className="w-32 h-32 mx-auto bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl flex items-center justify-center p-3 border border-white/30">
                   <img
-                    src="/images/school-logo.png"
+                    src={SCHOOL_LOGO_URL}
                     alt="KalaboBoarding School Logo"
                     className="w-full h-full object-contain"
                   />

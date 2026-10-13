@@ -17,6 +17,12 @@ export default defineConfig(({ mode }) => ({
     outDir: "dist/spa",
     rollupOptions: {
       output: {
+        // File names: name.HASH.js. (Changed from name-HASH.js in Oct 2026 so
+        // that every file got an address no cache had ever seen: during a
+        // broken deploy, caches had saved the app page under the old names.)
+        entryFileNames: "assets/[name].[hash].js",
+        chunkFileNames: "assets/[name].[hash].js",
+        assetFileNames: "assets/[name].[hash][extname]",
         // Big libraries in their own files: cached by the browser across
         // app updates, and PDF code is only downloaded when a PDF is made.
         manualChunks(id) {

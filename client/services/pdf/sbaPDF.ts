@@ -17,6 +17,7 @@ import {
   RGB,
 } from 'pdf-lib';
 import type { SbaConfig, SbaResult } from '@/types/sba';
+import { embedSchoolLogo } from '@/lib/schoolLogo';
 
 // ==================== BRANDING ====================
 
@@ -88,29 +89,8 @@ type TableRow = {
 
 // ==================== LOGO ====================
 
-async function embedSchoolLogo(doc: PDFDocument): Promise<PDFImage | null> {
-  try {
-    const res = await fetch('/images/school-logo.png');
-    if (!res.ok) {
-      console.warn('Logo image not found at /images/school-logo.png');
-      return null;
-    }
-    const bytes = await res.arrayBuffer();
-    try {
-      return await doc.embedPng(bytes);
-    } catch {
-      try {
-        return await doc.embedJpg(bytes);
-      } catch {
-        console.warn('Logo format unsupported. Use PNG or JPG.');
-        return null;
-      }
-    }
-  } catch (err) {
-    console.warn('Could not load school logo:', err);
-    return null;
-  }
-}
+// The school logo comes from @/lib/schoolLogo (bundled with the app).
+
 
 // ==================== SHARED DRAWING HELPERS ====================
 
