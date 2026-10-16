@@ -635,8 +635,8 @@ export function PeriodsTab() {
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+          <table className="w-full min-w-[640px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 {['Period', 'Name', 'Start', 'End', 'Kind', 'Status', ''].map(h => (
@@ -870,8 +870,8 @@ export function HolidaysTab() {
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+          <table className="w-full min-w-[520px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 {['Name', 'From', 'To', 'Kind', ''].map(h => (

@@ -1342,7 +1342,19 @@ export async function transferTeacher(input: TransferInput): Promise<TransferRep
 
 export type RowKind = 'owner' | 'delegate';
 
-const isOpenRow = (d: DocumentData) => (d.status || 'active') !== 'ended';
+const isOpenRow = (d: DocumentData) => {
+  if ((d.status || 'active') === 'ended') return false;
+  // A cover / TP whose end date has passed is finished even if its row has
+  // not been archived yet — it reverts to the owner at delegateEnd. Treating
+  // it as closed stops two *sequential* covers on one slot from being
+  // reported as a concurrent overlap (and keeps detection in step with
+  // resolveSlotOverlap, which shares this predicate).
+  if (d.roleType === 'tp' || d.roleType === 'leave-cover') {
+    const end = tsToDate(d.endDate);
+    if (end && end < new Date()) return false;
+  }
+  return true;
+};
 const rowNorm = (d: DocumentData) => d.normalizedSubject || toNormalized(d.subject || '');
 const rowKind = (d: DocumentData): RowKind =>
   d.roleType === 'tp' || d.roleType === 'leave-cover' ? 'delegate' : 'owner';

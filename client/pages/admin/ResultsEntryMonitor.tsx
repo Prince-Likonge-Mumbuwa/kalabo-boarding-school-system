@@ -13,6 +13,8 @@ import {
   Clock,
   Loader2,
   RefreshCw,
+  Search,
+  X,
 } from 'lucide-react';
 import { useResultsEntryMonitor } from '@/hooks/useResultsEntryMonitor';
 import type { ExamType, TeacherProgress } from '@/hooks/useResultsEntryMonitor';
@@ -44,6 +46,7 @@ export default function ResultsEntryMonitor() {
   const [selectedTerm, setSelectedTerm] = useState<TermName>(autoTerm.term);
 
   const [expandedTeacherId, setExpandedTeacherId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
   const [examFilter, setExamFilter] = useState<ExamType | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<
     'all' | 'complete' | 'on-track' | 'behind' | 'critical'
@@ -84,8 +87,21 @@ export default function ResultsEntryMonitor() {
       );
     }
 
+    const q = search.trim().toLowerCase();
+    if (q) {
+      rows = rows.filter(t =>
+        t.teacherName?.toLowerCase().includes(q) ||
+        t.teacherEmail?.toLowerCase().includes(q) ||
+        t.teachingAssignments.some(
+          a =>
+            a.className?.toLowerCase().includes(q) ||
+            a.subjectName?.toLowerCase().includes(q)
+        )
+      );
+    }
+
     return rows;
-  }, [teacherProgress, statusFilter, examFilter]);
+  }, [teacherProgress, statusFilter, examFilter, search]);
 
   // ── Header (shared across loading/error/empty/loaded states) ────────────
   const header = (
@@ -288,6 +304,30 @@ export default function ResultsEntryMonitor() {
 
         {/* Filters */}
         <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-center gap-3">
+          <div className="relative w-full sm:w-72">
+            <Search
+              size={16}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+            />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search teacher, class or subject"
+              aria-label="Search the monitor by teacher, class or subject"
+              className="w-full pl-9 pr-8 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-gray-600">Exam:</span>
             <FilterButton
@@ -331,7 +371,7 @@ export default function ResultsEntryMonitor() {
               No teachers match the current filters
             </h3>
             <p className="text-sm text-gray-600">
-              Try clearing the exam or status filter.
+              Try clearing the search, exam or status filter.
             </p>
           </div>
         ) : (
