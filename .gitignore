@@ -28,3 +28,6 @@ dist-ssr
 .env.local
 .env.*.local
 .env
+
+# Face recognition model, downloaded at build time by scripts/fetch-models.mjs (38 MB)
+public/models/sface.onnx

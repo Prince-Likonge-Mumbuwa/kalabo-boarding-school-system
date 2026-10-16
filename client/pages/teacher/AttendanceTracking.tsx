@@ -24,7 +24,7 @@
 //  unchanged. The service contract (markSession / deleteSession) is the same.
 // ============================================================================
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense, lazy } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/DashboardLayout';
@@ -62,13 +62,16 @@ import { RiskAnalyticsTab } from '@/components/attendance/RiskAnalyticsTab';
 import { HolidayBanner } from '@/components/timetable/TimetableShared';
 import { exportAttendanceRecords, type AttendanceExportRow } from '@/utils/exportUtils';
 import { formatLocalYMD } from '@/services/schoolService';
+import { useFaceAccess } from '@/hooks/useFaceRecognition';
+// The face scanner (and its ~4 MB recognition engine) loads only when opened.
+const FaceScanDialog = lazy(() => import('@/components/face/FaceScanDialog'));
 import {
   Filter, RefreshCw, Check, Clock,
   AlertCircle, MessageSquare, ChevronDown,
   Search, Users, Save, Loader2,
   UserCheck, UserX, Sun, BookOpen, GraduationCap,
   Download, BarChart3, Calendar, Trash2,
-  Info,
+  Info, ScanFace,
 } from 'lucide-react';
 
 type AttendanceMode = 'daily' | 'periodic';
@@ -204,6 +207,8 @@ export default function AttendanceTracking() {
     studentName?: string;
   }>({ isOpen: false });
   const [excuseReasonText, setExcuseReasonText] = useState('');
+  const [showFaceScan, setShowFaceScan] = useState(false);
+  const faceAccess = useFaceAccess();
 
   // ── Data sources ───────────────────────────────────────────────────
   const {
@@ -533,6 +538,7 @@ export default function AttendanceTracking() {
         kind: mode,
         roster: draft.draft,
         excuseReasons: draft.reasons,
+        faceMatches: draft.faceMatches,
         markedBy: user.uid,
         markedByName: user.fullName || 'Teacher',
       };
@@ -968,6 +974,16 @@ export default function AttendanceTracking() {
               </div>
 
               <div className="flex gap-2">
+                {faceAccess.canUse && studentsWithAttendance.length > 0 && (
+                  <button
+                    onClick={() => setShowFaceScan(true)}
+                    className="px-3 py-2 border border-blue-300 text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 text-xs sm:text-sm whitespace-nowrap flex items-center gap-1"
+                    title="Tick learners present by recognising their faces"
+                  >
+                    <ScanFace size={14} />
+                    <span>Scan faces</span>
+                  </button>
+                )}
                 {filteredStudents.length > 0 && (
                   <button
                     onClick={handleMarkAllPresent}
@@ -1105,6 +1121,14 @@ export default function AttendanceTracking() {
                                 <span className="text-[10px] sm:text-xs text-gray-500 font-mono truncate">
                                   {student.studentId}
                                 </span>
+                                {student.status === 'present' && draft.faceMatches[student.id] !== undefined && (
+                                  <span
+                                    className="text-[10px] sm:text-xs px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 flex items-center gap-0.5 flex-shrink-0"
+                                    title="Ticked present by face recognition"
+                                  >
+                                    <ScanFace size={10} /> face
+                                  </span>
+                                )}
                                 {student.last && (
                                   <span
                                     className={`text-[8px] sm:text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap ${
@@ -1360,6 +1384,19 @@ export default function AttendanceTracking() {
           </div>
         )}
       </div>
+
+      {showFaceScan && selectedClass && (
+        <Suspense fallback={null}>
+          <FaceScanDialog
+            open={showFaceScan}
+            onOpenChange={setShowFaceScan}
+            classId={selectedClass}
+            className={classes.find(c => c.id === selectedClass)?.name ?? ''}
+            learners={studentsWithAttendance.map(s => ({ id: s.id, studentId: s.studentId, name: s.name, status: s.status }))}
+            onTick={draft.markPresentByFace}
+          />
+        </Suspense>
+      )}
     </DashboardLayout>
   );
 }

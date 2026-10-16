@@ -5,7 +5,7 @@
 const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
-const { dispatchMessage } = require('../lib/dispatch');
+const { dispatchMessage } = require('./lib/dispatch');
 
 const AT_API_KEY   = defineSecret('AT_API_KEY');
 const AT_USERNAME  = defineSecret('AT_USERNAME');

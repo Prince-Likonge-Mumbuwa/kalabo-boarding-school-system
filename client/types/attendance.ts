@@ -21,6 +21,12 @@ export interface AttendanceSession {
   markedAt: Timestamp | Date;
   roster: Record<string, AttendanceStatus>;
   excuseReasons?: Record<string, string>;
+  /**
+   * Learners ticked present by face recognition and confirmed by the
+   * teacher: learner doc id → match similarity (0..1). Learners marked by
+   * hand are not listed. Optional — older registers have none.
+   */
+  faceMatches?: Record<string, number>;
   summary: {
     total: number;
     present: number;

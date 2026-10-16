@@ -6,6 +6,7 @@ import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
 import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
 import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { FaceRecognitionSettingsCard } from '@/components/face/FaceRecognitionSettingsCard';
 import {
   User,
   Mail,
@@ -807,6 +808,9 @@ export default function Settings() {
               </button>
             </div>
           </div>
+
+          {/* Face recognition (admins) */}
+          {user?.userType === 'admin' && <FaceRecognitionSettingsCard />}
 
           {/* 5. Delete Account */}
           <div className="bg-white rounded-xl border border-red-200 shadow-sm overflow-hidden">

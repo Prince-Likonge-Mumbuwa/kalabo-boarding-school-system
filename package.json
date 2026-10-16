@@ -13,10 +13,11 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run build:client && npm run build:server",
-    "build:client": "vite build && node scripts/publish-layout.mjs",
+    "build:client": "node scripts/fetch-models.mjs && vite build && node scripts/publish-layout.mjs",
     "build:server": "vite build --config vite.config.server.ts",
     "start": "node dist/server/node-build.mjs",
     "test": "vitest --run",
+    "fetch-models": "node scripts/fetch-models.mjs",
     "test:rules": "firebase emulators:exec --only firestore --project demo-kalabo \"vitest --run --config vitest.rules.config.ts\"",
     "format.fix": "prettier --write .",
     "typecheck": "tsc"
@@ -28,6 +29,7 @@
     "firebase": "^12.8.0",
     "jspdf": "^4.1.0",
     "node-fetch": "^3.3.2",
+    "onnxruntime-web": "1.30.0",
     "pdf-lib": "^1.17.1",
     "pdfmake": "^0.3.3",
     "zod": "^3.25.76"

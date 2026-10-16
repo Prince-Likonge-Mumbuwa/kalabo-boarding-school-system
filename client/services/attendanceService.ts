@@ -58,6 +58,21 @@ const mapSessionDoc = (data: any): AttendanceSession => ({
 
 // ==================== PAYLOAD ====================
 
+/** Face marks for learners who are present on the roster; undefined when none. */
+export function cleanFaceMatches(
+  faceMatches: Record<string, number> | undefined,
+  roster: Record<string, AttendanceStatus>,
+): Record<string, number> | undefined {
+  if (!faceMatches) return undefined;
+  const out: Record<string, number> = {};
+  for (const [id, sim] of Object.entries(faceMatches)) {
+    if (roster[id] === 'present' && typeof sim === 'number' && Number.isFinite(sim)) {
+      out[id] = Math.round(sim * 1000) / 1000;
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 export interface MarkSessionInput {
   classId: string;
   className: string;
@@ -71,6 +86,8 @@ export interface MarkSessionInput {
   normalizedSubject?: string;
   roster: Record<string, AttendanceStatus>;
   excuseReasons?: Record<string, string>;
+  /** Learner id → similarity, for learners ticked present by the camera. */
+  faceMatches?: Record<string, number>;
   markedBy: string;
   markedByName: string;
 }
@@ -107,6 +124,9 @@ export function buildSessionPayload(input: MarkSessionInput): AttendanceSession 
   if (input.excuseReasons && Object.keys(input.excuseReasons).length > 0) {
     payload.excuseReasons = input.excuseReasons;
   }
+  // Only learners who are still present on the register keep their face mark.
+  const face = cleanFaceMatches(input.faceMatches, input.roster);
+  if (face) payload.faceMatches = face;
   return payload;
 }
 

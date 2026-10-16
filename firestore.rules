@@ -40,8 +40,17 @@ service cloud.firestore {
         // Year transition
         'enrollments', 'promotion_runs', 'promotion_run_items',
         // Admissions
-        'staff_roles', 'admission_settings', 'admissions'
+        'staff_roles', 'admission_settings', 'admissions',
+        // Face recognition (written only by Cloud Functions)
+        'face_templates', 'face_status', 'face_audit'
       ];
+    }
+
+    // Collections the catch-all must NOT open to every signed-in account
+    // (Firestore ORs matching rules); their own rules decide. face_templates
+    // holds biometric data.
+    function isPrivateCollection(collection) {
+      return collection in ['face_templates', 'face_status', 'face_audit'];
     }
 
     // ==================== ASSIGNMENT ENGINE: AUTHORITY ====================
@@ -264,6 +273,29 @@ service cloud.firestore {
       allow write: if isAuthenticated() && (
         isAdmin(request.auth.uid) || isTeacher(request.auth.uid)
       );
+    }
+
+    // ==================== FACE RECOGNITION ====================
+    //
+    // All face data is keyed by the learner's document id (learners/{id}),
+    // which never changes when a learner is promoted, transferred or given a
+    // new student number. Only the Cloud Functions (Admin SDK) write here.
+    //
+    //   face_templates/{learnerId}  encrypted face templates — NO app access
+    //   face_status/{learnerId}     consent + number of faces + readable
+    //                               snapshot (name, student number, class);
+    //                               staff can read it to show badges
+    //   face_audit/{id}             who enrolled / removed / scanned; admins
+    match /face_templates/{learnerId} {
+      allow read, write: if false;
+    }
+    match /face_status/{learnerId} {
+      allow read: if isAdmin(request.auth.uid) || isTeacher(request.auth.uid);
+      allow write: if false;
+    }
+    match /face_audit/{entryId} {
+      allow read: if isAdmin(request.auth.uid);
+      allow write: if false;
     }
 
     // ==================== RESULTS ====================
@@ -747,13 +779,13 @@ service cloud.firestore {
 
     // ==================== BACKSTOP CATCH-ALL ====================
     match /{collection}/{documentId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() && !isPrivateCollection(collection);
       allow write: if !hasExplicitRules(collection)
         && (isAdmin(request.auth.uid) || isTeacher(request.auth.uid));
     }
 
     match /{collection}/{documentId}/{nested=**} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() && !isPrivateCollection(collection);
       allow write: if !hasExplicitRules(collection)
         && (isAdmin(request.auth.uid) || isTeacher(request.auth.uid));
     }

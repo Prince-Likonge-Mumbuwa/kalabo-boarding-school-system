@@ -32,6 +32,9 @@ export default defineConfig(({ mode }) => ({
           // Charts: leave to the bundler so they load only with the pages
           // that draw charts (results analysis).
           if (/[\\/](recharts[a-z-]*|d3-[a-z]+|victory-vendor|internmap|decimal\.js-light|react-smooth|recharts-scale)[\\/]/.test(id)) return;
+          // Face recognition engine (~4 MB incl. WebAssembly): loaded only
+          // when a teacher opens Scan faces / Enrol faces, never at start.
+          if (/[\\/]onnxruntime-(web|common)[\\/]/.test(id)) return;
           // Everything else shared — React itself, the router, icons, UI
           // primitives and small helpers — goes in ONE file. React must not
           // be split into its own file: the router (React file) and the UI
@@ -43,6 +46,9 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
+  // onnxruntime-web ships its own WebAssembly; let Vite copy it as-is
+  // (same setting as Tick).
+  optimizeDeps: { exclude: ["onnxruntime-web"] },
   plugins: [react(), expressPlugin()],
   resolve: {
     alias: {

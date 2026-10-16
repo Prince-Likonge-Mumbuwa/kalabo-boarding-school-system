@@ -160,12 +160,27 @@ export interface SessionDraft {
   markClean: () => void;
   getReason: (studentId: string) => string | undefined;
   hasEntries: boolean;
+  /** Learner id → similarity, for learners ticked present by the camera. */
+  faceMatches: Record<string, number>;
+  /** Tick learners present from face recognition (teacher still saves). */
+  markPresentByFace: (matches: Array<{ learnerId: string; similarity: number | null }>) => void;
 }
 
 export function useSessionDraft(loaded: AttendanceSession | null | undefined): SessionDraft {
   const [draft, setDraft] = useState<Record<string, AttendanceStatus>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
+  const [faceMatches, setFaceMatches] = useState<Record<string, number>>({});
+
+  // A learner set to anything but present by hand loses their face mark.
+  const dropFace = useCallback((ids: string[]) => {
+    setFaceMatches(prev => {
+      if (!ids.some(id => id in prev)) return prev;
+      const next = { ...prev };
+      for (const id of ids) delete next[id];
+      return next;
+    });
+  }, []);
 
   // Reset when the session identity changes. Keyed on loaded?.id so a
   // background refetch of the same session doesn't wipe in-flight edits.
@@ -175,6 +190,7 @@ export function useSessionDraft(loaded: AttendanceSession | null | undefined): S
   useEffect(() => {
     setDraft(loaded?.roster ?? {});
     setReasons(loaded?.excuseReasons ?? {});
+    setFaceMatches(loaded?.faceMatches ?? {});
     setDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedId]);
@@ -182,6 +198,7 @@ export function useSessionDraft(loaded: AttendanceSession | null | undefined): S
   const setStatus = useCallback(
     (studentId: string, status: AttendanceStatus, reason?: string) => {
       setDraft(prev => ({ ...prev, [studentId]: status }));
+      if (status !== 'present') dropFace([studentId]);
       if (status === 'excused' && reason && reason.trim()) {
         setReasons(prev => ({ ...prev, [studentId]: reason.trim() }));
       }
@@ -195,7 +212,7 @@ export function useSessionDraft(loaded: AttendanceSession | null | undefined): S
       }
       setDirty(true);
     },
-    [],
+    [dropFace],
   );
 
   const bulkSet = useCallback(
@@ -206,6 +223,7 @@ export function useSessionDraft(loaded: AttendanceSession | null | undefined): S
         for (const id of studentIds) next[id] = status;
         return next;
       });
+      if (status !== 'present') dropFace(studentIds);
 
       if (status === 'excused' && reason && reason.trim()) {
         setReasons(prev => {
@@ -220,6 +238,30 @@ export function useSessionDraft(loaded: AttendanceSession | null | undefined): S
           return next;
         });
       }
+      setDirty(true);
+    },
+    [dropFace],
+  );
+
+  const markPresentByFace = useCallback(
+    (matches: Array<{ learnerId: string; similarity: number | null }>) => {
+      if (matches.length === 0) return;
+      setDraft(prev => {
+        const next = { ...prev };
+        for (const m of matches) next[m.learnerId] = 'present';
+        return next;
+      });
+      setReasons(prev => {
+        if (!matches.some(m => m.learnerId in prev)) return prev;
+        const next = { ...prev };
+        for (const m of matches) delete next[m.learnerId];
+        return next;
+      });
+      setFaceMatches(prev => {
+        const next = { ...prev };
+        for (const m of matches) next[m.learnerId] = m.similarity ?? 0;
+        return next;
+      });
       setDirty(true);
     },
     [],
@@ -238,6 +280,7 @@ export function useSessionDraft(loaded: AttendanceSession | null | undefined): S
   const discard = useCallback(() => {
     setDraft(loaded?.roster ?? {});
     setReasons(loaded?.excuseReasons ?? {});
+    setFaceMatches(loaded?.faceMatches ?? {});
     setDirty(false);
   }, [loaded]);
 
@@ -261,6 +304,8 @@ export function useSessionDraft(loaded: AttendanceSession | null | undefined): S
     markClean,
     getReason,
     hasEntries,
+    faceMatches,
+    markPresentByFace,
   };
 }
 

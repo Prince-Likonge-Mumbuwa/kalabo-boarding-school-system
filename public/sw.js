@@ -45,6 +45,9 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return; // Firebase etc. go straight to the network
   if (url.pathname.startsWith('/api/')) return;
+  // Face recognition models (38 MB): the face engine keeps its own copy in
+  // the browser cache, so don't store a second one here.
+  if (url.pathname.startsWith('/models/')) return;
 
   // Hashed build files: cache first.
   if (url.pathname.startsWith('/assets/')) {
