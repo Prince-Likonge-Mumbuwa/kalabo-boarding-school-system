@@ -33,6 +33,7 @@ import {
   Clock,
   ShieldAlert,
   ShieldCheck,
+  ScanFace,
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
 
@@ -44,6 +45,9 @@ import { PDFDownloadModal } from '@/components/PDFDownloadModal';
 import { BulkActionsModal } from '@/components/BulkActionsModal';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { CSVImportModal } from '@/components/CSVImportModal';
+import { ClassFaceEnrolment, FaceBadgeChip } from '@/components/face/ClassFaceEnrolment';
+import { useClassFaceStatus, useFaceAccess } from '@/hooks/useFaceRecognition';
+import { faceBadge } from '@/types/face';
 
 // Types
 import type { EnhancedClass } from '@/hooks/useSchoolClasses';
@@ -91,6 +95,8 @@ export default function MyClass() {
   const [showBulkActionsModal, setShowBulkActionsModal] = useState(false);
   const [showConfirmationModal, setShowConfirmationModal] = useState(false);
   const [showCSVImportModal, setShowCSVImportModal] = useState(false);
+  const [showFaceEnrolment, setShowFaceEnrolment] = useState(false);
+  const faceAccess = useFaceAccess();
 
   // Bulk transfer state
   const [bulkTransferData, setBulkTransferData] = useState<{
@@ -219,6 +225,9 @@ export default function MyClass() {
     transferLearner,
     refetch: refetchLearners,
   } = useSchoolLearners(myClass?.id);
+
+  // Face status of this class's learners, keyed by learner document id.
+  const faceStatusQ = useClassFaceStatus(myClass?.id, { enabled: faceAccess.canUse });
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
@@ -1065,6 +1074,22 @@ export default function MyClass() {
               Download PDF
             </button>
 
+            {faceAccess.canUse && (
+              <button
+                onClick={() => setShowFaceEnrolment(true)}
+                disabled={!canManageClass}
+                title={
+                  !canManageClass
+                    ? 'You are not currently operating this class'
+                    : 'Record consent and save learners\' faces for the register'
+                }
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-sky-600 text-white rounded-lg hover:bg-sky-700 font-medium text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ScanFace size={16} />
+                Enrol faces
+              </button>
+            )}
+
             {selectedLearners.length > 0 && canManageClass && (
               <>
                 <button
@@ -1182,6 +1207,11 @@ export default function MyClass() {
                         <p className="text-xs text-gray-500 font-mono">
                           {learner.studentId}
                         </p>
+                        {faceAccess.canUse && faceStatusQ.data && (
+                          <div className="mt-1">
+                            <FaceBadgeChip badge={faceBadge(faceStatusQ.data.get(learner.id))} />
+                          </div>
+                        )}
                       </div>
 
                       <div className="space-y-1 text-sm text-gray-600 mb-3">
@@ -1302,7 +1332,12 @@ export default function MyClass() {
                             {learner.studentId}
                           </td>
                           <td className="px-6 py-4 font-medium text-gray-900">
-                            {learner.fullName}
+                            <span className="inline-flex items-center gap-2">
+                              {learner.fullName}
+                              {faceAccess.canUse && faceStatusQ.data && (
+                                <FaceBadgeChip badge={faceBadge(faceStatusQ.data.get(learner.id))} compact />
+                              )}
+                            </span>
                           </td>
                           <td className="px-6 py-4">
                             <span
@@ -1425,6 +1460,16 @@ export default function MyClass() {
               learner={selectedLearner}
               className={myClass.name}
               isLoading={isUpdatingLearner}
+            />
+          )}
+
+          {faceAccess.canUse && (
+            <ClassFaceEnrolment
+              open={showFaceEnrolment}
+              onOpenChange={setShowFaceEnrolment}
+              classId={myClass.id}
+              className={myClass.name}
+              learners={classLearners.map(l => ({ id: l.id, studentId: l.studentId, fullName: l.fullName, status: l.status }))}
             />
           )}
 

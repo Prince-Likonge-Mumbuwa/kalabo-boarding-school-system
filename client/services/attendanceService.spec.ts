@@ -5,7 +5,7 @@ vi.mock('firebase/auth', () => ({ getAuth: () => ({}), onAuthStateChanged: () =>
 
 import { resetStore, store, writeLog } from '../test/fakeFirestore';
 import { teacherWriteAllowed, type TtRulesEnv } from '../test/timetableRulesModel';
-import { attendanceService } from './attendanceService';
+import { attendanceService, buildSessionPayload, cleanFaceMatches } from './attendanceService';
 
 const slots = {
   '8a__MATH': { classId: '8a', normalizedSubject: 'MATH', ownerTeacherId: 'T1',
@@ -84,5 +84,35 @@ describe('attendance registers', () => {
   it('learner index includes learners with no status, skips archived', async () => {
     resetStore({ learners: { a: { classId: '8a', fullName: 'A', status: 'active' }, b: { classId: '8a', fullName: 'B' }, c: { classId: '8a', fullName: 'C', status: 'archived' } } });
     expect((await attendanceService.getActiveLearnersIndexed()).map(l => l.id).sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('registers ticked by face recognition', () => {
+  it('records the face match only for learners still present when saved', () => {
+    const p = buildSessionPayload({
+      classId: '8a', className: '8A', date: '2026-10-12', kind: 'daily',
+      roster: { s1: 'present', s2: 'absent', s3: 'present' },
+      faceMatches: { s1: 0.61234, s2: 0.7 },
+      markedBy: 'FT', markedByName: 'FT',
+    });
+    expect(p.faceMatches).toEqual({ s1: 0.612 });
+    expect(p.roster).toEqual({ s1: 'present', s2: 'absent', s3: 'present' });
+  });
+
+  it('registers marked only by hand have no faceMatches field (Firestore rejects undefined)', () => {
+    const p = buildSessionPayload({
+      classId: '8a', className: '8A', date: '2026-10-12', kind: 'daily',
+      roster: { s1: 'present' }, markedBy: 'FT', markedByName: 'FT',
+    });
+    expect('faceMatches' in p).toBe(false);
+    expect(cleanFaceMatches({ s1: 0.5 }, { s1: 'late' })).toBeUndefined();
+  });
+
+  it('the rules accept a register with face marks (shape check is hasAll, not hasOnly)', async () => {
+    const from = writeLog.length;
+    await attendanceService.markSessions(block('T3').map(b => ({ ...b, faceMatches: { s1: 0.55 } })));
+    for (const [op, b, a] of lastWrites(from)) expect(teacherWriteAllowed(env('T3'), 'attendance_sessions', op, b, a)).toBe(true);
+    const docs = [...store.get('attendance_sessions')!.values()];
+    expect(docs.every((d: any) => d.faceMatches?.s1 === 0.55)).toBe(true);
   });
 });
