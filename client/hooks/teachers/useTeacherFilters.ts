@@ -127,7 +127,7 @@ export const useTeacherFilters = (
     const onCoverCount =
       assignments.length > 0
         ? teachers.filter(t => teacherIsOnCover(t.id)).length
-        : teachers.filter(t => t.status === 'on_leave').length; // fallback proxy
+        : 0; // no assignment data here — the live count comes from useOnCoverTeachers (slot-based)
 
     return {
       all: teachers.length,
@@ -164,7 +164,7 @@ export const useTeacherFilters = (
     const onCoverCount =
       assignments.length > 0
         ? teachers.filter(t => teacherIsOnCover(t.id)).length
-        : teachers.filter(t => t.status === 'on_leave').length;
+        : 0; // no assignment data here — the live count comes from useOnCoverTeachers (slot-based)
 
     return {
       totalTeachers: teachers.length,

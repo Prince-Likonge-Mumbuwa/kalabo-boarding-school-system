@@ -449,25 +449,25 @@ export function UncoveredPeriodsTable({
         </span>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[640px] text-sm">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600 uppercase">
+              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600 uppercase whitespace-nowrap">
                 Teacher
               </th>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600 uppercase">
+              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600 uppercase whitespace-nowrap">
                 Status
               </th>
-              <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600 uppercase">
+              <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600 uppercase whitespace-nowrap">
                 Expected
               </th>
-              <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600 uppercase">
+              <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600 uppercase whitespace-nowrap">
                 Marked
               </th>
-              <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600 uppercase">
+              <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600 uppercase whitespace-nowrap">
                 Missing
               </th>
-              <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600 uppercase">
+              <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600 uppercase whitespace-nowrap">
                 Coverage
               </th>
             </tr>
@@ -476,7 +476,7 @@ export function UncoveredPeriodsTable({
             {rows.map(r => (
               <tr key={r.teacherId} className="hover:bg-gray-50/50">
                 <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
                     <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold flex-shrink-0">
                       {r.teacherName.charAt(0).toUpperCase()}
                     </div>

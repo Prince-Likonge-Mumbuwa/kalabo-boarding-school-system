@@ -32,6 +32,7 @@ import {
   Download,
 } from 'lucide-react';
 import { SCHOOL_LOGO_URL } from '@/lib/schoolLogo';
+import { validateZambianNumber } from '@/lib/phone';
 
 const TERMS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
 
@@ -70,6 +71,16 @@ const ParentPortal = () => {
     e.preventDefault();
     if (!phone.trim()) {
       setError('Please enter a guardian phone number.');
+      return;
+    }
+
+    // Only a complete, valid Zambian number may look up a learner. This stops
+    // a partial entry like "09" from returning every child in the school.
+    const validated = validateZambianNumber(phone);
+    if (!validated) {
+      setError(
+        'Please enter a valid 10-digit Zambian phone number, e.g. 0977123456.'
+      );
       return;
     }
 
@@ -535,7 +546,7 @@ const ParentPortal = () => {
 
                 {/* Subjects table */}
                 <div className="overflow-x-auto -mx-2 px-2">
-                  <table className="w-full text-sm">
+                  <table className="w-full min-w-[480px] text-sm">
                     <thead>
                       <tr className="text-left text-xs uppercase text-gray-500 border-b border-gray-200">
                         <th className="py-2 pr-2">Subject</th>

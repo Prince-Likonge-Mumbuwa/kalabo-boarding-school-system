@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { TeacherRolesSection } from '@/components/admissions/TeacherRolesSection';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Search,
   Filter,
@@ -52,6 +52,7 @@ import { useTeacherFilters } from '@/hooks/teachers/useTeacherFilters';
 import { useTeacherModals } from '@/hooks/teachers/useTeacherModals';
 import { useTeacherBulkOperations } from '@/hooks/teachers/useTeacherBulkOperations';
 import { useTeacherAssignments } from '@/hooks/useTeacherAssignments';
+import { useOnCoverTeachers } from '@/hooks/useOnCoverTeachers';
 
 // Import components
 import {
@@ -194,6 +195,22 @@ export default function TeacherManagement() {
     stats,
     clearFilters,
   } = useTeacherFilters(teachers);
+
+  // "On cover" is derived from the live slot model (who is covering a class
+  // right now), the same source the Results Entry Monitor uses — not from the
+  // teacher list, which cannot tell a live cover from a scheduled or expired
+  // one. Keeps the On Cover card consistent with who actually holds the class.
+  const { onCoverCount, onLeaveOwnerIds } = useOnCoverTeachers();
+
+  // "On leave" = teachers explicitly marked on_leave, OR owners whose slot is
+  // currently under a live leave-cover (someone is covering because they are
+  // away). Union so the card shows everyone actually on leave, not just those
+  // whose status flag was set by hand.
+  const onLeaveCount = useMemo(() => {
+    const ids = new Set(onLeaveOwnerIds);
+    for (const t of teachers) if (t?.status === 'on_leave') ids.add(t.id);
+    return ids.size;
+  }, [teachers, onLeaveOwnerIds]);
 
   // Modal hook — includes role/date state for the assignment modal
   const {
@@ -1171,10 +1188,10 @@ export default function TeacherManagement() {
                   <span className="text-green-600">{stats.activeTeachers} active</span>
                   <span className="text-gray-300">•</span>
                   <span className="text-purple-600">{stats.formTeachers} form teachers</span>
-                  {stats.onCoverTeachers > 0 && (
+                  {onCoverCount > 0 && (
                     <>
                       <span className="text-gray-300">•</span>
-                      <span className="text-rose-600">{stats.onCoverTeachers} on cover</span>
+                      <span className="text-rose-600">{onCoverCount} on cover</span>
                     </>
                   )}
                   {isFetchingTeachers && (
@@ -1226,8 +1243,8 @@ export default function TeacherManagement() {
               { label: 'Total', value: stats.totalTeachers, icon: Users, bg: 'bg-blue-50', fg: 'text-blue-600', num: 'text-gray-900' },
               { label: 'Active', value: stats.activeTeachers, icon: UserCheck, bg: 'bg-green-50', fg: 'text-green-600', num: 'text-green-600' },
               { label: 'Inactive', value: stats.inactiveTeachers, icon: PowerOff, bg: 'bg-gray-50', fg: 'text-gray-600', num: 'text-gray-600' },
-              { label: 'On Leave', value: stats.onLeaveTeachers, icon: XCircle, bg: 'bg-yellow-50', fg: 'text-yellow-600', num: 'text-yellow-600' },
-              { label: 'On Cover', value: stats.onCoverTeachers, icon: Clock, bg: 'bg-rose-50', fg: 'text-rose-600', num: 'text-rose-600' },
+              { label: 'On Leave', value: onLeaveCount, icon: XCircle, bg: 'bg-yellow-50', fg: 'text-yellow-600', num: 'text-yellow-600' },
+              { label: 'On Cover', value: onCoverCount, icon: Clock, bg: 'bg-rose-50', fg: 'text-rose-600', num: 'text-rose-600' },
               { label: 'Form Teachers', value: stats.formTeachers, icon: Star, bg: 'bg-purple-50', fg: 'text-purple-600', num: 'text-purple-600' },
             ].map(card => {
               const Icon = card.icon;

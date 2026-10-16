@@ -55,6 +55,7 @@ import {
 import { normalizeSubjectName } from './resultsService';
 import * as assignmentEngine from './assignmentEngine';
 import { admissionYearFor, getSchoolYear } from './promotionService';
+import { validateZambianNumber } from '@/lib/phone';
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -1488,62 +1489,41 @@ const learnerService = {
 
   getLearnersByGuardianPhone: async (phoneNumber: string): Promise<Learner[]> => {
     try {
-      const raw = (phoneNumber || '').trim();
-      const normalized = raw.replace(/\D/g, '');
+      // A learner can only be looked up by a COMPLETE, valid Zambian number.
+      // Partial input ("09", "0977") fails validation and returns nothing, so
+      // a short string can no longer match every guardian. We compare whole
+      // canonical numbers (the 9-digit national part) — never substrings.
+      const validated = validateZambianNumber(phoneNumber);
+      if (!validated) return [];
 
-      if (!raw || !normalized) return [];
-
+      const target9 = validated.national9;
       const learnersRef = collection(db, 'learners');
 
-      let snapshot = await getDocs(
-        query(
-          learnersRef,
-          where('guardianPhone', '==', raw),
-          where('status', '==', 'active')
-        )
+      // Load the active learners once and match on the canonical number. This
+      // is robust to mixed stored formats (0977…, 260977…, +260977…) because
+      // each candidate is validated and canonicalized the same way before an
+      // exact comparison.
+      const allSnapshot = await getDocs(
+        query(learnersRef, where('status', '==', 'active'))
       );
 
-      if (snapshot.empty) {
-        snapshot = await getDocs(
-          query(
-            learnersRef,
-            where('parentPhone', '==', raw),
-            where('status', '==', 'active')
-          )
-        );
-      }
+      const matched = allSnapshot.docs.filter(docSnap => {
+        const data = docSnap.data() as DocumentData;
+        const candidates = [
+          data.guardianPhone,
+          data.parentPhone,
+          data.alternativeGuardianPhone,
+        ].filter(Boolean);
 
-      if (snapshot.empty) {
-        const allSnapshot = await getDocs(
-          query(learnersRef, where('status', '==', 'active'))
-        );
-
-        const matched = allSnapshot.docs.filter(docSnap => {
-          const data = docSnap.data() as DocumentData;
-          const candidates = [
-            data.guardianPhone,
-            data.parentPhone,
-            data.alternativeGuardianPhone,
-          ]
-            .filter(Boolean)
-            .map((p: string) => String(p).replace(/\D/g, ''));
-
-          return candidates.some(p => {
-            if (!p) return false;
-            if (p === normalized) return true;
-            if (p.length >= 9 && normalized.length >= 9) {
-              return p.slice(-9) === normalized.slice(-9);
-            }
-            return p.includes(normalized) || normalized.includes(p);
-          });
+        return candidates.some(raw => {
+          const candidate = validateZambianNumber(String(raw));
+          // Stored number must itself be a valid, complete number AND be the
+          // same subscriber number as the one typed — a full match only.
+          return candidate !== null && candidate.national9 === target9;
         });
+      });
 
-        return matched.map(docSnap =>
-          mapLearnerDoc(docSnap.id, docSnap.data() as DocumentData)
-        );
-      }
-
-      return snapshot.docs.map(docSnap =>
+      return matched.map(docSnap =>
         mapLearnerDoc(docSnap.id, docSnap.data() as DocumentData)
       );
     } catch (error) {

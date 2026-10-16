@@ -32,6 +32,8 @@ function invalidateAssignmentCaches(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: ['teacher_assignments'] }); // per-teacher + per-class
   queryClient.invalidateQueries({ queryKey: ['class_slots'] });
   queryClient.invalidateQueries({ queryKey: ['teacher_classes'] }); // teacher dashboards
+  queryClient.invalidateQueries({ queryKey: ['on_cover_teachers'] }); // On Cover / On Leave cards
+  queryClient.invalidateQueries({ queryKey: ['results_monitor'] }); // accountability reflects new assignments
 }
 
 const isDelegateRole = (r?: string | null) => r === 'tp' || r === 'leave-cover';
