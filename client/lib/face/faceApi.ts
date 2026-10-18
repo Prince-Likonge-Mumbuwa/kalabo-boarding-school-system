@@ -97,4 +97,11 @@ export const faceApi = {
   },
 
   purgeAll: () => call<{ action: 'purgeAll' }, { ok: true; learners: number }>('faceAdmin', { action: 'purgeAll' }),
+
+  /**
+   * Admin: bring face records in line with learner records now (normally every
+   * 3 hours): faces of learners who left are deleted; class / student number
+   * snapshots are refreshed.
+   */
+  sync: () => call<{ action: 'sync' }, { ok: true; checked: number; removed: number; refreshed: number }>('faceAdmin', { action: 'sync' }),
 };

@@ -7,8 +7,9 @@ vi.mock('firebase/auth', () => ({ getAuth: () => ({}) }));
 
 import { resetStore, getDocData } from '../test/fakeFirestore';
 import {
-  DEFAULT_DEPARTMENTS,
-  addDepartment,
+  SCHOOL_DEPARTMENTS,
+  canonicalDepartment,
+  setOwnDepartmentSubjects,
   assignHod,
   endHod,
   getDepartmentList,
@@ -19,7 +20,6 @@ import {
   mergeDepartmentOptions,
   normalizeDepartments,
   planHodAssignment,
-  removeDepartment,
   setTeacherDepartments,
   teacherDepartments,
   type HodRole,
@@ -87,21 +87,19 @@ describe('pure helpers', () => {
 });
 
 describe('department list', () => {
-  it('uses the defaults until an admin adds one, then saves defaults + the new name', async () => {
-    expect(await getDepartmentList()).toEqual([...DEFAULT_DEPARTMENTS]);
-    expect(await addDepartment('  ICT ', admin)).toBe('ICT');
-    const list = await getDepartmentList();
-    expect(list).toEqual([...DEFAULT_DEPARTMENTS, 'ICT']);
-    // adding an existing name (any case) returns the saved spelling and adds nothing
-    expect(await addDepartment('ict', admin)).toBe('ICT');
-    expect((await getDepartmentList()).length).toBe(list.length);
-    await expect(addDepartment('   ', admin)).rejects.toThrow(/name/);
+  it("is the school's seven departments", async () => {
+    expect(await getDepartmentList()).toEqual([
+      'Languages', 'Mathematics', 'Natural Sciences', 'Practical Subjects', 'Expressive Arts', 'Business Studies', 'Social Sciences',
+    ]);
+    expect((await getDepartmentConfig()).names).toEqual([...SCHOOL_DEPARTMENTS]);
   });
 
-  it('removes a department from the list', async () => {
-    await addDepartment('ICT', admin);
-    await removeDepartment('ict', admin);
-    expect(await getDepartmentList()).toEqual([...DEFAULT_DEPARTMENTS]);
+  it('older names map to the school list; other text is kept', () => {
+    expect(canonicalDepartment('home economics')).toBe('Practical Subjects');
+    expect(canonicalDepartment('Design & Technology')).toBe('Practical Subjects');
+    expect(canonicalDepartment(' natural sciences ')).toBe('Natural Sciences');
+    expect(canonicalDepartment('Maths Club')).toBe('Maths Club');
+    expect(teacherDepartments({ departments: ['Agricultural Science', 'Home Economics', 'Languages'] })).toEqual(['Practical Subjects', 'Languages']);
   });
 });
 
@@ -183,12 +181,25 @@ describe('department subjects', () => {
     cfg = await getDepartmentConfig();
     expect(subjectsOfDepartment(cfg, 'Mathematics')).toEqual(['Mathematics']);
     expect(departmentOfSubject(cfg, 'Computer Science')).toBe('Natural Sciences');
-    // names are kept; adding a department later keeps the subjects
-    await addDepartment('ICT', admin);
-    expect(subjectsOfDepartment(await getDepartmentConfig(), 'Natural Sciences')).toEqual(['Biology', 'Computer Science']);
     // emptying a department removes its entry
     await setDepartmentSubjects('Mathematics', [], admin);
     expect((await getDepartmentConfig()).subjects.Mathematics).toBeUndefined();
+  });
+
+  it("a HoD sets only their own department's subjects and cannot take another department's", async () => {
+    const hod = { uid: 'T1', name: 'Muhau N' };
+    await setDepartmentSubjects('Natural Sciences', ['Biology'], admin);
+    expect(await setOwnDepartmentSubjects('Mathematics', ['Mathematics', 'Computer Science', 'Mathematics'], hod)).toEqual(['Computer Science', 'Mathematics']);
+    let cfg = await getDepartmentConfig();
+    expect(subjectsOfDepartment(cfg, 'Mathematics')).toEqual(['Computer Science', 'Mathematics']);
+    expect(subjectsOfDepartment(cfg, 'Natural Sciences')).toEqual(['Biology']); // untouched
+    expect(getDocData('system', 'departments')?.updatedBy).toBe('T1');
+    await expect(setOwnDepartmentSubjects('Mathematics', ['Mathematics', 'Biology'], hod)).rejects.toThrow(/Biology belongs to Natural Sciences/);
+    // clearing their list
+    await setOwnDepartmentSubjects('Mathematics', [], hod);
+    cfg = await getDepartmentConfig();
+    expect(subjectsOfDepartment(cfg, 'Mathematics')).toEqual([]);
+    expect(subjectsOfDepartment(cfg, 'Natural Sciences')).toEqual(['Biology']);
   });
 
   it('pure: withDepartmentSubjects', () => {
@@ -210,6 +221,17 @@ describe('HoD membership (one department only)', () => {
     expect(await setMembership('T1', 'Natural Sciences', true)).toEqual(['Mathematics', 'Natural Sciences']);
     expect(await setMembership('T3', 'Languages', true)).toEqual(['Languages']);
     await expect(setMembership('NOPE', 'Languages', true)).rejects.toThrow(/not found/);
+  });
+
+  it('membership changes only that department; older stored names are left as they are', async () => {
+    resetStore({ users: { T9: { userType: 'teacher', fullName: 'Old Record', departments: ['Home Economics', 'Languages'] } } });
+    // already a member of Practical Subjects (the old name maps to it): nothing written
+    expect(await setMembership('T9', 'Practical Subjects', true)).toEqual(['Practical Subjects', 'Languages']);
+    expect(getDocData('users', 'T9')?.departments).toEqual(['Home Economics', 'Languages']);
+    expect(await setMembership('T9', 'Mathematics', true)).toEqual(['Practical Subjects', 'Languages', 'Mathematics']);
+    expect(getDocData('users', 'T9')?.departments).toEqual(['Home Economics', 'Languages', 'Mathematics']);
+    expect(await setMembership('T9', 'Languages', false)).toEqual(['Practical Subjects', 'Mathematics']);
+    expect(getDocData('users', 'T9')?.departments).toEqual(['Home Economics', 'Mathematics']);
   });
 });
 

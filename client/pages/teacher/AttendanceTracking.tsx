@@ -63,7 +63,7 @@ import { HolidayBanner } from '@/components/timetable/TimetableShared';
 import { exportAttendanceRecords, type AttendanceExportRow } from '@/utils/exportUtils';
 import { formatLocalYMD } from '@/services/schoolService';
 import { draftKey } from '@/lib/draftStore';
-import { useClassFaceStatus, useFaceAccess } from '@/hooks/useFaceRecognition';
+import { useLearnersFaceStatus, useFaceAccess } from '@/hooks/useFaceRecognition';
 // The face scanner (and its ~4 MB recognition engine) loads only when opened.
 const FaceScanDialog = lazy(() => import('@/components/face/FaceScanDialog'));
 const ClassFaceEnrolment = lazy(() => import('@/components/face/ClassFaceEnrolment').then(m => ({ default: m.ClassFaceEnrolment })));
@@ -334,7 +334,8 @@ export default function AttendanceTracking() {
 
   // Face recognition for the selected class: how many learners can be
   // recognised, and (for the form teacher) enrolment from this page.
-  const faceStatusQ = useClassFaceStatus(selectedClass || undefined, { enabled: faceAccess.canUse && !!selectedClass });
+  const faceLearnerIds = useMemo(() => learners.map(l => l.id), [learners]);
+  const faceStatusQ = useLearnersFaceStatus(faceLearnerIds, { enabled: faceAccess.canUse && !!selectedClass });
   const faceReady = useMemo(() => {
     const m = faceStatusQ.data;
     if (!m) return null;

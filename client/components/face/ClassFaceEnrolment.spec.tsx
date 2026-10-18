@@ -8,7 +8,7 @@ vi.mock('@/lib/face', () => ({ readFaces: vi.fn(), warmUp: () => {}, FaceError: 
 vi.mock('@/lib/face/faceApi', () => ({ faceApi: { setConsent: vi.fn(async () => ({ ok: true })) } }));
 vi.mock('@/hooks/useFaceRecognition', () => ({
   useInvalidateFaceStatus: () => () => {},
-  useClassFaceStatus: () => ({
+  useLearnersFaceStatus: () => ({
     isLoading: false, isError: false,
     data: new Map([
       ['docA', { learnerId: 'docA', consent: true, templateCount: 3, templates: [] }],

@@ -47,7 +47,7 @@ vi.mock('@/components/attendance/RiskAnalyticsTab', () => ({ RiskAnalyticsTab: (
 vi.mock('@/components/attendance/PeriodicOverview', () => ({ PeriodicOverview: () => null }));
 vi.mock('@/hooks/useFaceRecognition', () => ({
   useFaceAccess: () => ({ canUse: h.canUse, isAdmin: false, loading: false, settings: { enabled: true } }),
-  useClassFaceStatus: () => ({ data: new Map([['s1', { consent: true, templateCount: 2 }]]), refetch: vi.fn() }),
+  useLearnersFaceStatus: () => ({ data: new Map([['s1', { consent: true, templateCount: 2 }]]), refetch: vi.fn() }),
 }));
 // Stand-in for the camera: "recognises" Alice by her learner document id.
 vi.mock('@/components/face/FaceScanDialog', () => ({

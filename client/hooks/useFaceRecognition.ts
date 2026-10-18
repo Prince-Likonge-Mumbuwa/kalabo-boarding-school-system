@@ -1,7 +1,7 @@
-// @/hooks/useFaceRecognition.ts — face settings and per-class face status.
-import { useCallback } from 'react';
+// @/hooks/useFaceRecognition.ts — face settings and learners' face status.
+import { useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { collection, doc, documentId, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { DEFAULT_FACE_SETTINGS, type FaceSettings, type FaceStatus } from '@/types/face';
@@ -79,17 +79,27 @@ export function useFaceAccess() {
   };
 }
 
-/** face_status of every learner in a class, keyed by learner document id. */
-export function useClassFaceStatus(classId: string | undefined, opts: { enabled?: boolean } = {}) {
+/**
+ * face_status of these learners, keyed by learner document id. Looked up by
+ * id (not by the class stored on the face record), so a learner who was just
+ * promoted, transferred or admitted shows correctly at once.
+ */
+export async function fetchFaceStatus(learnerIds: string[]): Promise<Map<string, FaceStatus>> {
+  const ids = Array.from(new Set(learnerIds.filter(Boolean)));
+  const map = new Map<string, FaceStatus>();
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += 30) chunks.push(ids.slice(i, i + 30));
+  const snaps = await Promise.all(chunks.map(c => getDocs(query(collection(db, 'face_status'), where(documentId(), 'in', c)))));
+  for (const snap of snaps) for (const d of snap.docs) map.set(d.id, mapFaceStatus(d.id, d.data()));
+  return map;
+}
+
+export function useLearnersFaceStatus(learnerIds: string[] | undefined, opts: { enabled?: boolean } = {}) {
+  const ids = useMemo(() => Array.from(new Set(learnerIds ?? [])).sort(), [learnerIds]);
   return useQuery({
-    queryKey: ['face_status', classId],
-    queryFn: async () => {
-      const snap = await getDocs(query(collection(db, 'face_status'), where('classId', '==', classId)));
-      const map = new Map<string, FaceStatus>();
-      for (const d of snap.docs) map.set(d.id, mapFaceStatus(d.id, d.data()));
-      return map;
-    },
-    enabled: !!classId && opts.enabled !== false,
+    queryKey: ['face_status', 'learners', ids.join(',')],
+    queryFn: () => fetchFaceStatus(ids),
+    enabled: ids.length > 0 && opts.enabled !== false,
     staleTime: 60_000,
   });
 }

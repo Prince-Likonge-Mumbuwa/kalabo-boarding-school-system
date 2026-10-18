@@ -3,8 +3,9 @@
 // Head of Department:
 //   Results      results entry progress of the department's teachers
 //   Roll call    registers taken for the lessons they taught on a day
-//   Allocations  which department teacher teaches each department subject
-//                in each class (the same class slots as Teacher Management)
+//   Allocations  the department's subjects (chosen by the HoD), and which
+//                department teacher teaches each of them in each class (the
+//                same class slots as Teacher Management)
 //   Teachers     add / remove teachers of the department
 //
 // Everything reads and writes the same records as the admin screens, so the
@@ -114,8 +115,8 @@ export default function MyDepartment() {
         {tab === 'results' && <HodResultsTab members={members} monitor={monitor} teachersLoading={teachersLoading} />}
         {tab === 'rollcall' && <HodRollCallTab members={members} />}
         {tab === 'allocations' && (
-          cfgQ.isLoading ? <p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 size={16} className="animate-spin" /> Loading…</p>
-            : <HodAllocationsTab department={role.department} subjects={subjects} classes={classList} members={members} />
+          cfgQ.isLoading || !cfgQ.data ? <p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 size={16} className="animate-spin" /> Loading…</p>
+            : <HodAllocationsTab department={role.department} cfg={cfgQ.data} subjects={subjects} classes={classList} members={members} />
         )}
         {tab === 'teachers' && (
           <HodTeachersTab department={role.department} hodId={role.teacherId} members={members} allTeachers={teachers} load={load} />

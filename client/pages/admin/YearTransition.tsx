@@ -54,6 +54,16 @@ import {
   type UndoCheck,
 } from '@/services/promotionService';
 import { resultsService } from '@/services/resultsService';
+
+/**
+ * After learners were promoted, graduated or left: bring the face records in
+ * line at once (leavers' faces deleted, promoted learners' classes updated)
+ * instead of waiting for the 3-hourly face sync. Best effort: if it fails,
+ * the scheduled sync does the same later.
+ */
+const syncFaces = () => {
+  import('@/lib/face/faceApi').then(m => m.faceApi.sync()).catch(() => {});
+};
 import type {
   ClassDestination,
   LearnerDecision,
@@ -207,6 +217,7 @@ function Wizard({ data, onFinished }: { data: Awaited<ReturnType<typeof loadTran
       setRanItems(plan.items);
       setOutcome(out);
       setStep(5);
+      syncFaces();
       resultsService.invalidateGrid();
       queryClient.invalidateQueries();
     } catch (e: any) {
@@ -776,6 +787,7 @@ function UnfinishedRun({ run, onDone }: { run: PromotionRun; onDone: () => void 
     setError('');
     try {
       await executePromotionRun(run.id, setProgress);
+      syncFaces();
       resultsService.invalidateGrid();
       queryClient.invalidateQueries();
       onDone();
@@ -790,6 +802,7 @@ function UnfinishedRun({ run, onDone }: { run: PromotionRun; onDone: () => void 
     setError('');
     try {
       await undoPromotionRun(run.id, setProgress);
+      syncFaces();
       resultsService.invalidateGrid();
       queryClient.invalidateQueries();
       onDone();

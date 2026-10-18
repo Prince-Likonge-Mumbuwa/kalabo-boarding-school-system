@@ -104,13 +104,12 @@ describe('Teacher Management → Departments', () => {
     expect(screen.queryByRole('button', { name: /Make Head/ })).toBeNull();
   });
 
-  it('admin can add a new department to the school list', async () => {
+  it("offers the school's seven departments (no adding new ones)", async () => {
     wrap(<TeacherDepartmentsSection teacher={{ id: 'T3', name: 'Chanda M', departments: [] }} isAdmin actor={{ uid: 'ADMIN', name: 'Head Teacher' }} />);
-    fireEvent.click(await screen.findByRole('button', { name: /New department/ }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'New department name' }), { target: { value: 'ICT' } });
-    fireEvent.click(screen.getByRole('button', { name: /^Add$/ }));
-    await waitFor(() => expect(getDocData('system', 'departments')?.names).toContain('ICT'));
-    expect(chip('ICT').getAttribute('aria-pressed')).toBe('true'); // chosen for this teacher too
+    for (const d of ['Languages', 'Mathematics', 'Natural Sciences', 'Practical Subjects', 'Expressive Arts', 'Business Studies', 'Social Sciences']) {
+      expect(await screen.findByRole('button', { name: new RegExp(d) })).toBeTruthy();
+    }
+    expect(screen.queryByRole('button', { name: /New department/ })).toBeNull();
   });
 });
 
@@ -161,5 +160,31 @@ describe('My Department (HoD page)', () => {
     h.user = { uid: 'T2', fullName: 'Precious B', userType: 'teacher' };
     wrap(<MyDepartment />);
     expect(await screen.findByText('You are not a Head of Department')).toBeTruthy();
+  });
+});
+
+describe('Teacher Management → Departments overview', () => {
+  it('lists every department with its HoD first, its teachers and subjects, and who is in none', async () => {
+    const { summarizeDepartments } = await import('./DepartmentsOverviewDialog');
+    const teachers = [
+      { id: 'T1', name: 'Muhau N', departments: ['Mathematics', 'Practical Subjects'] },
+      { id: 'T2', name: 'Abel K', departments: ['Mathematics'] },
+      { id: 'T3', name: 'Chanda M', departments: ['home economics'] },
+      { id: 'T4', name: 'Zed P', departments: [] },
+      { id: 'T5', name: 'Gone L', departments: ['Mathematics'], status: 'transferred' },
+    ];
+    const hods = [
+      { teacherId: 'T1', teacherName: 'Muhau N', department: 'Mathematics', status: 'active' },
+      { teacherId: 'T2', teacherName: 'Abel K', department: 'Languages', status: 'ended' },
+    ];
+    const { rows, unplaced } = summarizeDepartments(teachers, hods, { names: [], subjects: { Mathematics: ['Mathematics'] } });
+    expect(rows.map(r => r.department)).toEqual(['Languages', 'Mathematics', 'Natural Sciences', 'Practical Subjects', 'Expressive Arts', 'Business Studies', 'Social Sciences']);
+    const maths = rows[1];
+    expect(maths.hod?.teacherName).toBe('Muhau N');
+    expect(maths.members.map(m => m.name)).toEqual(['Muhau N', 'Abel K']); // HoD first, leavers left out
+    expect(maths.subjects).toEqual(['Mathematics']);
+    expect(rows[0].hod).toBeNull(); // ended role
+    expect(rows[3].members.map(m => m.name)).toEqual(['Chanda M', 'Muhau N']); // older name counts
+    expect(unplaced.map(t => t.name)).toEqual(['Zed P']);
   });
 });

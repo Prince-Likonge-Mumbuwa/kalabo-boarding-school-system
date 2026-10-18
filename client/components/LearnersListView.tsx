@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import {
+  ScanFace,
   Search,
   UserPlus,
   X,
@@ -42,6 +43,8 @@ interface LearnersListViewProps {
   onBulkArchive?: (learnerIds: string[]) => Promise<void>; // Bulk archive
   onBulkTransfer?: (learnerIds: string[]) => void;
   onDownloadPDF?: () => void;
+  /** Capture faces for learners of this class who have none yet. */
+  onEnrolFaces?: () => void;
   onClose: () => void;
 }
 
@@ -157,6 +160,7 @@ export const LearnersListView = ({
   onBulkArchive,
   onBulkTransfer,
   onDownloadPDF,
+  onEnrolFaces,
   onClose
 }: LearnersListViewProps) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -378,6 +382,18 @@ export const LearnersListView = ({
                 </button>
 
                 {/* Download PDF Button */}
+                {onEnrolFaces && (
+                  <button
+                    onClick={onEnrolFaces}
+                    className="inline-flex items-center justify-center p-2 sm:px-4 sm:py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                    title="Faces"
+                    aria-label="Faces"
+                  >
+                    <ScanFace size={18} className="sm:mr-2" />
+                    <span className="hidden sm:inline">Faces</span>
+                  </button>
+                )}
+
                 {onDownloadPDF && (
                   <button
                     onClick={onDownloadPDF}

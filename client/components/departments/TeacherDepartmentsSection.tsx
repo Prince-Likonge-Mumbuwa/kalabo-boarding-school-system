@@ -5,7 +5,6 @@ import { Award, Building2, Loader2 } from 'lucide-react';
 import { DepartmentPicker } from './DepartmentPicker';
 import { useDepartmentList, useHods, useInvalidateDepartments } from '@/hooks/useDepartments';
 import {
-  addDepartment,
   assignHod,
   endHod,
   hasDepartment,
@@ -98,7 +97,6 @@ export function TeacherDepartmentsSection({ teacher, isAdmin, actor }: {
               lockedReason={myRole ? `Head of ${myRole.department} — end the HoD role first` : undefined}
               hodOf={myRole?.department}
               disabled={!!busy}
-              onAdd={async name => { const n = await addDepartment(name, actor); await invalidate(); return n; }}
             />
           )
         ) : saved.length ? (
