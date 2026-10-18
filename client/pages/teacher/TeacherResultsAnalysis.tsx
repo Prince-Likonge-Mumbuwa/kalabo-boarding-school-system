@@ -1,5 +1,5 @@
 // @/pages/teacher/TeacherResultsAnalysis.tsx
-import { activeExamsFor, pickTermConfig, gradeForPercentage } from '@/services/resultsGrid';
+import { activeExamsFor, pickTermConfig, gradeForPercentage, isFailGrade, isQuantityGrade } from '@/services/resultsGrid';
 import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useState, useMemo, useEffect, useCallback } from 'react';
@@ -96,16 +96,16 @@ const GRADE_COLORS: Record<number, string> = {
   5: '#d97706',
   6: '#fbbf24',
   7: '#ea580c',
-  8: '#dc2626',
-  9: '#f87171',
+  8: '#fb923c',
+  9: '#dc2626',
 };
 
 const GRADE_LABELS: Record<number, string> = {
   1: 'Distinction', 2: 'Distinction',
   3: 'Merit',       4: 'Merit',
   5: 'Credit',      6: 'Credit',
-  7: 'Satisfactory',
-  8: 'Fail',        9: 'Fail',
+  7: 'Satisfactory', 8: 'Satisfactory',
+  9: 'Fail',
 };
 
 // ==================== STAT CARD ====================
@@ -240,8 +240,8 @@ const GradeDistributionChart = ({
         { label: 'Distinction (1–2)', color: GRADE_COLORS[1] },
         { label: 'Merit (3–4)',       color: GRADE_COLORS[3] },
         { label: 'Credit (5–6)',      color: GRADE_COLORS[5] },
-        { label: 'Satisfactory (7)',  color: GRADE_COLORS[7] },
-        { label: 'Fail (8–9)',        color: GRADE_COLORS[8] },
+        { label: 'Satisfactory (7–8)', color: GRADE_COLORS[7] },
+        { label: 'Fail (9)',          color: GRADE_COLORS[9] },
       ].map(({ label, color }) => (
         <span key={label} className="flex items-center gap-1.5 text-gray-600">
           <span className="w-2.5 h-2.5 rounded-sm inline-block flex-shrink-0" style={{ background: color }} />
@@ -625,8 +625,8 @@ export default function TeacherResultsAnalysis() {
 
     const total = allGrades.length;
     const quality  = allGrades.filter(g => g <= 2).length;
-    const quantity = allGrades.filter(g => g >= 3 && g <= 7).length;
-    const fail     = allGrades.filter(g => g >= 8).length;
+    const quantity = allGrades.filter(g => isQuantityGrade(g)).length;
+    const fail     = allGrades.filter(g => isFailGrade(g)).length;
 
     const avgScore = filteredResults.length > 0
       ? Math.round(filteredResults.filter(r => r.percentage >= 0).reduce((s, r) => s + r.percentage, 0) / filteredResults.filter(r => r.percentage >= 0).length)
@@ -681,10 +681,10 @@ export default function TeacherResultsAnalysis() {
         dist:     grades.filter(g => g <= 2).length,
         merit:    grades.filter(g => g >= 3 && g <= 4).length,
         credit:   grades.filter(g => g >= 5 && g <= 6).length,
-        pass:     grades.filter(g => g === 7).length,
-        fail:     grades.filter(g => g >= 8).length,
+        pass:     grades.filter(g => g === 7 || g === 8).length,
+        fail:     grades.filter(g => isFailGrade(g)).length,
         quality:  grades.filter(g => g <= 2).length,
-        quantity: grades.filter(g => g >= 3 && g <= 7).length,
+        quantity: grades.filter(g => isQuantityGrade(g)).length,
       });
 
       const pdfData = {
@@ -970,8 +970,8 @@ export default function TeacherResultsAnalysis() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4">
             <StatCard label="Average"   value={`${teacherMetrics.averageScore}%`}  subValue={`${teacherMetrics.totalStudents} students`} icon={Target}       color="blue"   />
             <StatCard label="Quality"   value={`${teacherMetrics.qualityRate}%`}   subValue="Grades 1–2"                                  icon={Award}        color="green"  />
-            <StatCard label="Quantity"  value={`${teacherMetrics.quantityRate}%`}  subValue="Grades 3–7"                                  icon={Users}        color="purple" />
-            <StatCard label="Fail Rate" value={`${teacherMetrics.failRate}%`}      subValue="Grades 8–9"                                  icon={AlertCircle}  color="red"    />
+            <StatCard label="Quantity"  value={`${teacherMetrics.quantityRate}%`}  subValue="Grades 3–8"                                  icon={Users}        color="purple" />
+            <StatCard label="Fail Rate" value={`${teacherMetrics.failRate}%`}      subValue="Grade 9 (0–39%)"                                  icon={AlertCircle}  color="red"    />
           </div>
         )}
 

@@ -37,6 +37,7 @@ export interface ReportGenerationOptions {
 }
 
 import { calculateGrade } from '@/services/resultsService';
+import { isPassPercentage } from '@/services/resultsGrid';
 
 // Every query that shows results. A save/delete refreshes all of them so the
 // Results Entry page, the Monitor, the teacher warning, Report Cards and the
@@ -626,7 +627,7 @@ export const useResultsAnalytics = (options?: {
       : 0,
     passRate: resultsQuery.data.length > 0
       ? Math.round(
-          (resultsQuery.data.filter(r => r.percentage >= 50).length / 
+          (resultsQuery.data.filter(r => isPassPercentage(r.percentage)).length / 
            resultsQuery.data.filter(r => r.percentage >= 0).length) * 100
         )
       : 0,

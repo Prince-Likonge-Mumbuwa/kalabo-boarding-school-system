@@ -70,11 +70,47 @@ export const GRADE_BANDS: Array<{ grade: number; min: number; description: strin
   { grade: 9, min: 0, description: 'Unsatisfactory', code: 'U' },
 ];
 
-/** ECZ grade 1–9 for a percentage; -1 when there is no percentage. */
+/**
+ * ECZ grade 1–9 for a percentage; -1 when there is no percentage.
+ * The percentage is rounded first (an average of 39.6% is 40% → grade 8),
+ * so report cards, analysis, dashboards and PDFs always agree.
+ */
 export const gradeForPercentage = (percentage: number | null | undefined): number => {
   if (typeof percentage !== 'number' || percentage < 0 || Number.isNaN(percentage)) return -1;
-  for (const band of GRADE_BANDS) if (percentage >= band.min) return band.grade;
+  const p = Math.round(percentage);
+  for (const band of GRADE_BANDS) if (p >= band.min) return band.grade;
   return 9;
+};
+
+// ==================== PASS / FAIL (the school's one rule) ====================
+//
+// The ONLY fail is grade 9 (0–39%). Grades 1–8 (40–100%) are passes:
+//   DIST 1–2 · MERIT 3–4 · CREDIT 5–6 · PASS (Satisfactory) 7–8 · FAIL 9
+//   Quality pass  = grades 1–2      Quantity pass = grades 3–8
+// Every screen, dashboard and PDF uses these helpers — never its own numbers.
+
+export const FAIL_GRADE = 9;
+export const PASS_MIN_PERCENT = 40;
+
+/** Grade 1–8. */
+export const isPassGrade = (grade: number): boolean => grade >= 1 && grade <= 8;
+/** Grade 9 only. */
+export const isFailGrade = (grade: number): boolean => grade === FAIL_GRADE;
+/** 40% or more (after rounding); a missing mark (< 0) is neither pass nor fail. */
+export const isPassPercentage = (percentage: number): boolean => percentage >= 0 && Math.round(percentage) >= PASS_MIN_PERCENT;
+/** Quality pass: grades 1–2. */
+export const isQualityGrade = (grade: number): boolean => grade >= 1 && grade <= 2;
+/** Quantity pass: grades 3–8. */
+export const isQuantityGrade = (grade: number): boolean => grade >= 3 && grade <= 8;
+
+export type GradeCategory = 'distinction' | 'merit' | 'credit' | 'satisfactory' | 'fail';
+export const gradeCategory = (grade: number): GradeCategory =>
+  grade <= 2 ? 'distinction' : grade <= 4 ? 'merit' : grade <= 6 ? 'credit' : grade <= 8 ? 'satisfactory' : 'fail';
+
+/** The grade of an average of percentages (rounded, like the report card); -1 when there are none. */
+export const gradeForAverage = (percentages: number[]): number => {
+  const valid = percentages.filter(p => typeof p === 'number' && p >= 0);
+  return valid.length ? gradeForPercentage(valid.reduce((a, b) => a + b, 0) / valid.length) : -1;
 };
 
 /** "Distinction", "Merit"… or "Incomplete" for -1. */
@@ -499,7 +535,7 @@ export function learnerProgress(grid: ResultsGrid, learnerId: string): LearnerPr
     overallPercentage: overall,
     overallGrade: hasAnyMarks ? gradeForPercentage(overall) : -1,
     hasAnyMarks,
-    status: !hasAnyMarks ? 'pending' : overall >= 50 ? 'pass' : 'fail',
+    status: !hasAnyMarks ? 'pending' : isPassPercentage(overall) ? 'pass' : 'fail',
   };
 }
 
@@ -724,7 +760,7 @@ export function teacherCommentFor(card: Pick<ReportCard, 'percentage' | 'isProvi
   const sorted = [...valid].sort((a, b) => b.average - a.average);
   const strongest = sorted[0];
   const weakest = sorted[sorted.length - 1];
-  const passCount = valid.filter(s => s.average >= 50).length;
+  const passCount = valid.filter(s => isPassPercentage(s.average)).length;
   const p = card.percentage;
 
   let text: string;
@@ -732,6 +768,8 @@ export function teacherCommentFor(card: Pick<ReportCard, 'percentage' | 'isProvi
     text = `Excellent overall performance with ${p}% average. Particularly strong in ${strongest.subjectName}. Keep up the outstanding work across all subjects!`;
   } else if (p >= 50) {
     text = `Good overall performance with ${passCount}/${valid.length} subjects passed (${p}% average). Focus more attention on ${weakest.subjectName} for improvement next term.`;
+  } else if (isPassPercentage(p)) {
+    text = `Satisfactory overall performance with ${passCount}/${valid.length} subjects passed (${p}% average). More effort is needed, especially in ${weakest.subjectName}.`;
   } else {
     text = `Performance requires improvement with ${p}% average. Need to focus on ${weakest.subjectName} and all core subjects. Additional support and remedial classes recommended.`;
   }

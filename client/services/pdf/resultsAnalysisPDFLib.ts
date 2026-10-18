@@ -1,8 +1,8 @@
 // @/services/pdf/resultsAnalysisPDFLib.ts
 // UPDATED WITH CENTERED LOGO AND HEADER
 // Quality: Grades 1-2 only (Distinction)
-// Quantity: Grades 3-7 (Merit through Satisfactory)
-// Fail: Grades 8-9 (Satisfactory Low and Unsatisfactory)
+// Quantity: Grades 3-8 (Merit through Satisfactory)
+// Fail: Grade 9 only (0-39%)
 
 import { PDFDocument, rgb, StandardFonts, PageSizes, PDFImage } from 'pdf-lib';
 import { embedSchoolLogo } from '@/lib/schoolLogo';
@@ -14,10 +14,10 @@ interface SubjectMetrics {
   dist: number;      // grades 1-2
   merit: number;     // grades 3-4
   credit: number;    // grades 5-6
-  pass: number;      // grade 7 only
-  fail: number;      // grades 8-9
+  pass: number;      // grades 7-8
+  fail: number;      // grade 9 only
   quality: number;   // grades 1-2
-  quantity: number;  // grades 3-7
+  quantity: number;  // grades 3-8
 }
 
 interface SubjectData {
@@ -97,11 +97,11 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
     availableWidth * 0.07, // DIST(1-2)
     availableWidth * 0.07, // MERIT(3-4)
     availableWidth * 0.07, // CREDIT(5-6)
-    availableWidth * 0.07, // PASS(7)
-    availableWidth * 0.07, // FAIL(8-9)
+    availableWidth * 0.07, // PASS(7-8)
+    availableWidth * 0.07, // FAIL(9)
     availableWidth * 0.07, // FAIL%
     availableWidth * 0.07, // QLTY(1-2)
-    availableWidth * 0.07, // QTY(3-7)
+    availableWidth * 0.07, // QTY(3-8)
     availableWidth * 0.06, // QLTY%
     availableWidth * 0.06, // QTY%
   ];
@@ -116,8 +116,8 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
   const subHeaders = [
     '', '', '', '',
     '(1-2)', '(3-4)', '(5-6)',
-    '(7)', '(8-9)', '',
-    '(1-2)', '(3-7)', '%', '%'
+    '(7-8)', '(9)', '',
+    '(1-2)', '(3-8)', '%', '%'
   ];
 
   let y = height - margin;
@@ -511,7 +511,7 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
 
   // Legend at bottom (centered)
   y -= 15;
-  const legend1 = 'DIST = Distinction (1-2) | MERIT = Merit (3-4) | CREDIT = Credit (5-6) | PASS = Satisfactory (7) | FAIL = Grades 8-9';
+  const legend1 = 'DIST = Distinction (1-2) | MERIT = Merit (3-4) | CREDIT = Credit (5-6) | PASS = Satisfactory (7-8) | FAIL = Grade 9 (0-39%)';
   const legend1Width = font.widthOfTextAtSize(legend1, 7);
   page.drawText(legend1, {
     x: (width - legend1Width) / 2,
@@ -522,7 +522,7 @@ export async function generateResultsAnalysisPDF(data: ResultsAnalysisData): Pro
   });
   
   y -= 12;
-  const legend2 = 'QLTY = Quality Pass (Grades 1-2) | QTY = Quantity Pass (Grades 3-7) | FAIL% = (Fail/Sat) × 100 | QLTY% = (Quality/Sat) × 100 | QTY% = (Quantity/Sat) × 100';
+  const legend2 = 'QLTY = Quality Pass (Grades 1-2) | QTY = Quantity Pass (Grades 3-8) | FAIL% = (Fail/Sat) × 100 | QLTY% = (Quality/Sat) × 100 | QTY% = (Quantity/Sat) × 100';
   const legend2Width = font.widthOfTextAtSize(legend2, 7);
   page.drawText(legend2, {
     x: (width - legend2Width) / 2,

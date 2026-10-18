@@ -4,7 +4,7 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { useEmbedded } from '@/components/workspace/embedded';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useResultsAnalytics } from '@/hooks/useResults';
-import { activeExamsFor, pickTermConfig, gradeForPercentage } from '@/services/resultsGrid';
+import { activeExamsFor, pickTermConfig, gradeForPercentage, isFailGrade, isQuantityGrade } from '@/services/resultsGrid';
 import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import { useExamConfig } from '@/hooks/useExamConfig';
 import { useSchoolClasses } from '@/hooks/useSchoolClasses';
@@ -107,10 +107,10 @@ interface SubjectMetrics {
   dist: number;      // Grades 1-2
   merit: number;     // Grades 3-4
   credit: number;    // Grades 5-6
-  pass: number;      // Grade 7 only
-  fail: number;      // Grades 8-9
+  pass: number;      // Grades 7-8
+  fail: number;      // Grade 9 only
   quality: number;   // Grades 1-2
-  quantity: number;  // Grades 3-7
+  quantity: number;  // Grades 3-8
 }
 
 interface SubjectData {
@@ -245,8 +245,8 @@ const GradeBadge = ({ grade, size = 'md', showLabel = false }: { grade: number; 
     if (grade <= 2) return { color: 'bg-emerald-500', label: 'Distinction' };
     if (grade <= 4) return { color: 'bg-blue-500', label: 'Merit' };
     if (grade <= 6) return { color: 'bg-amber-500', label: 'Credit' };
-    if (grade <= 7) return { color: 'bg-orange-500', label: 'Satisfactory' }; // Grade 7 only
-    return { color: 'bg-rose-500', label: 'Fail' }; // Grades 8-9
+    if (grade <= 8) return { color: 'bg-orange-500', label: 'Satisfactory' }; // Grades 7-8
+    return { color: 'bg-rose-500', label: 'Fail' }; // Grade 9 only
   };
 
   const { color, label } = getGradeInfo(grade);
@@ -729,8 +729,8 @@ export default function AdminResultsAnalysis() {
       if (grade <= 2) return 'distinction';
       if (grade <= 4) return 'merit';
       if (grade <= 6) return 'credit';
-      if (grade <= 7) return 'satisfactory'; // Grade 7 only
-      return 'fail'; // Grades 8-9
+      if (grade <= 8) return 'satisfactory'; // Grades 7-8
+      return 'fail'; // Grade 9 only
     };
 
     return Array.from(gradeMap.entries())
@@ -753,8 +753,8 @@ export default function AdminResultsAnalysis() {
         totalAssessments: 0,
         averageScore: 0,
         qualityRate: 0,      // Grades 1-2 only
-        quantityRate: 0,     // Grades 3-7
-        failRate: 0,         // Grades 8-9
+        quantityRate: 0,     // Grades 3-8
+        failRate: 0,         // Grade 9 only
         distinctionRate: 0,
         classesCount: classes?.length || 0,
         subjectsCount: 0,
@@ -775,8 +775,8 @@ export default function AdminResultsAnalysis() {
     
     const distinctionCount = allGrades.filter(g => g.grade <= 2).length;
     const qualityCount = allGrades.filter(g => g.grade <= 2).length;      // Quality: Grades 1-2
-    const quantityCount = allGrades.filter(g => g.grade >= 3 && g.grade <= 7).length; // Quantity: Grades 3-7
-    const failCount = allGrades.filter(g => g.grade >= 8).length;         // Fail: Grades 8-9
+    const quantityCount = allGrades.filter(g => isQuantityGrade(g.grade)).length; // Quantity: Grades 3-8
+    const failCount = allGrades.filter(g => isFailGrade(g.grade)).length;         // Fail: Grade 9 only
     
     const uniqueStudents = studentSubjectAverages.size;
     const uniqueSubjects = new Set(
@@ -865,7 +865,7 @@ export default function AdminResultsAnalysis() {
           if (grade <= 2) passStatus = 'distinction';
           else if (grade <= 4) passStatus = 'merit';
           else if (grade <= 6) passStatus = 'credit';
-          else if (grade <= 7) passStatus = 'satisfactory';
+          else if (grade <= 8) passStatus = 'satisfactory';
           else passStatus = 'fail';
           
           return {
@@ -883,11 +883,11 @@ export default function AdminResultsAnalysis() {
       const qualityBoys = classGrades.filter(g => g.grade <= 2 && g.gender === 'M').length;
       const qualityGirls = classGrades.filter(g => g.grade <= 2 && g.gender === 'F').length;
       
-      const quantityBoys = classGrades.filter(g => g.grade >= 3 && g.grade <= 7 && g.gender === 'M').length;
-      const quantityGirls = classGrades.filter(g => g.grade >= 3 && g.grade <= 7 && g.gender === 'F').length;
+      const quantityBoys = classGrades.filter(g => isQuantityGrade(g.grade) && g.gender === 'M').length;
+      const quantityGirls = classGrades.filter(g => isQuantityGrade(g.grade) && g.gender === 'F').length;
       
-      const failBoys = classGrades.filter(g => g.grade >= 8 && g.gender === 'M').length;
-      const failGirls = classGrades.filter(g => g.grade >= 8 && g.gender === 'F').length;
+      const failBoys = classGrades.filter(g => isFailGrade(g.grade) && g.gender === 'M').length;
+      const failGirls = classGrades.filter(g => isFailGrade(g.grade) && g.gender === 'F').length;
 
       const qualityCount = qualityBoys + qualityGirls;
       const quantityCount = quantityBoys + quantityGirls;
@@ -970,8 +970,8 @@ export default function AdminResultsAnalysis() {
     return Array.from(subjectMap.entries()).map(([subject, data]) => {
       const total = data.grades.length;
       const quality = data.grades.filter(g => g <= 2).length;           // Quality: Grades 1-2
-      const quantity = data.grades.filter(g => g >= 3 && g <= 7).length; // Quantity: Grades 3-7
-      const fail = data.grades.filter(g => g >= 8).length;              // Fail: Grades 8-9
+      const quantity = data.grades.filter(g => isQuantityGrade(g)).length; // Quantity: Grades 3-8
+      const fail = data.grades.filter(g => isFailGrade(g)).length;              // Fail: Grade 9 only
       const averageGrade = data.grades.reduce((sum, g) => sum + g, 0) / total;
 
       return {
@@ -1015,12 +1015,12 @@ export default function AdminResultsAnalysis() {
         const dist = grades.filter(g => g <= 2).length;                 // Grades 1-2
         const merit = grades.filter(g => g >= 3 && g <= 4).length;      // Grades 3-4
         const credit = grades.filter(g => g >= 5 && g <= 6).length;     // Grades 5-6
-        const pass = grades.filter(g => g === 7).length;                // Grade 7 only
-        const fail = grades.filter(g => g >= 8).length;                 // Grades 8-9
+        const pass = grades.filter(g => g === 7 || g === 8).length;                // Grades 7-8
+        const fail = grades.filter(g => isFailGrade(g)).length;                 // Grade 9 only
         
         // Quality and quantity passes as per updated definitions
         const quality = grades.filter(g => g <= 2).length;              // Quality: Grades 1-2
-        const quantity = grades.filter(g => g >= 3 && g <= 7).length;   // Quantity: Grades 3-7
+        const quantity = grades.filter(g => isQuantityGrade(g)).length;   // Quantity: Grades 3-8
 
         return {
           registered: total,
@@ -1315,14 +1315,14 @@ export default function AdminResultsAnalysis() {
           <StatCard
             title="Quantity Pass"
             value={`${schoolMetrics.quantityRate}%`}
-            subValue={`Grades 3-7`}
+            subValue={`Grades 3-8`}
             icon={GraduationCap}
             color="amber"
           />
           <StatCard
             title="Fail Rate"
             value={`${schoolMetrics.failRate}%`}
-            subValue={`Grades 8-9`}
+            subValue={`Grade 9 (0-39%)`}
             icon={AlertCircle}
             color="rose"
           />
@@ -1747,8 +1747,8 @@ export default function AdminResultsAnalysis() {
                 <>
                   <span className="font-medium">Data source:</span> Averages of {configuredExamTypes.length} configured test{configuredExamTypes.length !== 1 ? 's' : ''} • 
                   <span className="font-medium ml-1">Quality (Grades 1-2):</span> {schoolMetrics.qualityRate}% • 
-                  <span className="font-medium ml-1">Quantity (Grades 3-7):</span> {schoolMetrics.quantityRate}% • 
-                  <span className="font-medium ml-1">Fail (Grades 8-9):</span> {schoolMetrics.failRate}%
+                  <span className="font-medium ml-1">Quantity (Grades 3-8):</span> {schoolMetrics.quantityRate}% • 
+                  <span className="font-medium ml-1">Fail (Grade 9):</span> {schoolMetrics.failRate}%
                 </>
               ) : (
                 'No results data available for the current selection'

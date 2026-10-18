@@ -35,8 +35,8 @@ const getGradeColor = (grade: number): { r: number; g: number; b: number } => {
   if (grade <= 2) return { r: 0.2, g: 0.6, b: 0.2 }; // Green for Distinction
   if (grade <= 4) return { r: 0.2, g: 0.4, b: 0.8 }; // Blue for Merit
   if (grade <= 6) return { r: 0.8, g: 0.6, b: 0.2 }; // Amber for Credit
-  if (grade <= 7) return { r: 0.9, g: 0.5, b: 0.2 }; // Orange for Satisfactory
-  return { r: 0.8, g: 0.3, b: 0.3 }; // Red for Fail
+  if (grade <= 8) return { r: 0.9, g: 0.5, b: 0.2 }; // Orange for Satisfactory (7-8)
+  return { r: 0.8, g: 0.3, b: 0.3 }; // Red for Fail (9 only)
 };
 
 // Status display mapping
@@ -894,7 +894,7 @@ function drawFooter(
   });
 
   currentY -= 12;
-  const legend2 = 'Color coding: Green (Grades 1-2), Blue (3-4), Amber (5-6), Orange (7), Red (8-9)';
+  const legend2 = 'Color coding: Green (Grades 1-2), Blue (3-4), Amber (5-6), Orange (7-8), Red (9)';
   const legend2Width = font.widthOfTextAtSize(legend2, 7);
   page.drawText(legend2, {
     x: (width - legend2Width) / 2,

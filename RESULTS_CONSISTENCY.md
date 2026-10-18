@@ -35,6 +35,28 @@ One grid per class + term + year:
 Loading: `client/services/resultsGridLoader.ts`. Errors are thrown, never
 shown as 0% or 100%.
 
+## Pass rule (one rule everywhere)
+
+**The only fail is grade 9 (0–39%).** Grades 1–8 (40–100%) are passes.
+
+| Category | Grades | Marks |
+|---|---|---|
+| Distinction | 1–2 | 70–100% |
+| Merit | 3–4 | 60–69% |
+| Credit | 5–6 | 50–59% |
+| Pass (Satisfactory) | 7–8 | 40–49% |
+| **Fail** | **9** | **0–39%** |
+
+Quality pass = grades 1–2; quantity pass = grades 3–8. Averages are rounded
+before grading (39.6% → 40% → grade 8), on report cards and in the analysis
+alike. Pass rates on the dashboards count marks of 40% and above.
+
+The helpers are in `resultsGrid.ts` (`isPassGrade`, `isFailGrade`,
+`isPassPercentage`, `isQualityGrade`, `isQuantityGrade`, `gradeCategory`,
+`gradeForAverage`) and used by the results analysis pages, their PDFs, the
+class results PDF, report cards, the dashboards and the analytics services.
+Tests: `client/services/passRule.spec.ts`.
+
 ## Saving marks
 
 `resultsService.saveClassResults` saves by learner **document id**, only the

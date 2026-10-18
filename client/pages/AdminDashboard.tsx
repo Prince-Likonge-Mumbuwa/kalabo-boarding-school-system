@@ -294,7 +294,7 @@ export default function AdminDashboard() {
       label: 'Pass Rate',
       icon: TrendingUp,
       color: 'amber' as const,
-      description: 'School-wide performance',
+      description: 'Marks of 40% and above (grades 1–8)',
       value: analytics?.passRate ? `${analytics.passRate}%` : '—',
     },
   ];
