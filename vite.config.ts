@@ -3,13 +3,28 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { createServer } from "./server";
 
+// One id per build: baked into the code and published as /version.json, so
+// open tabs can tell that a newer version is out (client/lib/appVersion.ts).
+const BUILD_ID = process.env.BUILD_ID || new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14) + "-" + Math.random().toString(36).slice(2, 6);
+
+function versionFile(): Plugin {
+  return {
+    name: "version-file",
+    apply: "build",
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: "version.json", source: JSON.stringify({ version: BUILD_ID }) + "\n" });
+    },
+  };
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
     fs: {
-      allow: ["./client", "./shared"],
+      // node_modules: the face engine (onnxruntime-web) loads its own files at run time.
+      allow: ["./client", "./shared", "./node_modules"],
       deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "server/**"],
     },
   },
@@ -49,7 +64,8 @@ export default defineConfig(({ mode }) => ({
   // onnxruntime-web ships its own WebAssembly; let Vite copy it as-is
   // (same setting as Tick).
   optimizeDeps: { exclude: ["onnxruntime-web"] },
-  plugins: [react(), expressPlugin()],
+  define: { __APP_VERSION__: JSON.stringify(mode === "production" ? BUILD_ID : "dev") },
+  plugins: [react(), expressPlugin(), versionFile()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./client"),

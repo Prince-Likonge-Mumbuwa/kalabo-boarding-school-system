@@ -26,6 +26,7 @@ export interface Teacher {
   email: string;
   phone?: string;
   department?: string;
+  departments?: string[];
   subjects?: string[];
   status?: TeacherStatus;
   isFormTeacher?: boolean;

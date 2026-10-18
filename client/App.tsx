@@ -10,6 +10,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
+import { SessionGuard } from "@/components/app/SessionGuard";
+import { UpdateNotice } from "@/components/app/UpdateNotice";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { adminWorkspaceRoutes } from "@/routes/adminWorkspaceRoutes";
 import Landing from "./pages/Landing";
@@ -36,6 +38,7 @@ const TeacherResultsAnalysis = lazy(() => import("./pages/teacher/TeacherResults
 const MyClass = lazy(() => import("@/pages/teacher/MyClass"));
 const SbaEntry = lazy(() => import("./pages/teacher/SbaEntry"));
 const MyTimetable = lazy(() => import("./pages/teacher/MyTimetable"));
+const MyDepartment = lazy(() => import("./pages/teacher/MyDepartment"));
 
 // Settings Page (works for both admin and teacher)
 const Settings = lazy(() => import("./pages/Settings"));
@@ -73,6 +76,8 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          <SessionGuard />
+          <UpdateNotice />
           <PWAInstallPrompt />
           <Suspense fallback={<PageLoading />}>
           <Routes>
@@ -198,6 +203,13 @@ const App = () => (
             <Route path="/dashboard/teacher/sba-entry" element={
               <ProtectedRoute allowedRoles={['teacher']}>
                 <SbaEntry />
+              </ProtectedRoute>
+            } />
+
+            {/* Head of Department: the department's teachers and their results entry */}
+            <Route path="/dashboard/teacher/department" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <MyDepartment />
               </ProtectedRoute>
             } />
 

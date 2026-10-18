@@ -7,9 +7,10 @@ import { MemoryRouter } from 'react-router-dom';
 vi.mock('firebase/firestore', async () => await import('../test/fakeFirestore'));
 vi.mock('@/lib/firebase', () => ({ db: {}, auth: {} }));
 vi.mock('firebase/auth', () => ({ getAuth: () => ({}) }));
-const h = vi.hoisted(() => ({ classes: [] as any[], userType: 'teacher', officer: false }));
+const h = vi.hoisted(() => ({ classes: [] as any[], userType: 'teacher', officer: false, hod: null as null | { department: string } }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'T1', fullName: 'Mr T', userType: h.userType }, logout: vi.fn() }) }));
 vi.mock('@/hooks/useAdmissionsOfficer', () => ({ useAdmissionsOfficer: () => ({ isOfficer: h.officer, isLoading: false }) }));
+vi.mock('@/hooks/useDepartments', () => ({ useMyHodRole: () => ({ role: h.hod, isHod: !!h.hod, isLoading: false }) }));
 vi.mock('@/hooks/useTeacherClasses', async () => {
   const actual = await vi.importActual<any>('@/hooks/useTeacherClasses');
   return { ...actual, useTeacherClasses: () => ({ data: h.classes }) };
@@ -20,7 +21,7 @@ import { DashboardLayout } from './DashboardLayout';
 const subject = (normalizedSubjectId: string, relation = 'owner') => ({ normalizedSubjectId, relation });
 const renderIt = () => render(<MemoryRouter><DashboardLayout><div /></DashboardLayout></MemoryRouter>);
 
-beforeEach(() => { cleanup(); h.classes = []; h.userType = 'teacher'; h.officer = false; });
+beforeEach(() => { cleanup(); h.classes = []; h.userType = 'teacher'; h.officer = false; h.hod = null; });
 
 describe('teacher menu', () => {
   it('hides My Class from a teacher who only teaches subjects', () => {
@@ -40,6 +41,16 @@ describe('teacher menu', () => {
     h.classes = [{ classId: 'A', subjects: [subject('form-teacher', 'delegate')] }];
     renderIt();
     expect(screen.getByText('My Class')).toBeTruthy();
+  });
+
+  it('shows My Department only to a Head of Department, and names the department', () => {
+    renderIt();
+    expect(screen.queryByText('My Department')).toBeNull();
+    cleanup();
+    h.hod = { department: 'Mathematics' };
+    renderIt();
+    expect(screen.getByText('My Department')).toBeTruthy();
+    expect(screen.getByText('HoD · Mathematics')).toBeTruthy();
   });
 
   it('shows Admissions only to admissions officers', () => {

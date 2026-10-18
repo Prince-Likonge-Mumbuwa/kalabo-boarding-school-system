@@ -32,6 +32,7 @@ vi.mock('@/pages/admin/AttendanceOverview', async () => ({
   HolidaysTab: await mkStub('Holidays'),
   ApprovalsTab: await mkStub('Approvals'),
 }));
+vi.mock('@/components/face/FaceRecognitionPanel', async () => ({ default: await mkStub('Face recognition') }));
 vi.mock('@/components/admissions/AdmissionsWorkspace', () => ({
   AdmissionsWorkspace: ({ user }: any) => <p>Admissions page (admin: {String(user.isAdmin)})</p>,
 }));
@@ -69,6 +70,7 @@ const CASES: Array<[string, string, string, string]> = [
   ['/dashboard/admin/timetable/periods', 'attendance-timetable', 'Periods', 'Periods page (embedded)'],
   ['/dashboard/admin/timetable/holidays', 'attendance-timetable', 'Holidays', 'Holidays page (embedded)'],
   ['/dashboard/admin/timetable/approvals', 'attendance-timetable', 'Approvals', 'Approvals page (embedded)'],
+  ['/dashboard/admin/face-recognition', 'attendance-timetable', 'Face recognition', 'Face recognition page (embedded)'],
 ];
 
 beforeEach(() => {
@@ -97,7 +99,7 @@ describe('admin workspaces', () => {
     renderAt('/dashboard/admin/attendance-overview');
     await screen.findByText(/Attendance page/);
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Attendance');
-    expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Overview', "Who's Teaching", 'Periods', 'Holidays', 'Approvals']);
+    expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Overview', "Who's Teaching", 'Periods', 'Holidays', 'Approvals', 'Face recognition']);
     expect(screen.getByRole('link', { name: /Data check/ }).getAttribute('href')).toBe('/dashboard/admin/timetable-data-check');
   });
 

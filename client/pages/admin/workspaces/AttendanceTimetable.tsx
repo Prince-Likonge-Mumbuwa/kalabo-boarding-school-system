@@ -8,6 +8,8 @@
 //   Periods         /dashboard/admin/timetable/periods     bell schedule
 //   Holidays        /dashboard/admin/timetable/holidays    school & public holidays
 //   Approvals       /dashboard/admin/timetable/approvals   teachers' timetable submissions
+//   Face recognition /dashboard/admin/face-recognition     enrol faces, match levels
+//                   (the on/off switch stays in Settings)
 //
 // Periods, Holidays and Approvals used to be tabs inside Attendance
 // Overview; they are the same components. Teachers' own Attendance Tracking
@@ -15,7 +17,7 @@
 
 import { lazy } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, CalendarCheck, Check, Clock, Search, Settings as SettingsIcon } from 'lucide-react';
+import { Calendar, CalendarCheck, Check, Clock, ScanFace, Search, Settings as SettingsIcon } from 'lucide-react';
 import { TabbedWorkspace, type WorkspaceTab } from '@/components/workspace/TabbedWorkspace';
 
 const AttendanceOverview = lazy(() => import('../AttendanceOverview'));
@@ -23,6 +25,7 @@ const LiveTimetable = lazy(() => import('../LiveTimetable'));
 const PeriodsTab = lazy(() => import('../AttendanceOverview').then(m => ({ default: m.PeriodsTab })));
 const HolidaysTab = lazy(() => import('../AttendanceOverview').then(m => ({ default: m.HolidaysTab })));
 const ApprovalsTab = lazy(() => import('../AttendanceOverview').then(m => ({ default: m.ApprovalsTab })));
+const FaceRecognitionPanel = lazy(() => import('@/components/face/FaceRecognitionPanel'));
 
 export const ATTENDANCE_TIMETABLE_PATHS = {
   attendance: '/dashboard/admin/attendance-overview',
@@ -30,6 +33,7 @@ export const ATTENDANCE_TIMETABLE_PATHS = {
   periods: '/dashboard/admin/timetable/periods',
   holidays: '/dashboard/admin/timetable/holidays',
   approvals: '/dashboard/admin/timetable/approvals',
+  face: '/dashboard/admin/face-recognition',
 } as const;
 
 const padded = (node: React.ReactNode) => <div className="p-3 sm:p-6 lg:p-8 space-y-4">{node}</div>;
@@ -40,6 +44,7 @@ const tabs: WorkspaceTab[] = [
   { id: 'periods', label: 'Periods', icon: SettingsIcon, paths: [ATTENDANCE_TIMETABLE_PATHS.periods], render: () => padded(<PeriodsTab />) },
   { id: 'holidays', label: 'Holidays', icon: Calendar, paths: [ATTENDANCE_TIMETABLE_PATHS.holidays], render: () => padded(<HolidaysTab />) },
   { id: 'approvals', label: 'Approvals', icon: Check, paths: [ATTENDANCE_TIMETABLE_PATHS.approvals], render: () => padded(<ApprovalsTab />) },
+  { id: 'face', label: 'Face recognition', icon: ScanFace, paths: [ATTENDANCE_TIMETABLE_PATHS.face], render: () => padded(<FaceRecognitionPanel />) },
 ];
 
 export default function AttendanceTimetableWorkspace() {
@@ -47,7 +52,7 @@ export default function AttendanceTimetableWorkspace() {
     <TabbedWorkspace
       navId="attendance-timetable"
       title="Attendance"
-      description="Attendance registers, the lessons timetabled now or on any date, and the school timetable set-up."
+      description="Attendance registers, the lessons timetabled now or on any date, the school timetable set-up and face recognition."
       tabs={tabs}
       actions={
         <Link

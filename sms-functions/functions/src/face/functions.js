@@ -31,9 +31,16 @@ const db = () => getFirestore();
 
 /* ---------- who is calling ---------- */
 
+// Live scanning calls faceMatch several times a second; remember who the
+// caller is for a short while instead of reading users/{uid} every time.
+const staffCache = new Map(); // uid -> { at, staff }
+const STAFF_TTL = 60_000;
+
 async function requireStaff(request) {
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in again to use face recognition.');
+  const hit = staffCache.get(uid);
+  if (hit && Date.now() - hit.at < STAFF_TTL) return hit.staff;
   const snap = await db().collection('users').doc(uid).get();
   const u = snap.exists ? snap.data() : null;
   if (!u || (u.userType !== 'admin' && u.userType !== 'teacher')) {
@@ -42,7 +49,10 @@ async function requireStaff(request) {
   if (u.status === 'inactive' || u.status === 'transferred') {
     throw new HttpsError('permission-denied', 'Your account is not active.');
   }
-  return { uid, isAdmin: u.userType === 'admin', name: u.fullName || u.name || 'Staff' };
+  const staff = { uid, isAdmin: u.userType === 'admin', name: u.fullName || u.name || 'Staff' };
+  if (staffCache.size > 500) staffCache.clear();
+  staffCache.set(uid, { at: Date.now(), staff });
+  return staff;
 }
 
 /* ---------- settings (system/faceRecognition), cached briefly ---------- */
@@ -264,6 +274,11 @@ exports.faceMatch = onCall(OPTS, wrap(async (request) => {
   }
   const faces = d.faces.map((f) => ({ box: lib.checkBox(f && f.box), embedding: lib.checkEmbedding(f && f.embedding) }));
   const templates = await classTemplates(classId, FACE_TEMPLATE_KEY.value());
+  // Warm-up from the scan screen opening: server and class faces are now
+  // loaded; nothing is matched or logged.
+  if (d.warm === true) {
+    return { width: 0, height: 0, enrolledInClass: new Set(templates.map((t) => t.learnerId)).size, faces: [] };
+  }
   const results = lib.matchFaces(faces, templates, settings);
 
   // Live camera asks often; only log the moments someone was recognised.

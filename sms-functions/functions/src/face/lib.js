@@ -124,17 +124,30 @@ const cosine = (a, b) => {
 };
 
 /**
+ * A "clear match" must also be clearly better than the next most similar
+ * learner for the same face; when two learners score almost the same (look-
+ * alikes, siblings, a poor picture) the teacher is asked to check instead.
+ */
+const AMBIGUITY_MARGIN = 0.05;
+
+/**
  * Match each detected face to at most one learner, and each learner to at most one face.
  * faces: [{box, embedding}]; templates: [{learnerId, vector}]
  * Returns one result per face: {box, learnerId|null, similarity|null, verdict}.
  */
 function matchFaces(faces, templates, { reviewThreshold, matchThreshold }) {
   const pairs = [];
+  const runnerUp = faces.map(() => new Map()); // face -> learnerId -> best similarity of any OTHER learner
   faces.forEach((face, f) => {
     const best = new Map(); // learnerId -> best similarity for this face
     for (const t of templates) {
       const s = cosine(face.embedding, t.vector);
       if (s > (best.get(t.learnerId) ?? -1)) best.set(t.learnerId, s);
+    }
+    const ranked = [...best.entries()].sort((a, b) => b[1] - a[1]);
+    for (const [learnerId] of ranked) {
+      const other = ranked.find(([id]) => id !== learnerId);
+      runnerUp[f].set(learnerId, other ? other[1] : -1);
     }
     for (const [learnerId, s] of best) if (s >= reviewThreshold) pairs.push({ f, learnerId, s });
   });
@@ -147,11 +160,12 @@ function matchFaces(faces, templates, { reviewThreshold, matchThreshold }) {
     if (usedFaces.has(p.f) || usedLearners.has(p.learnerId)) continue;
     usedFaces.add(p.f);
     usedLearners.add(p.learnerId);
+    const clear = p.s >= matchThreshold && p.s - (runnerUp[p.f].get(p.learnerId) ?? -1) >= AMBIGUITY_MARGIN;
     results[p.f] = {
       ...results[p.f],
       learnerId: p.learnerId,
       similarity: Number(p.s.toFixed(3)),
-      verdict: p.s >= matchThreshold ? 'match' : 'review',
+      verdict: clear ? 'match' : 'review',
     };
   }
   return results;
@@ -180,6 +194,7 @@ const templateId = () => b64(crypto.getRandomValues(new Uint8Array(9))).replace(
 module.exports = {
   MODEL_VERSION,
   MAX_TEMPLATES,
+  AMBIGUITY_MARGIN,
   DEFAULT_SETTINGS,
   normalizeSettings,
   isCountedLearner,

@@ -1,5 +1,5 @@
 // Enrol faces for a whole class, one learner after another.
-// Used by form teachers (My Class) and admins (Settings → Face recognition).
+// Used by form teachers (My Class, Attendance Tracking) and admins (Attendance → Face recognition).
 //
 // The learner list is the class's existing learners (active / no status —
 // the same rule as the register). Face status is looked up by learner

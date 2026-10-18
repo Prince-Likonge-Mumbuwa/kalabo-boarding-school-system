@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   markSessions: vi.fn(async (x: any[]) => x),
   markSession: vi.fn(async (x: any) => x),
   canUse: true,
+  formTeacher: false,
 }));
 const row = (p: number) => ({
   entry: { slotId: '8a__MATH', classId: '8a', className: '8A', subject: 'Mathematics', normalizedSubject: 'MATH', dayOfWeek: 1, periodIndex: p },
@@ -23,7 +24,7 @@ vi.mock('firebase/auth', () => ({ getAuth: () => ({}) }));
 vi.mock('@/components/DashboardLayout', () => ({ DashboardLayout: ({ children }: any) => <div>{children}</div> }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'T1', fullName: 'Mr One', userType: 'teacher' } }) }));
 vi.mock('@/hooks/useTeacherClasses', () => ({
-  useTeacherClasses: () => ({ isLoading: false, data: [{ classId: '8a', className: '8A', isFormTeacher: false, subjects: [{ subject: 'Mathematics' }] }], refetch: vi.fn() }),
+  useTeacherClasses: () => ({ isLoading: false, data: [{ classId: '8a', className: '8A', isFormTeacher: h.formTeacher, subjects: [{ subject: 'Mathematics' }] }], refetch: vi.fn() }),
 }));
 vi.mock('@/hooks/useTeacherAssignments', () => ({ useTeacherAssignments: () => ({ assignments: [], isLoading: false }) }));
 vi.mock('@/services/assignmentEngine', async (orig) => ({ ...(await orig() as any), getOperationalViewForTeacher: async () => [] }));
@@ -46,6 +47,7 @@ vi.mock('@/components/attendance/RiskAnalyticsTab', () => ({ RiskAnalyticsTab: (
 vi.mock('@/components/attendance/PeriodicOverview', () => ({ PeriodicOverview: () => null }));
 vi.mock('@/hooks/useFaceRecognition', () => ({
   useFaceAccess: () => ({ canUse: h.canUse, isAdmin: false, loading: false, settings: { enabled: true } }),
+  useClassFaceStatus: () => ({ data: new Map([['s1', { consent: true, templateCount: 2 }]]), refetch: vi.fn() }),
 }));
 // Stand-in for the camera: "recognises" Alice by her learner document id.
 vi.mock('@/components/face/FaceScanDialog', () => ({
@@ -57,6 +59,10 @@ vi.mock('@/components/face/FaceScanDialog', () => ({
   ) : null,
 }));
 
+vi.mock('@/components/face/ClassFaceEnrolment', () => ({
+  ClassFaceEnrolment: ({ open, className, learners }: any) => open ? <p>enrol {className}: {learners.map((l: any) => l.fullName).join(',')}</p> : null,
+}));
+
 import AttendanceTracking from './AttendanceTracking';
 
 const renderAt = (url: string) =>
@@ -66,7 +72,7 @@ const renderAt = (url: string) =>
     </QueryClientProvider>,
   );
 
-beforeEach(() => { cleanup(); h.markSessions.mockClear(); h.canUse = true; });
+beforeEach(() => { cleanup(); h.markSessions.mockClear(); h.canUse = true; h.formTeacher = false; });
 
 describe('Attendance Tracking + face recognition', () => {
   it('scan ticks the recognised learner present; Save writes the register with the face mark', async () => {
@@ -84,6 +90,19 @@ describe('Attendance Tracking + face recognition', () => {
     const [reg] = h.markSessions.mock.calls[0][0];
     expect(reg.roster).toEqual({ s1: 'present' });
     expect(reg.faceMatches).toEqual({ s1: 0.61 });
+  });
+
+  it('shows how many learners can be recognised; Enrol faces only for the form teacher', async () => {
+    renderAt('/a?mode=periodic&class=8a&date=2026-10-12&period=5');
+    await screen.findByText('Alice');
+    expect(screen.getByTitle('Learners with a face saved').textContent).toBe('1/2');
+    expect(screen.queryByRole('button', { name: /Enrol faces/ })).toBeNull();
+    cleanup();
+    h.formTeacher = true;
+    renderAt('/a?mode=periodic&class=8a&date=2026-10-12&period=5');
+    await screen.findByText('Alice');
+    fireEvent.click(screen.getByRole('button', { name: /Enrol faces/ }));
+    expect(await screen.findByText('enrol 8A: Alice,Ben')).toBeTruthy();
   });
 
   it('no Scan faces button when face recognition is not available to the teacher', async () => {

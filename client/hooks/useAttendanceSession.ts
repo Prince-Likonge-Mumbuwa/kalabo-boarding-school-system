@@ -4,7 +4,8 @@
 // in React Query and provides a local draft state (useSessionDraft) that owns
 // the "unsaved changes" concept for the teacher page.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { clearDraft, readDraft, writeDraft } from '@/lib/draftStore';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { attendanceService } from '@/services/attendanceService';
 import type {
@@ -164,9 +165,49 @@ export interface SessionDraft {
   faceMatches: Record<string, number>;
   /** Tick learners present from face recognition (teacher still saves). */
   markPresentByFace: (matches: Array<{ learnerId: string; similarity: number | null }>) => void;
+  /**
+   * 'restored': unsaved marks from an earlier visit / session were put back.
+   * 'superseded': there were unsaved marks, but someone saved this register
+   * since, so the saved register was kept instead.
+   */
+  recovered: 'restored' | 'superseded' | null;
 }
 
-export function useSessionDraft(loaded: AttendanceSession | null | undefined): SessionDraft {
+interface PersistedDraft {
+  draft: Record<string, AttendanceStatus>;
+  reasons: Record<string, string>;
+  faceMatches: Record<string, number>;
+  /** The saved register the edits started from (id + when it was saved). */
+  baseId: string | null;
+  baseMarkedAt: number | null;
+}
+
+const markedAtMs = (s: AttendanceSession | null | undefined): number | null => {
+  const v: any = s?.markedAt;
+  if (!v) return null;
+  const d = v instanceof Date ? v : typeof v.toDate === 'function' ? v.toDate() : new Date(v);
+  const t = d.getTime();
+  return Number.isFinite(t) ? t : null;
+};
+
+/**
+ * Should unsaved edits kept on the device be put back on top of the
+ * register loaded now? Only if nobody saved this register since the edits
+ * began — otherwise the saved register wins (data stays consistent).
+ */
+export function shouldRestore(stored: PersistedDraft, loaded: AttendanceSession | null): boolean {
+  // A register saved (or deleted) since the edits began: the saved one wins.
+  if (stored.baseId !== (loaded?.id ?? null)) return false;
+  const now = markedAtMs(loaded);
+  return now === null || stored.baseMarkedAt === null || now <= stored.baseMarkedAt;
+}
+
+/**
+ * Draft state for one register. With `persistKey` (per user + register),
+ * unsaved edits are kept on the device and come back after a reload, an
+ * update or a new sign-in.
+ */
+export function useSessionDraft(loaded: AttendanceSession | null | undefined, persistKey?: string): SessionDraft {
   const [draft, setDraft] = useState<Record<string, AttendanceStatus>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
@@ -187,13 +228,43 @@ export function useSessionDraft(loaded: AttendanceSession | null | undefined): S
   // When a session is deleted, loaded becomes null and loadedId becomes
   // null, which also triggers a reset.
   const loadedId = loaded?.id ?? null;
+  const [recovered, setRecovered] = useState<SessionDraft['recovered']>(null);
+  const base = useRef<{ id: string | null; markedAt: number | null }>({ id: null, markedAt: null });
   useEffect(() => {
+    base.current = { id: loaded?.id ?? null, markedAt: markedAtMs(loaded) };
     setDraft(loaded?.roster ?? {});
     setReasons(loaded?.excuseReasons ?? {});
     setFaceMatches(loaded?.faceMatches ?? {});
     setDirty(false);
+    setRecovered(null);
+    // Unsaved edits kept on this device for this register?
+    if (persistKey && loaded !== undefined) {
+      const stored = readDraft<PersistedDraft>(persistKey)?.value;
+      if (stored) {
+        if (shouldRestore(stored, loaded ?? null)) {
+          base.current = { id: stored.baseId, markedAt: stored.baseMarkedAt };
+          setDraft(stored.draft ?? {});
+          setReasons(stored.reasons ?? {});
+          setFaceMatches(stored.faceMatches ?? {});
+          setDirty(true);
+          setRecovered('restored');
+        } else {
+          clearDraft(persistKey);
+          setRecovered('superseded');
+        }
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedId]);
+  }, [loadedId, persistKey, loaded === undefined]);
+
+  // Keep unsaved edits on the device while they are unsaved.
+  useEffect(() => {
+    if (!persistKey) return;
+    if (!dirty) return;
+    writeDraft<PersistedDraft>(persistKey, {
+      draft, reasons, faceMatches, baseId: base.current.id, baseMarkedAt: base.current.markedAt,
+    });
+  }, [persistKey, dirty, draft, reasons, faceMatches]);
 
   const setStatus = useCallback(
     (studentId: string, status: AttendanceStatus, reason?: string) => {
@@ -282,9 +353,15 @@ export function useSessionDraft(loaded: AttendanceSession | null | undefined): S
     setReasons(loaded?.excuseReasons ?? {});
     setFaceMatches(loaded?.faceMatches ?? {});
     setDirty(false);
-  }, [loaded]);
+    setRecovered(null);
+    if (persistKey) clearDraft(persistKey);
+  }, [loaded, persistKey]);
 
-  const markClean = useCallback(() => setDirty(false), []);
+  const markClean = useCallback(() => {
+    setDirty(false);
+    setRecovered(null);
+    if (persistKey) clearDraft(persistKey);
+  }, [persistKey]);
 
   const getReason = useCallback(
     (studentId: string) => reasons[studentId],
@@ -306,6 +383,7 @@ export function useSessionDraft(loaded: AttendanceSession | null | undefined): S
     hasEntries,
     faceMatches,
     markPresentByFace,
+    recovered,
   };
 }
 

@@ -11,7 +11,8 @@
 
 // v3: drops copies saved by older versions, which could hold the app page
 // saved under a program file's name after a broken deploy.
-const CACHE_NAME = 'kalaboboarding-v3';
+// v4: version.json is never cached (open tabs use it to notice updates).
+const CACHE_NAME = 'kalaboboarding-v4';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -48,6 +49,8 @@ self.addEventListener('fetch', (event) => {
   // Face recognition models (38 MB): the face engine keeps its own copy in
   // the browser cache, so don't store a second one here.
   if (url.pathname.startsWith('/models/')) return;
+  // Update checks must always reach the server.
+  if (url.pathname === '/version.json') return;
 
   // Hashed build files: cache first.
   if (url.pathname.startsWith('/assets/')) {

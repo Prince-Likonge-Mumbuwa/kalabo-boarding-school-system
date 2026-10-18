@@ -92,3 +92,29 @@ test('clean-up: leavers lose their faces; moved learners get a fresh snapshot', 
   assert.deepEqual(r.refresh.map((x) => x.learnerId), ['moved']);
   assert.equal(r.refresh[0].snapshot.studentId, 'F2B_003');
 });
+
+test('a clear match must stand out from the next most similar learner', () => {
+  const alice = unit(1), ben = unit(2);
+  const face = mix(alice, ben, 0.5); // looks equally like both
+  const templates = [{ learnerId: 'A', vector: alice }, { learnerId: 'B', vector: ben }];
+  const sAlice = face.reduce((s, x, i) => s + x * alice[i], 0);
+  const settings = { reviewThreshold: 0.2, matchThreshold: Math.min(0.95, sAlice - 0.01) };
+  const [r] = lib.matchFaces([{ box: [0, 0, 1, 1], embedding: face }], templates, settings);
+  assert.ok(r.learnerId === 'A' || r.learnerId === 'B');
+  assert.equal(r.verdict, 'review'); // above the match level, but not clearly one learner
+
+  const [clear] = lib.matchFaces([{ box: [0, 0, 1, 1], embedding: alice }], templates, { reviewThreshold: 0.363, matchThreshold: 0.45 });
+  assert.equal(clear.learnerId, 'A');
+  assert.equal(clear.verdict, 'match');
+});
+
+test('several templates of the same learner do not count as a rival', () => {
+  const alice = unit(1);
+  const alice2 = mix(alice, unit(7), 0.05); // a second angle, very close to the first
+  const [r] = lib.matchFaces(
+    [{ box: [0, 0, 1, 1], embedding: alice }],
+    [{ learnerId: 'A', vector: alice }, { learnerId: 'A', vector: alice2 }],
+    { reviewThreshold: 0.363, matchThreshold: 0.45 },
+  );
+  assert.equal(r.verdict, 'match');
+});

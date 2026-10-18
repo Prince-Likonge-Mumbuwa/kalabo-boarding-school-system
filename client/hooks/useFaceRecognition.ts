@@ -55,6 +55,17 @@ export async function saveFaceSettings(s: FaceSettings, by: string) {
   await setDoc(doc(db, ...SETTINGS_DOC), { ...normalizeFaceSettings(s), updatedBy: by, updatedAt: new Date() }, { merge: true });
 }
 
+/** Settings → the on/off switch only (thresholds are left as they are). */
+export async function saveFaceSwitch(enabled: boolean, by: string) {
+  await setDoc(doc(db, ...SETTINGS_DOC), { enabled: enabled === true, updatedBy: by, updatedAt: new Date() }, { merge: true });
+}
+
+/** Attendance → Face recognition: thresholds only (the switch is left as it is). */
+export async function saveFaceThresholds(t: Pick<FaceSettings, 'reviewThreshold' | 'matchThreshold'>, by: string) {
+  const { reviewThreshold, matchThreshold } = normalizeFaceSettings({ ...t, enabled: false });
+  await setDoc(doc(db, ...SETTINGS_DOC), { reviewThreshold, matchThreshold, updatedBy: by, updatedAt: new Date() }, { merge: true });
+}
+
 /** Can this user use face features now? Admins always (pilot); teachers when switched on. */
 export function useFaceAccess() {
   const { user } = useAuth();

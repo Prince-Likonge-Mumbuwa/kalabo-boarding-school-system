@@ -62,9 +62,11 @@ import { RiskAnalyticsTab } from '@/components/attendance/RiskAnalyticsTab';
 import { HolidayBanner } from '@/components/timetable/TimetableShared';
 import { exportAttendanceRecords, type AttendanceExportRow } from '@/utils/exportUtils';
 import { formatLocalYMD } from '@/services/schoolService';
-import { useFaceAccess } from '@/hooks/useFaceRecognition';
+import { draftKey } from '@/lib/draftStore';
+import { useClassFaceStatus, useFaceAccess } from '@/hooks/useFaceRecognition';
 // The face scanner (and its ~4 MB recognition engine) loads only when opened.
 const FaceScanDialog = lazy(() => import('@/components/face/FaceScanDialog'));
+const ClassFaceEnrolment = lazy(() => import('@/components/face/ClassFaceEnrolment').then(m => ({ default: m.ClassFaceEnrolment })));
 import {
   Filter, RefreshCw, Check, Clock,
   AlertCircle, MessageSquare, ChevronDown,
@@ -208,6 +210,7 @@ export default function AttendanceTracking() {
   }>({ isOpen: false });
   const [excuseReasonText, setExcuseReasonText] = useState('');
   const [showFaceScan, setShowFaceScan] = useState(false);
+  const [showFaceEnrol, setShowFaceEnrol] = useState(false);
   const faceAccess = useFaceAccess();
 
   // ── Data sources ───────────────────────────────────────────────────
@@ -282,6 +285,7 @@ export default function AttendanceTracking() {
     [classes],
   );
   const isFormTeacher = !!formTeacherClass;
+  const selectedClassIsForm = !!classes.find(c => c.id === selectedClass)?.isFormTeacher;
 
   // ── Available classes ─────────────────────────────────────────────
   //
@@ -327,6 +331,15 @@ export default function AttendanceTracking() {
     [learnersQ.data, selectedClass],
   );
   const loadingLearners = learnersQ.isLoading && !!selectedClass;
+
+  // Face recognition for the selected class: how many learners can be
+  // recognised, and (for the form teacher) enrolment from this page.
+  const faceStatusQ = useClassFaceStatus(selectedClass || undefined, { enabled: faceAccess.canUse && !!selectedClass });
+  const faceReady = useMemo(() => {
+    const m = faceStatusQ.data;
+    if (!m) return null;
+    return learners.filter(l => { const f = m.get(l.id); return !!f && f.consent && f.templateCount > 0; }).length;
+  }, [faceStatusQ.data, learners]);
 
   // ── Defaults ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -411,7 +424,13 @@ export default function AttendanceTracking() {
     { enabled: activeTab === 'overview' && isFormTeacher && !!selectedClass },
   );
 
-  const draft = useSessionDraft(sessionQuery.data);
+  // Unsaved marks are kept on this device per teacher + register, so they
+  // survive a reload, an app update or the end of a 2-hour session.
+  const draftPersistKey =
+    user?.uid && selectedClass && (mode === 'daily' || (sessionPeriod && sessionSubject))
+      ? draftKey(user.uid, 'attendance', selectedClass, selectedDate, mode, sessionPeriod, sessionSubject)
+      : undefined;
+  const draft = useSessionDraft(sessionQuery.data, draftPersistKey);
 
   // ── Last-status lookup for context chips ──────────────────────────
   const lastStatusMap = useMemo(
@@ -949,6 +968,16 @@ export default function AttendanceTracking() {
           {activeTab === 'mark' && !isHoliday && (
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
+                {draft.recovered === 'restored' && (
+                  <span role="status" className="text-xs sm:text-sm text-blue-800 bg-blue-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg flex items-center gap-1">
+                    <Info size={12} /> Unsaved marks from your last visit were put back — check them and press Save.
+                  </span>
+                )}
+                {draft.recovered === 'superseded' && (
+                  <span role="status" className="text-xs sm:text-sm text-amber-800 bg-amber-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg flex items-center gap-1">
+                    <Info size={12} /> This register was saved after your unsaved marks, so the saved register is shown.
+                  </span>
+                )}
                 {draft.dirty && (
                   <span className="text-xs sm:text-sm text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg whitespace-nowrap flex items-center gap-1">
                     <Clock size={12} />
@@ -973,7 +1002,7 @@ export default function AttendanceTracking() {
                 )}
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {faceAccess.canUse && studentsWithAttendance.length > 0 && (
                   <button
                     onClick={() => setShowFaceScan(true)}
@@ -982,6 +1011,21 @@ export default function AttendanceTracking() {
                   >
                     <ScanFace size={14} />
                     <span>Scan faces</span>
+                    {faceReady !== null && (
+                      <span className="ml-0.5 rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-800" title="Learners with a face saved">
+                        {faceReady}/{studentsWithAttendance.length}
+                      </span>
+                    )}
+                  </button>
+                )}
+                {faceAccess.canUse && selectedClassIsForm && studentsWithAttendance.length > 0 && (
+                  <button
+                    onClick={() => setShowFaceEnrol(true)}
+                    className="px-3 py-2 border border-sky-300 text-sky-800 bg-white rounded-lg hover:bg-sky-50 text-xs sm:text-sm whitespace-nowrap flex items-center gap-1"
+                    title="Record consent and save learners' faces for the register"
+                  >
+                    <ScanFace size={14} />
+                    <span>Enrol faces</span>
                   </button>
                 )}
                 {filteredStudents.length > 0 && (
@@ -1384,6 +1428,18 @@ export default function AttendanceTracking() {
           </div>
         )}
       </div>
+
+      {showFaceEnrol && selectedClass && (
+        <Suspense fallback={null}>
+          <ClassFaceEnrolment
+            open={showFaceEnrol}
+            onOpenChange={o => { setShowFaceEnrol(o); if (!o) faceStatusQ.refetch(); }}
+            classId={selectedClass}
+            className={classes.find(c => c.id === selectedClass)?.name ?? ''}
+            learners={learners.map(l => ({ id: l.id, studentId: l.studentId, fullName: l.name }))}
+          />
+        </Suspense>
+      )}
 
       {showFaceScan && selectedClass && (
         <Suspense fallback={null}>

@@ -52,14 +52,21 @@ function load(onProgress?: Progress): Promise<Engine> {
   engine ??= (async () => {
     const ort = await import("onnxruntime-web/wasm");
     ort.env.logLevel = "error";
-    // Threads need cross-origin isolation; one thread is plenty for a register photo.
-    ort.env.wasm.numThreads = 1;
+    // Threads need cross-origin isolation; use them when the page has it.
+    const isolated = typeof self !== "undefined" && (self as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
+    ort.env.wasm.numThreads = isolated ? Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)) : 1;
     const [y, s] = await Promise.all([model("yunet.onnx", onProgress), model("sface.onnx", onProgress)]);
     onProgress?.("Starting face recognition…");
     const [yunet, sface] = await Promise.all([
       ort.InferenceSession.create(y, { executionProviders: ["wasm"], logSeverityLevel: 3 }),
       ort.InferenceSession.create(s, { executionProviders: ["wasm"], logSeverityLevel: 3 }),
     ]);
+    // One tiny run of each model first: the first inference sets up memory
+    // and is slow, so do it now rather than on the first camera frame.
+    try {
+      await yunet.run({ input: new ort.Tensor("float32", new Float32Array(3 * 32 * 32), [1, 3, 32, 32]) });
+      await sface.run({ data: new ort.Tensor("float32", new Float32Array(3 * 112 * 112), [1, 3, 112, 112]) });
+    } catch { /* warm-up only */ }
     return { ort, yunet, sface };
   })().catch((e) => { engine = null; throw e; });
   return engine;
@@ -86,10 +93,13 @@ async function pixels(file: Blob): Promise<Rgba> {
   return { data, width, height };
 }
 
+/** Longest side analysed for a class photo: back-row faces stay big enough. */
+export const CLASS_PHOTO_SIDE = 2048;
+
 /** Find faces in a photo. With single, exactly one clear face is required (enrolment). */
-export async function readFaces(file: Blob, opts: { single?: boolean; onProgress?: Progress } = {}): Promise<Analysis> {
+export async function readFaces(file: Blob, opts: { single?: boolean; onProgress?: Progress; maxSide?: number } = {}): Promise<Analysis> {
   const [{ ort, yunet, sface }, img] = await Promise.all([load(opts.onProgress), pixels(file)]);
   opts.onProgress?.(opts.single ? "Checking the photo…" : "Looking for faces…");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return analyse(ort as any, yunet as any, sface as any, img, opts.single);
+  return analyse(ort as any, yunet as any, sface as any, img, opts.single, opts.maxSide);
 }
