@@ -24,6 +24,7 @@ import {
   Activity,
   UserPlus,
   Award,
+  History,
 } from 'lucide-react';
 
 // Union of all navigable tab ids — keeps activeTab type-safe across pages.
@@ -48,6 +49,7 @@ type ActiveTab =
   | 'admissions-classes'
   | 'results-sba'
   | 'attendance-timetable'
+  | 'audit-trail'
   | (string & {}); // allow any string for forward-compatibility without losing hints
 
 interface DashboardLayoutProps {
@@ -99,6 +101,8 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
     { id: 'reports', label: 'Report Cards', icon: FileText, path: '/dashboard/admin/report-cards' },
     // New academic year: promote learners, graduate the final year.
     { id: 'year-transition', label: 'Year Transition', icon: GraduationCap, path: '/dashboard/admin/year-transition' },
+    // Who did what, and when.
+    { id: 'audit-trail', label: 'Audit Trail', icon: History, path: '/dashboard/admin/audit-trail' },
   ];
 
   const teacherMenuItems = [

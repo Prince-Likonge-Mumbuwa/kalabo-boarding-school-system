@@ -19,7 +19,8 @@ import {
   where,
   serverTimestamp,
   limit
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
+import { auditEvent, flushAudit, setAuditActor } from '@/lib/auditedFirestore';
 import { auth, db } from '@/lib/firebase';
 
 // Types
@@ -74,7 +75,8 @@ interface AuthContextType {
   getUserDisplayName: () => string;
   signup: (data: SignupData) => Promise<{ success: boolean; message: string; email?: string }>;
   login: (email: string, password: string) => Promise<any>;
-  logout: () => Promise<void>;
+  /** `reason` is recorded in the audit trail (default "Signed out"). */
+  logout: (reason?: string) => Promise<void>;
   resendVerificationEmail: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
 }
@@ -94,6 +96,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           if (userDoc.exists()) {
             const userData = userDoc.data();
+            setAuditActor({ uid: firebaseUser.uid, name: userData.fullName || firebaseUser.email || '', role: userData.userType || '' });
             setUser({
               uid: firebaseUser.uid,
               email: firebaseUser.email!,
@@ -124,6 +127,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setIsAuthenticated(false);
         }
       } else {
+        setAuditActor(null);
         setUser(null);
         setIsAuthenticated(false);
       }
@@ -317,6 +321,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
 
       console.log('Login successful');
+      const ud = userDoc.data();
+      setAuditActor({ uid: firebaseUser.uid, name: ud.fullName || firebaseUser.email || '', role: ud.userType || '' });
+      auditEvent('Signed in');
+      void flushAudit();
       return userCredential;
     } catch (error: any) {
       console.error('Login error:', error);
@@ -335,8 +343,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const logout = async () => {
+  const logout = async (reason?: unknown) => {
     try {
+      // Recorded while still signed in (the audit needs the user). Buttons
+      // may pass a click event: only a text reason is used.
+      auditEvent(typeof reason === 'string' && reason ? reason : 'Signed out');
+      await flushAudit();
+      setAuditActor(null);
       await signOut(auth);
     } catch (error) {
       console.error('Logout error:', error);

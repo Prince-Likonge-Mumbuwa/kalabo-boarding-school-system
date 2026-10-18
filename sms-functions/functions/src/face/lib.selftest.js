@@ -118,3 +118,31 @@ test('several templates of the same learner do not count as a rival', () => {
   );
   assert.equal(r.verdict, 'match');
 });
+
+test('who may manage faces: admin, the form teacher now, an officer for admitted learners', () => {
+  const now = Date.parse('2026-10-18T10:00:00Z');
+  const admin = { uid: 'A', isAdmin: true };
+  const ft = { uid: 'FT', isAdmin: false };
+  const cover = { uid: 'CV', isAdmin: false };
+  const other = { uid: 'X', isAdmin: false };
+  const learner = { classId: 'F2A', status: 'active' };
+  const admitted = { ...learner, admissionId: '2027-0001' };
+  const slot = { ownerTeacherId: 'FT', delegateTeacherId: null };
+  assert.equal(lib.canManageFaces(admin, learner, {}, now), true);
+  assert.equal(lib.canManageFaces(admin, null, {}, now), true);
+  assert.equal(lib.canManageFaces(ft, learner, { ftSlot: slot }, now), true);
+  assert.equal(lib.canManageFaces(other, learner, { ftSlot: slot }, now), false);
+  assert.equal(lib.canManageFaces(other, null, {}, now), false);
+  // a live cover takes over; the owner is back once it ends
+  const covered = { ownerTeacherId: 'FT', delegateTeacherId: 'CV', delegateStart: { toMillis: () => now - 1000 }, delegateEnd: { toMillis: () => now + 1000 } };
+  assert.equal(lib.canManageFaces(cover, learner, { ftSlot: covered }, now), true);
+  assert.equal(lib.canManageFaces(ft, learner, { ftSlot: covered }, now), false);
+  assert.equal(lib.canManageFaces(ft, learner, { ftSlot: covered }, now + 5000), true);
+  assert.equal(lib.canManageFaces(cover, learner, { ftSlot: covered }, now + 5000), false);
+  // before the assignment engine: classes.formTeacherId
+  assert.equal(lib.canManageFaces(ft, learner, { classDoc: { formTeacherId: 'FT' } }, now), true);
+  // admissions officers: active role, admitted learners only
+  assert.equal(lib.canManageFaces(other, admitted, { officerRole: { status: 'active' } }, now), true);
+  assert.equal(lib.canManageFaces(other, learner, { officerRole: { status: 'active' } }, now), false);
+  assert.equal(lib.canManageFaces(other, admitted, { officerRole: { status: 'ended' } }, now), false);
+});

@@ -35,7 +35,7 @@ import {
   where,
   writeBatch,
   type DocumentData,
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import {
   ADMISSIONS_OFFICER_ROLE,

@@ -17,7 +17,7 @@ import {
   startAfter,
   QueryDocumentSnapshot,
   DocumentSnapshot
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import { Class, Learner, Teacher, User } from '@/types/school';
 

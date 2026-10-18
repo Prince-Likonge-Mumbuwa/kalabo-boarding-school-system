@@ -16,6 +16,7 @@ import {
   Loader2,
   Lock,
   Printer,
+  ScanFace,
   RefreshCw,
   Search,
   Settings as SettingsIcon,
@@ -50,7 +51,10 @@ import {
 import { teacherService } from '@/services/schoolService';
 import { printAdmissionSlip } from './admissionSlip';
 import { useEmbedded } from '@/components/workspace/embedded';
-import { CaptureFaceNowButton, LearnerFaceDialog } from '@/components/face/LearnerFace';
+import { CaptureFaceNowButton, LearnerFaceDialog, type FaceLearner } from '@/components/face/LearnerFace';
+import { ClassFaceEnrolment, FaceBadgeChip } from '@/components/face/ClassFaceEnrolment';
+import { useFaceAccess, useLearnersFaceStatus } from '@/hooks/useFaceRecognition';
+import { faceBadge } from '@/types/face';
 
 type Tab = 'admit' | 'progress' | 'admitted' | 'settings';
 
@@ -581,6 +585,14 @@ function AdmittedList({ user, records, loading, onChanged }: { user: WorkspaceUs
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Faces of the admitted learners (admins and admissions officers).
+  const { canUse: faces } = useFaceAccess();
+  const admitted = useMemo(() => records.filter(r => r.status === 'admitted' && r.learnerId), [records]);
+  const faceQ = useLearnersFaceStatus(admitted.map(r => r.learnerId), { enabled: faces });
+  const [faceFor, setFaceFor] = useState<FaceLearner | null>(null);
+  const [allFaces, setAllFaces] = useState(false);
+  const missing = faces && faceQ.data ? admitted.filter(r => faceBadge(faceQ.data!.get(r.learnerId)) !== 'enrolled').length : 0;
+
   const s = search.trim().toLowerCase();
   const shown = records.filter(r =>
     !s || r.fullName.toLowerCase().includes(s) || r.studentId.toLowerCase().includes(s) ||
@@ -605,16 +617,23 @@ function AdmittedList({ user, records, loading, onChanged }: { user: WorkspaceUs
 
   return (
     <Card title={`Admitted (${records.filter(r => r.status === 'admitted').length})`}>
-      <div className="relative mb-4 w-72 max-w-full">
-        <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, student id, admission no., class" className="pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm w-full" />
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-72 max-w-full">
+          <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, student id, admission no., class" className="pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm w-full" />
+        </div>
+        {faces && admitted.length > 0 && (
+          <button onClick={() => setAllFaces(true)} className="inline-flex items-center justify-center gap-2 self-start rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 sm:self-auto">
+            <ScanFace size={15} /> Faces{faceQ.data ? ` (${missing} without)` : ''}
+          </button>
+        )}
       </div>
       {error && <Banner tone="error">{error}</Banner>}
       {loading ? <Loading text="Loading…" /> : shown.length === 0 ? (
         <p className="text-sm text-gray-600">No admissions{s ? ' match' : ' yet'}.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="text-left text-gray-500 border-b">
                 <th className="py-2 pr-3">Adm. No.</th>
@@ -639,6 +658,15 @@ function AdmittedList({ user, records, loading, onChanged }: { user: WorkspaceUs
                   <td className="py-1.5 pr-3">{r.admittedByName}</td>
                   <td className="py-1.5 pr-3 whitespace-nowrap">{r.admittedAt ? new Date(r.admittedAt).toLocaleDateString('en-GB') : ''}</td>
                   <td className="py-1.5 pr-3 whitespace-nowrap text-right">
+                    {faces && r.status === 'admitted' && r.learnerId && (
+                      <button
+                        onClick={() => setFaceFor({ id: r.learnerId, studentId: r.studentId, fullName: r.fullName, className: r.className })}
+                        className="mr-3 inline-flex items-center gap-1 text-xs text-indigo-700"
+                        aria-label={`Face for ${r.fullName}`}
+                      >
+                        {faceQ.data ? <FaceBadgeChip badge={faceBadge(faceQ.data.get(r.learnerId))} compact /> : <ScanFace size={13} />} Face
+                      </button>
+                    )}
                     <button onClick={() => printAdmissionSlip(r)} className="inline-flex items-center gap-1 text-blue-600 text-xs mr-3"><Printer size={13} /> Slip</button>
                     {user.isAdmin && r.status === 'admitted' && (
                       <button onClick={() => setCancelling(r)} className="inline-flex items-center gap-1 text-red-600 text-xs"><XCircle size={13} /> Cancel</button>
@@ -649,6 +677,16 @@ function AdmittedList({ user, records, loading, onChanged }: { user: WorkspaceUs
             </tbody>
           </table>
         </div>
+      )}
+      <LearnerFaceDialog learner={faceFor} onClose={() => setFaceFor(null)} />
+      {allFaces && (
+        <ClassFaceEnrolment
+          open
+          onOpenChange={o => { if (!o) setAllFaces(false); }}
+          classId="admissions"
+          className="Admitted learners"
+          learners={admitted.map(r => ({ id: r.learnerId, studentId: r.studentId, fullName: r.fullName, className: r.className }))}
+        />
       )}
       {cancelling && (
         <div className="mt-4 border border-red-200 bg-red-50 rounded-lg p-3 text-sm space-y-2">

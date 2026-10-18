@@ -14,7 +14,7 @@ import {
   serverTimestamp,
   DocumentData,
   limit,
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import type {
   ExamConfig,

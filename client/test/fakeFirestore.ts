@@ -46,6 +46,7 @@ export function doc(parent: any, ...segs: string[]) {
 export const where = (field: string, op: string, value: any) => ({ kind: 'where', field, op, value });
 export const orderBy = (field: string, dir: 'asc' | 'desc' = 'asc') => ({ kind: 'orderBy', field, dir });
 export const limit = (n: number) => ({ kind: 'limit', n });
+export const startAfter = (snap: any) => ({ kind: 'startAfter', id: snap?.id });
 export const query = (col: any, ...constraints: any[]) => ({ type: 'query', path: col.path, constraints });
 
 const snapDoc = (col: string, id: string, data: Data | undefined) => ({
@@ -84,6 +85,8 @@ export async function getDocs(q: any) {
       rows.sort(([, a], [, b]) => (a[c.field] < b[c.field] ? -1 : a[c.field] > b[c.field] ? 1 : 0) * (c.dir === 'desc' ? -1 : 1));
     }
   }
+  const after = constraints.find(c => c.kind === 'startAfter');
+  if (after) { const i = rows.findIndex(([id]) => id === after.id); rows = i >= 0 ? rows.slice(i + 1) : rows; }
   const lim = constraints.find(c => c.kind === 'limit');
   if (lim) rows = rows.slice(0, lim.n);
   const docs = rows.map(([id, d]) => snapDoc(col, id, d));

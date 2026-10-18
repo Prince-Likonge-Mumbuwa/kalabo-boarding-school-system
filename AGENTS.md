@@ -162,3 +162,9 @@ const data: MyRouteResponse = await response.json();
 - Production-ready with multiple deployment options
 - Comprehensive UI component library included
 - Type-safe API communication via shared interfaces
+
+## Audit trail (required for writes)
+
+Code that writes to Firestore must import from `@/lib/auditedFirestore`
+(not `firebase/firestore`): the same API, but every successful write is
+recorded in the admin's Audit Trail. See `AUDIT_TRAIL.md`.

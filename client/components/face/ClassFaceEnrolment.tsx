@@ -17,6 +17,8 @@ export interface ClassLearner {
   studentId: string;
   fullName: string;
   status?: string;
+  /** When the list spans classes (Admissions): the learner's own class. */
+  className?: string;
 }
 
 const countedLearner = (l: ClassLearner) => !l.status || l.status === 'active';
@@ -66,7 +68,7 @@ export function ClassFaceEnrolment({ open, onOpenChange, classId, className, lea
 
   const learner: EnrolLearner | null = useMemo(() => {
     const l = rows.find(r => r.id === current);
-    return l ? { id: l.id, studentId: l.studentId, name: l.fullName, className } : null;
+    return l ? { id: l.id, studentId: l.studentId, name: l.fullName, className: l.className || className } : null;
   }, [rows, current, className]);
 
   // Next learner after the current one who has no face yet (consent or not).

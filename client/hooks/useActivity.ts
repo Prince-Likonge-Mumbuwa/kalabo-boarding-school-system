@@ -9,7 +9,7 @@ import {
   Timestamp,
   doc,
   writeBatch
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import { useEffect } from 'react';
 
@@ -284,7 +284,7 @@ export const createActivity = async (activityData: {
   userRole: 'admin' | 'teacher' | 'student' | 'system';
   metadata?: Record<string, any>;
 }): Promise<string> => {
-  const { addDoc, collection } = await import('firebase/firestore');
+  const { addDoc, collection } = await import('@/lib/auditedFirestore');
   const { db } = await import('@/lib/firebase');
   
   const activitiesRef = collection(db, 'activities');

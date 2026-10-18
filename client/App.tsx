@@ -28,6 +28,7 @@ const ResultsDataCheck = lazy(() => import("./pages/admin/ResultsDataCheck"));
 const TimetableDataCheck = lazy(() => import("./pages/admin/TimetableDataCheck"));
 const ReportCards = lazy(() => import("./pages/admin/ReportCards"));
 const YearTransition = lazy(() => import("./pages/admin/YearTransition"));
+const AuditTrail = lazy(() => import("./pages/admin/AuditTrail"));
 const OfficerAdmissions = lazy(() => import("./pages/teacher/Admissions"));
 
 // Teacher Pages
@@ -149,6 +150,13 @@ const App = () => (
             <Route path="/dashboard/admin/year-transition" element={
               <ProtectedRoute allowedRoles={['admin']}>
                 <YearTransition />
+              </ProtectedRoute>
+            } />
+
+            {/* Audit trail: who did what, and when */}
+            <Route path="/dashboard/admin/audit-trail" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AuditTrail />
               </ProtectedRoute>
             } />
 

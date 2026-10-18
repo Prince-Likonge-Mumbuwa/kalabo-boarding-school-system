@@ -43,7 +43,7 @@ import {
   runTransaction,
   deleteDoc,
   DocumentData,
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import { normalizeSubjectName } from '@/services/resultsService';
 import type { TermName } from '@/utils/academicTerm';

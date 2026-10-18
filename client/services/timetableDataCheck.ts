@@ -1,7 +1,7 @@
 // Timetable data check: find and repair rows written by older versions of
 // the app. Read-only until a fix is run; each fix only touches what it lists.
 
-import { collection, doc, getDocs, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDocs, query, serverTimestamp, where, writeBatch } from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import * as engine from '@/services/assignmentEngine';
 import { listPeriods } from '@/services/timetableService';

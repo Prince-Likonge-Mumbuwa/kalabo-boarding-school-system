@@ -39,7 +39,7 @@ import {
   writeBatch,
   serverTimestamp,
   type DocumentData,
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import { getCurrentAcademicTerm } from '@/utils/academicTerm';
 import type {
