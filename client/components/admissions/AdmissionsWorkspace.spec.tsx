@@ -77,6 +77,26 @@ describe('Admissions workspace', () => {
     expect(await screen.findByText(/Form 1: 1 of 80 places/)).toBeTruthy();
   });
 
+  it('Admitted: faces for admitted learners — per learner, and the whole list', async () => {
+    renderIt(true);
+    await screen.findByText('Learner');
+    type('Full name', 'Mutinta Mwiinga');
+    fireEvent.click(screen.getByRole('button', { name: 'Female' }));
+    type('Date of birth', '2013-04-02');
+    type('Home address', 'Kalabo');
+    type('Guardian name', 'Mr Mwiinga');
+    type('Guardian phone', '0971234567');
+    await screen.findByText(/Will be placed in/);
+    fireEvent.click(screen.getByRole('button', { name: /Save and generate student ID/ }));
+    await screen.findByText('Learner admitted');
+    const learnerId = getDocData('admissions', '2027-0001')?.learnerId;
+
+    fireEvent.click(screen.getByRole('tab', { name: /Admitted/ }));
+    expect(await screen.findByRole('button', { name: /Faces \(1 without\)/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Face for Mutinta Mwiinga' }));
+    expect(await screen.findByText(`face dialog for Mutinta Mwiinga (${learnerId})`)).toBeTruthy();
+  });
+
   it('warns about a possible duplicate before admitting', async () => {
     resetStore({
       system: { academicYear: { currentYear: 2027 } },

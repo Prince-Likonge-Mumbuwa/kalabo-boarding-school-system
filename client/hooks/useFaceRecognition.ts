@@ -1,7 +1,7 @@
 // @/hooks/useFaceRecognition.ts — face settings and learners' face status.
 import { useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { collection, doc, documentId, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { collection, doc, documentId, getDoc, getDocs, query, setDoc, where } from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { DEFAULT_FACE_SETTINGS, type FaceSettings, type FaceStatus } from '@/types/face';

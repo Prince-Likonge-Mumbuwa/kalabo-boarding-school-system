@@ -37,7 +37,7 @@ export function SessionGuard() {
       // Pages save what is unsaved to this device (registers, marks) now.
       window.dispatchEvent(new Event(SESSION_ENDING_EVENT));
       qc.clear();
-      try { await logoutRef.current(); } catch { /* signed out anyway */ }
+      try { await logoutRef.current('Session ended after 2 hours'); } catch { /* signed out anyway */ }
       navigate('/signin', {
         replace: true,
         state: { message: 'Your session ended after 2 hours. Please sign in again — unsaved registers and marks on this device are kept for you.' },

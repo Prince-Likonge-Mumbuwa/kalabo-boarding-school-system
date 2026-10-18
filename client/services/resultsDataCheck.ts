@@ -29,7 +29,7 @@ import {
   where,
   writeBatch,
   setDoc,
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { loadClosedMembership } from '@/services/enrollmentService';
 import { db } from '@/lib/firebase';
 import { slotKeyFor } from '@/services/resultsGridLoader';

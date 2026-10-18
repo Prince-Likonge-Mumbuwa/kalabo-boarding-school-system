@@ -41,7 +41,7 @@ import {
   serverTimestamp,
   where,
   writeBatch,
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 
 // ==================== TYPES ====================

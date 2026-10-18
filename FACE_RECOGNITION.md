@@ -112,6 +112,18 @@ Do these once, in order.
 
 ## Daily use
 
+**Who may add faces** (consent, add / remove faces — checked by the server):
+- **Admins** — any learner: Classes → a class's learners → **Faces**, Edit
+  Learner, Attendance → Face recognition.
+- **Form teachers** — learners of their class (the teacher operating the
+  class now; a live cover takes over): My Class → *Enrol faces*, Edit
+  Learner, Attendance Tracking.
+- **Admissions officers** (and admins) — learners admitted through
+  Admissions: *Capture face now* after admitting, and Admissions →
+  **Admitted** → *Face* (one learner) or **Faces** (the whole intake).
+Everyone else, including other teachers, is refused. (Scanning faces to take
+a register is open to any teacher, as before.)
+
 **Capture at enrolment:** after **Add Learner** (Classes, My Class) and after
 **Admissions** → *Save and generate student ID*, press *Capture face now*.
 **Edit Learner** shows the learner's face status with *Capture face* /

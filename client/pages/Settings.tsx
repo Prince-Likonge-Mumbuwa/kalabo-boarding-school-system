@@ -5,7 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
 import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, deleteDoc } from '@/lib/auditedFirestore';
 import { FaceRecognitionToggleCard } from '@/components/face/FaceRecognitionToggleCard';
 import { MyDepartmentsCard } from '@/components/departments/MyDepartmentsCard';
 import {

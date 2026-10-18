@@ -29,8 +29,8 @@ import {
   DocumentData,
   serverTimestamp,
   setDoc,
-} from 'firebase/firestore';
-import type { WriteBatch, DocumentSnapshot } from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
+import type { WriteBatch, DocumentSnapshot } from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import {
   Class,

@@ -12,7 +12,7 @@ import {
   Timestamp,
   orderBy,
   limit,
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import {
   AttendanceStatus,

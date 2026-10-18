@@ -57,8 +57,8 @@ import {
   arrayUnion,
   arrayRemove,
   DocumentData,
-} from 'firebase/firestore';
-import type { Transaction, DocumentReference, DocumentSnapshot } from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
+import type { Transaction, DocumentReference, DocumentSnapshot } from '@/lib/auditedFirestore';
 import { getAuth } from 'firebase/auth';
 import { db } from '@/lib/firebase';
 import { normalizeSubjectName } from './resultsService';

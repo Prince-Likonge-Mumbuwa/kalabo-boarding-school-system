@@ -34,7 +34,7 @@ import {
   where,
   writeBatch,
   type DocumentData,
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import { delegationState, mapSlot, type ClassSlot } from './assignmentEngine';
 import type { BoardLesson, SchoolDayBoard } from './timetableService';

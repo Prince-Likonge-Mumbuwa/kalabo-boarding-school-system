@@ -188,6 +188,36 @@ function planReconcile(ids, learners, status, templates) {
   return { remove, refresh };
 }
 
+/**
+ * Who may record consent, add or remove a learner's faces:
+ *  - an administrator — any learner (Class Management, Attendance);
+ *  - the learner's form teacher now — the operator of the class's Form
+ *    Teacher slot (a live cover takes over from the owner), or, before the
+ *    assignment engine is set up, classes.formTeacherId (My Class);
+ *  - an active admissions officer — learners admitted through Admissions.
+ * ctx: { ftSlot, classDoc, officerRole } — the documents as read (or null).
+ */
+const toMs = (v) => (v == null ? null : typeof v.toMillis === 'function' ? v.toMillis() : v instanceof Date ? v.getTime() : typeof v === 'number' ? v : typeof v === 'string' ? Date.parse(v) : typeof v._seconds === 'number' ? v._seconds * 1000 : null);
+
+function formTeacherOperator(ftSlot, classDoc, now = Date.now()) {
+  if (ftSlot) {
+    const start = toMs(ftSlot.delegateStart), end = toMs(ftSlot.delegateEnd);
+    if (ftSlot.delegateTeacherId && start != null && end != null && now >= start && now <= end) return ftSlot.delegateTeacherId;
+    return ftSlot.ownerTeacherId || null;
+  }
+  return (classDoc && classDoc.formTeacherId) || null;
+}
+
+function canManageFaces(staff, learner, ctx = {}, now = Date.now()) {
+  if (!staff) return false;
+  if (staff.isAdmin) return true;
+  if (!learner) return false;
+  if (formTeacherOperator(ctx.ftSlot || null, ctx.classDoc || null, now) === staff.uid) return true;
+  const officer = ctx.officerRole;
+  if (officer && officer.status === 'active' && learner.admissionId) return true;
+  return false;
+}
+
 /** A short random id for one template (so a single angle can be removed). */
 const templateId = () => b64(crypto.getRandomValues(new Uint8Array(9))).replace(/[+/=]/g, (c) => ({ '+': '-', '/': '_', '=': '' }[c]));
 
@@ -208,4 +238,6 @@ module.exports = {
   matchFaces,
   templateId,
   planReconcile,
+  formTeacherOperator,
+  canManageFaces,
 };

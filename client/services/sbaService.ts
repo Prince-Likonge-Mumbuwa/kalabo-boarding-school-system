@@ -19,7 +19,7 @@ import {
   where,
   writeBatch,
   setDoc,
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import { normalizeSubjectName } from './resultsService';
 import {

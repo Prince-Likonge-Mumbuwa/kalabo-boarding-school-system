@@ -75,6 +75,30 @@ async function requireEnabled(staff) {
   return settings;
 }
 
+
+/**
+ * Consent, adding and removing faces: admins, the learner's form teacher, or
+ * an admissions officer for learners admitted through Admissions.
+ */
+const FORM_TEACHER_SLOT = 'form-teacher';
+async function requireFaceManager(staff, learnerData) {
+  if (staff.isAdmin) return;
+  const classId = learnerData && learnerData.classId;
+  const [slot, cls, officer] = await Promise.all([
+    classId ? db().collection('class_slots').doc(`${classId}__${FORM_TEACHER_SLOT}`).get() : null,
+    classId ? db().collection('classes').doc(classId).get() : null,
+    db().collection('staff_roles').doc(`${staff.uid}__admissions-officer`).get(),
+  ]);
+  const ctx = {
+    ftSlot: slot && slot.exists ? slot.data() : null,
+    classDoc: cls && cls.exists ? cls.data() : null,
+    officerRole: officer && officer.exists ? officer.data() : null,
+  };
+  if (!lib.canManageFaces(staff, learnerData, ctx)) {
+    throw new HttpsError('permission-denied', "Only an administrator, this learner's form teacher, or an admissions officer (for admitted learners) can do this.");
+  }
+}
+
 /* ---------- helpers ---------- */
 
 const str = (v, what) => {
@@ -158,6 +182,7 @@ exports.faceSetConsent = onCall(OPTS, wrap(async (request) => {
   const learnerId = str(request.data && request.data.learnerId, 'learner');
   const consent = !!(request.data && request.data.consent);
   const learner = await loadLearner(learnerId);
+  await requireFaceManager(staff, learner.data);
   const snap = lib.learnerSnapshot(learner.id, learner.data);
 
   const statusRef = db().collection(STATUS).doc(learnerId);
@@ -204,6 +229,7 @@ exports.faceEnrol = onCall(OPTS, wrap(async (request) => {
   if (d.modelVersion !== lib.MODEL_VERSION) {
     throw new HttpsError('failed-precondition', 'The app is out of date. Reload the page and try again.');
   }
+  await requireFaceManager(staff, (await loadLearner(learnerId)).data);
   const data = await lib.encryptTemplate(FACE_TEMPLATE_KEY.value(), embedding);
   const id = lib.templateId();
   const now = Date.now();
@@ -243,6 +269,9 @@ exports.faceRevoke = onCall(OPTS, wrap(async (request) => {
   const d = request.data || {};
   const learnerId = str(d.learnerId, 'learner');
   const only = typeof d.templateId === 'string' && d.templateId ? d.templateId : null;
+  // A learner record that no longer exists: only an admin may clear its faces.
+  const lsnap = await db().collection('learners').doc(learnerId).get();
+  await requireFaceManager(staff, lsnap.exists ? lsnap.data() : null);
 
   const result = await db().runTransaction(async (tx) => {
     const statusRef = db().collection(STATUS).doc(learnerId);

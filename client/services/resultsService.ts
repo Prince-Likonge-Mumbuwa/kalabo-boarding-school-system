@@ -20,10 +20,10 @@ import {
   Timestamp,
   runTransaction,
   limit,
-} from 'firebase/firestore';
+} from '@/lib/auditedFirestore';
 import { db } from '@/lib/firebase';
 import { getAuth } from 'firebase/auth';
-import type { DocumentData } from 'firebase/firestore';
+import type { DocumentData } from '@/lib/auditedFirestore';
 import * as engine from '@/services/assignmentEngine';
 import {
   MARK,
