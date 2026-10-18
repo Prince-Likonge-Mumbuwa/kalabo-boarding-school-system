@@ -37,6 +37,8 @@ service cloud.firestore {
         // Timetable feature
         'periods', 'school_holidays', 'timetable_entries',
         'timetable_submissions',
+        // Timetable generator
+        'timetable_config', 'timetable_versions', 'timetable_signoffs',
         // Year transition
         'enrollments', 'promotion_runs', 'promotion_run_items',
         // Admissions
@@ -791,43 +793,12 @@ service cloud.firestore {
 
     match /timetable_entries/{entryId} {
 
-      // Any authenticated user may read. The service filters server-side
-      // (teachers see their slots' rows; admins see the approval queue).
+      // Any authenticated user may read (teachers see their own lessons).
       allow read: if isAuthenticated();
 
-      // Teacher creates their own rows, in pending/draft only (once
-      // authority is enforced: only for subjects they own or cover).
-      // Admin creates anything, in any status (used when seeding / fixing).
-      allow create: if isAdmin(request.auth.uid)
-        || (
-          isTeacher(request.auth.uid)
-          && isValidEntryShape(request.resource.data)
-          && request.resource.data.submittedByUid == request.auth.uid
-          && request.resource.data.status in ['pending', 'draft']
-          && (!authorityEnforced()
-              || isOwnerOrOperatorOfSlot(request.resource.data.slotId))
-        );
-
-      // Teacher updates only their own row, and cannot escape
-      // pending/draft/rejected → active. This blocks a malicious client
-      // from self-approving.
-      allow update: if isAdmin(request.auth.uid)
-        || (
-          isTeacher(request.auth.uid)
-          && isValidEntryShape(request.resource.data)
-          && resource.data.submittedByUid == request.auth.uid
-          && resource.data.status in ['pending', 'draft', 'rejected']
-          && request.resource.data.status in ['pending', 'draft', 'rejected']
-          && request.resource.data.submittedByUid == request.auth.uid
-        );
-
-      // Teacher deletes their own non-active rows; admin deletes any.
-      allow delete: if isAdmin(request.auth.uid)
-        || (
-          isTeacher(request.auth.uid)
-          && resource.data.submittedByUid == request.auth.uid
-          && resource.data.status in ['pending', 'draft', 'rejected']
-        );
+      // The timetable is generated and published by the school (admin):
+      // teachers receive it and can no longer write rows themselves.
+      allow create, update, delete: if isAdmin(request.auth.uid);
     }
 
     // ==================== TIMETABLE — SUBMISSIONS ====================
@@ -849,31 +820,57 @@ service cloud.firestore {
 
     match /timetable_submissions/{submissionId} {
       allow read: if isAuthenticated();
+      // Teachers no longer submit timetables (the school timetable is
+      // generated and published). Kept readable for the record.
+      allow create, update, delete: if isAdmin(request.auth.uid);
+    }
 
+    // ==================== TIMETABLE GENERATOR ====================
+    //
+    // timetable_config/school       curriculum, rooms, events (admin or a
+    //                               Timetabler)
+    // timetable_versions/{id}       generated timetables. A Timetabler works
+    //                               on drafts; only an admin publishes,
+    //                               archives or deletes a published one.
+    // timetable_signoffs/{id}       a department's allocations are complete
+    //                               for a term: its HoD (own department) or
+    //                               an admin.
+    // staff_roles/{uid}__timetabler a HoD the admin allows to generate.
+
+    function isTimetabler() {
+      return isHod()
+        && exists(/databases/$(database)/documents/staff_roles/$(request.auth.uid + '__timetabler'))
+        && get(/databases/$(database)/documents/staff_roles/$(request.auth.uid + '__timetabler')).data.get('status', '') == 'active';
+    }
+
+    match /timetable_config/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin(request.auth.uid) || isTimetabler();
+    }
+
+    match /timetable_versions/{versionId} {
+      allow read: if isAuthenticated();
       allow create: if isAdmin(request.auth.uid)
-        || (
-          isTeacher(request.auth.uid)
-          && isValidSubmissionShape(request.resource.data)
-          && request.resource.data.teacherId == request.auth.uid
-          && request.resource.data.status == 'pending'
-        );
-
+        || (isTimetabler()
+            && request.resource.data.status == 'draft'
+            && request.resource.data.createdBy == request.auth.uid);
       allow update: if isAdmin(request.auth.uid)
-        || (
-          isTeacher(request.auth.uid)
-          && isValidSubmissionShape(request.resource.data)
-          && resource.data.teacherId == request.auth.uid
-          && request.resource.data.teacherId == request.auth.uid
-          && resource.data.status == 'pending'
-          && request.resource.data.status in ['pending', 'superseded']
-        );
-
+        || (isTimetabler()
+            && resource.data.status == 'draft'
+            && request.resource.data.status == 'draft');
       allow delete: if isAdmin(request.auth.uid)
-        || (
-          isTeacher(request.auth.uid)
-          && resource.data.teacherId == request.auth.uid
-          && resource.data.status == 'pending'
-        );
+        || (isTimetabler() && resource.data.status == 'draft');
+    }
+
+    match /timetable_signoffs/{signoffId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin(request.auth.uid)
+        || (isHod()
+            && request.resource.data.department == hodDept()
+            && request.resource.data.byUid == request.auth.uid
+            && request.resource.data.byRole == 'hod');
+      allow delete: if isAdmin(request.auth.uid)
+        || (isHod() && resource.data.department == hodDept());
     }
 
     // ==================== REPORT CARDS ====================

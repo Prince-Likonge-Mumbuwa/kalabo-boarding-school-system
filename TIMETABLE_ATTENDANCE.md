@@ -22,22 +22,17 @@
 
 ## Teachers: My Timetable
 
-1. Pick a subject, tick its periods, optionally type a room.
-2. A locked box says why it is locked:
-   - another subject of the class is on then, or
-   - you (or your cover) are in another class then.
-3. **Submit changes** sends only the subjects that changed. The submission
-   replaces the whole timetable of those subjects once an admin approves it:
-   moved or unticked periods disappear, and a subject with nothing ticked is
-   cleared. Until approval, the current live timetable stays in force.
-4. Submitting is refused when there is a clash or a period is a break.
+The timetable is generated from the HoDs' allocations and published by the
+admin (see `TIMETABLE_GENERATOR.md`). My Timetable is read-only: the
+teacher's week (days as rows, periods as columns), the timetable of each
+class they teach, and branded PDFs. Teachers no longer submit timetables;
+the Firestore rules refuse their writes to `timetable_entries` and
+`timetable_submissions`.
 
 ## Admin
 
-- **Approvals.** You see each subject before and after. **Approve** is
-  disabled while a clash exists. Clashes are checked again at the moment of
-  approval, against the live timetable at that time. **Approve all with no
-  clashes** approves submissions one by one.
+- **Timetable** (Attendance & Timetable → Timetable): the timetable
+  generator. It replaces the old Approvals queue (the old address opens it).
 - **Who's Teaching** (`/dashboard/admin/timetable-live`, also in the side
   menu):
   - Shows every class for the current or a chosen period, or the whole day.
@@ -93,12 +88,9 @@
   - edits are allowed by the marker or by the subject's owner or live cover;
   - when authority is enforced, a teacher may only create registers for a
     subject or form class they own or cover.
-- `timetable_entries`:
-  - status `archived` is allowed;
-  - when authority is enforced, teachers may only create records for
-    subjects they own or cover.
-- New `timetable_submissions` collection: teachers create their own and may
-  shrink or supersede them while pending; admins approve or reject.
+- `timetable_entries` and `timetable_submissions`: written by the admin
+  only (the published timetable); everyone signed in can read.
+- Timetable generator collections: see `TIMETABLE_GENERATOR.md`.
 
 Deploy: `firebase deploy --only firestore:rules --project catalyst-f1b1a`.
 Test against the emulator first: `pnpm test:rules`. This runs
@@ -112,7 +104,8 @@ Test against the emulator first: `pnpm test:rules`. This runs
    then split doubles and retire bad records. Do this **before** deploying
    the rules, because the rules accept periods 1–8 only.
 4. Deploy the rules.
-5. Teachers tick their timetables; the admin approves them.
+5. HoDs mark their allocations complete; the admin (or a Timetabler HoD)
+   generates the timetable and the admin publishes it.
 6. "Switch on" authority (Results data check) once every teacher has
    refreshed the app. It now covers timetables and registers too.
 

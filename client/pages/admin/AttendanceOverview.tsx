@@ -14,7 +14,6 @@
 //          – Teacher Coverage: per-teacher marked vs scheduled
 //    • Periods    — the school bell schedule (CRUD + seed defaults)
 //    • Holidays   — public + school holidays (CRUD + seed Zambian publics)
-//    • Approvals  — teacher-submitted timetables waiting for approval
 //
 //  Tabs collapse to a bottom nav on mobile.
 // ============================================================================
@@ -49,9 +48,6 @@ import {
   useUpsertHoliday,
   useDeleteHoliday,
   useSeedZambiaHolidays,
-  usePendingSubmissions,
-  useApproveSubmission,
-  useRejectSubmission,
   useTimetableCoverage,
   useTeacherCoverage,
   useSchoolDayBoard,
@@ -60,8 +56,6 @@ import { Link } from 'react-router-dom';
 import {
   CoverageCard,
   UncoveredPeriodsTable,
-  SubmissionDiffView,
-  ConflictWarning,
 } from '@/components/timetable/TimetableShared';
 import { getCurrentAcademicTerm } from '@/utils/academicTerm';
 import { SCHOOL_BELL } from '@/services/timetableModel';
@@ -70,7 +64,6 @@ import type {
   Period,
   PeriodDraft,
   HolidayDraft,
-  PendingSubmission,
 } from '@/types/timetable';
 import type { AttendanceDailyRollup } from '@/types/attendance';
 
@@ -109,7 +102,7 @@ interface AttendanceSummary {
 
 type ViewMode = 'daily' | 'weekly' | 'monthly' | 'class';
 type ExportType = 'all' | 'late' | 'truancy';
-type TopTab = 'attendance' | 'periods' | 'holidays' | 'approvals';
+type TopTab = 'attendance' | 'periods' | 'holidays';
 
 interface AdvancedFilters {
   showWeekdaysOnly: boolean;
@@ -984,219 +977,13 @@ function HolidayEditorDialog({
 }
 
 // ============================================================================
-// NEW — APPROVALS TAB
-// ============================================================================
-
-export function ApprovalsTab() {
-  const pendingQ = usePendingSubmissions();
-  const approve = useApproveSubmission();
-  const reject = useRejectSubmission();
-
-  const [rejecting, setRejecting] = useState<{ id: string; name: string } | null>(null);
-  const [reason, setReason] = useState('');
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  const submissions = pendingQ.data ?? [];
-  const periodsQ = usePeriods(submissions[0]?.year);
-  const clean = submissions.filter(s => s.conflicts.length === 0);
-  const [bulk, setBulk] = useState<string | null>(null);
-
-  const handleApprove = async (id: string) => {
-    setActionError(null);
-    try {
-      await approve.mutateAsync(id);
-    } catch (e: any) {
-      setActionError(e?.message ?? 'Failed to approve.');
-    }
-  };
-
-  // One at a time, so each approval is checked against the timetable the
-  // previous one produced.
-  const approveAllClean = async () => {
-    setActionError(null);
-    const failed: string[] = [];
-    let done = 0;
-    for (const s of clean) {
-      setBulk(`Approving ${done + 1} of ${clean.length}…`);
-      try {
-        await approve.mutateAsync(s.id);
-        done++;
-      } catch (e: any) {
-        failed.push(`${s.submittedByName}: ${e?.message ?? 'failed'}`);
-      }
-    }
-    setBulk(null);
-    if (failed.length) setActionError(`Approved ${done}. Not approved — ${failed.join(' | ')}`);
-  };
-
-  const handleReject = async () => {
-    if (!rejecting) return;
-    setActionError(null);
-    try {
-      await reject.mutateAsync({ submissionId: rejecting.id, reason });
-      setRejecting(null);
-      setReason('');
-    } catch (e: any) {
-      setActionError(e?.message ?? 'Failed to reject.');
-    }
-  };
-
-  if (pendingQ.isLoading) {
-    return (
-      <div className="flex justify-center py-10">
-        <Loader2 className="animate-spin text-blue-600" size={24} />
-      </div>
-    );
-  }
-
-  if (submissions.length === 0) {
-    return (
-      <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
-        <CheckCircle2 className="text-green-500 mx-auto mb-3" size={32} />
-        <h3 className="font-semibold text-gray-900 mb-1">All caught up</h3>
-        <p className="text-sm text-gray-500">No timetable submissions are waiting for approval.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h2 className="font-semibold text-gray-900">Pending Submissions</h2>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {submissions.length} submission{submissions.length === 1 ? '' : 's'} awaiting review.
-            Approving replaces the whole live timetable of each subject listed. Submissions with clashes can't be approved.
-          </p>
-        </div>
-        {clean.length > 0 && (
-          <button
-            onClick={approveAllClean}
-            disabled={!!bulk || approve.isPending}
-            className="px-3 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50 flex items-center gap-1.5"
-          >
-            {bulk ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-            {bulk ?? `Approve all with no clashes (${clean.length})`}
-          </button>
-        )}
-      </div>
-
-      {actionError && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 flex items-center gap-2">
-          <AlertCircle size={16} /> {actionError}
-        </div>
-      )}
-
-      <div className="space-y-3">
-        {submissions.map(sub => (
-          <SubmissionRow
-            key={sub.id}
-            submission={sub}
-            periods={periodsQ.data ?? []}
-            onApprove={() => handleApprove(sub.id)}
-            onReject={() => setRejecting({ id: sub.id, name: sub.submittedByName })}
-            approving={approve.isPending}
-            rejecting={reject.isPending}
-          />
-        ))}
-      </div>
-
-      {rejecting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-            <div className="px-5 py-4 border-b border-gray-100">
-              <h3 className="font-semibold text-gray-900">Reject {rejecting.name}'s submission</h3>
-            </div>
-            <div className="p-5">
-              <label className="block">
-                <span className="text-xs font-medium text-gray-600">Reason (shown to the teacher)</span>
-                <textarea value={reason}
-                  onChange={e => setReason(e.target.value)}
-                  rows={3}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                  placeholder="e.g. Two subjects clash on Tuesday P3. Please adjust and resubmit." />
-              </label>
-            </div>
-            <div className="px-5 py-3 border-t border-gray-100 flex justify-end gap-2">
-              <button onClick={() => { setRejecting(null); setReason(''); }}
-                className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">Cancel</button>
-              <button onClick={handleReject}
-                disabled={reject.isPending || !reason.trim()}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg disabled:opacity-50 flex items-center gap-1.5">
-                {reject.isPending ? <Loader2 size={14} className="animate-spin" /> : <Ban size={14} />}
-                Reject
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SubmissionRow({
-  submission, periods, onApprove, onReject, approving, rejecting,
-}: {
-  submission: PendingSubmission;
-  periods: Period[];
-  onApprove: () => void;
-  onReject: () => void;
-  approving: boolean;
-  rejecting: boolean;
-}) {
-  const hasConflicts = submission.conflicts.length > 0;
-
-  return (
-    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-      <div className="px-5 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="font-semibold text-gray-900 text-sm">{submission.submittedByName}</p>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {submission.classNames.join(', ')} · {submission.term} {submission.year} · {submission.entries.length} period(s) ·{' '}
-            {submission.submittedAt.toLocaleString()}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {hasConflicts && (
-            <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-800 flex items-center gap-1">
-              <AlertCircle size={12} /> {submission.conflicts.length} clash
-              {submission.conflicts.length === 1 ? '' : 'es'}
-            </span>
-          )}
-          <button onClick={onReject} disabled={approving || rejecting}
-            className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-lg disabled:opacity-50 flex items-center gap-1">
-            <Ban size={12} /> Reject
-          </button>
-          <button onClick={onApprove} disabled={approving || rejecting || hasConflicts}
-            title={hasConflicts ? 'Fix the clashes first (reject with a note, or ask the other teacher to change theirs)' : undefined}
-            className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50 flex items-center gap-1">
-            {approving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-            Approve
-          </button>
-        </div>
-      </div>
-
-      {hasConflicts && (
-        <div className="px-5 pt-3">
-          <ConflictWarning conflicts={submission.conflicts} />
-        </div>
-      )}
-
-      <div className="p-5">
-        <SubmissionDiffView pending={submission} periods={periods} />
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 
 export default function AttendanceOverview() {
   useAuth();
   // As a tab of "Attendance" this page shows attendance only:
-  // Periods, Holidays and Approvals are tabs of the workspace itself.
+  // Periods, Holidays and the Timetable generator are tabs of the workspace itself.
   const embedded = useEmbedded();
 
   const [topTabState, setTopTab] = useState<TopTab>('attendance');
@@ -1456,14 +1243,6 @@ export default function AttendanceOverview() {
               >
                 <Calendar size={14} /> Holidays
               </button>
-              <button
-                onClick={() => setTopTab('approvals')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex items-center gap-1.5 ${
-                  topTab === 'approvals' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                <Check size={14} /> Approvals
-              </button>
               <Link
                 to="/dashboard/admin/timetable-live"
                 className="px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap flex items-center gap-1.5 text-gray-600 hover:bg-gray-100"
@@ -1485,9 +1264,6 @@ export default function AttendanceOverview() {
 
           {/* ── Holidays tab ────────────────────────────────────── */}
           {topTab === 'holidays' && <HolidaysTab />}
-
-          {/* ── Approvals tab ───────────────────────────────────── */}
-          {topTab === 'approvals' && <ApprovalsTab />}
 
           {/* ── Attendance tab (original + coverage cards) ─────── */}
           {topTab === 'attendance' && (

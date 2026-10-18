@@ -40,6 +40,7 @@ const MyClass = lazy(() => import("@/pages/teacher/MyClass"));
 const SbaEntry = lazy(() => import("./pages/teacher/SbaEntry"));
 const MyTimetable = lazy(() => import("./pages/teacher/MyTimetable"));
 const MyDepartment = lazy(() => import("./pages/teacher/MyDepartment"));
+const TeacherTimetableBuilder = lazy(() => import("./pages/teacher/TimetableBuilderPage"));
 
 // Settings Page (works for both admin and teacher)
 const Settings = lazy(() => import("./pages/Settings"));
@@ -181,7 +182,7 @@ const App = () => (
               </ProtectedRoute>
             } />
 
-            {/* My Timetable — weekly grid, submitted for admin approval.
+            {/* My Timetable — the school's published timetable (read-only).
                 Cover teachers see the owner's periods automatically. */}
             <Route path="/dashboard/teacher/my-timetable" element={
               <ProtectedRoute allowedRoles={['teacher']}>
@@ -218,6 +219,13 @@ const App = () => (
             <Route path="/dashboard/teacher/department" element={
               <ProtectedRoute allowedRoles={['teacher']}>
                 <MyDepartment />
+              </ProtectedRoute>
+            } />
+
+            {/* Timetable generator for HoDs the admin allowed (Timetablers) */}
+            <Route path="/dashboard/teacher/timetable-builder" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <TeacherTimetableBuilder />
               </ProtectedRoute>
             } />
 

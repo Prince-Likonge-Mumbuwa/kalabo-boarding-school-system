@@ -1,5 +1,6 @@
 // JavaScript model of the TEACHER branches of the firestore.rules blocks for
-// timetable_entries, timetable_submissions and attendance_sessions.
+// timetable_entries, timetable_submissions (teachers may not write either:
+// the timetable is generated and published) and attendance_sessions.
 // Used by unit tests to check every write a teacher's app makes would be
 // allowed. A model, not the real engine — run `pnpm test:rules` for that.
 
@@ -23,23 +24,6 @@ export function ownerOrOperator(env: TtRulesEnv, slotId: any) {
   return !!s && (s.ownerTeacherId === env.uid || operatorOf(s, env.now ?? new Date()) === env.uid);
 }
 
-const TERMS = ['Term 1', 'Term 2', 'Term 3'];
-
-function entryShape(d: Data) {
-  return ['slotId', 'classId', 'className', 'subject', 'normalizedSubject', 'term', 'year', 'dayOfWeek', 'periodIndex', 'isDouble', 'status']
-    .every(k => k in d) &&
-    TERMS.includes(d.term) && Number.isInteger(d.year) &&
-    Number.isInteger(d.dayOfWeek) && d.dayOfWeek >= 1 && d.dayOfWeek <= 5 &&
-    Number.isInteger(d.periodIndex) && d.periodIndex >= 1 && typeof d.isDouble === 'boolean' &&
-    ['draft', 'pending', 'active', 'rejected', 'archived'].includes(d.status);
-}
-
-function submissionShape(d: Data) {
-  return ['teacherId', 'term', 'year', 'scopeSlotIds', 'status'].every(k => k in d) &&
-    TERMS.includes(d.term) && Number.isInteger(d.year) && Array.isArray(d.scopeSlotIds) &&
-    ['pending', 'approved', 'rejected', 'superseded'].includes(d.status);
-}
-
 function sessionShape(d: Data) {
   const ok = ['classId', 'className', 'date', 'kind', 'markedBy', 'markedByName', 'markedAt', 'roster', 'summary', 'schemaVersion']
     .every(k => k in d) && d.schemaVersion === 1 && ['daily', 'periodic'].includes(d.kind);
@@ -58,22 +42,9 @@ export function teacherWriteAllowed(
   before: Data | null,
   after: Data | null,
 ): boolean {
-  if (collection === 'timetable_entries') {
-    if (op === 'delete') return before!.submittedByUid === env.uid && ['pending', 'draft', 'rejected'].includes(before!.status);
-    if (!before) {
-      return entryShape(after!) && after!.submittedByUid === env.uid && ['pending', 'draft'].includes(after!.status) &&
-        (!env.enforceAuthority || ownerOrOperator(env, after!.slotId));
-    }
-    return entryShape(after!) && before.submittedByUid === env.uid &&
-      ['pending', 'draft', 'rejected'].includes(before.status) &&
-      ['pending', 'draft', 'rejected'].includes(after!.status) && after!.submittedByUid === env.uid;
-  }
-  if (collection === 'timetable_submissions') {
-    if (op === 'delete') return before!.teacherId === env.uid && before!.status === 'pending';
-    if (!before) return submissionShape(after!) && after!.teacherId === env.uid && after!.status === 'pending';
-    return submissionShape(after!) && before.teacherId === env.uid && after!.teacherId === env.uid &&
-      before.status === 'pending' && ['pending', 'superseded'].includes(after!.status);
-  }
+  // Teachers no longer write timetables: the school timetable is generated
+  // and published by the admin.
+  if (collection === 'timetable_entries' || collection === 'timetable_submissions') return false;
   if (collection === 'attendance_sessions') {
     if (op === 'delete') return before!.markedBy === env.uid || sessionSlotOk(env, before!);
     if (!before) {

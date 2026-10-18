@@ -16,6 +16,7 @@ import { useSlotsForSubjects } from '@/hooks/useDepartments';
 import { isEngineReady } from '@/services/assignmentEngine';
 import { allocationRows, type AllocationRow, type DepartmentConfig } from '@/services/departmentService';
 import { HodSubjectsEditor } from './HodSubjectsEditor';
+import { HodSignoffCard } from './HodSignoffCard';
 import { formatTermLabel, getCurrentAcademicTerm } from '@/utils/academicTerm';
 import type { HodMember } from './types';
 
@@ -67,8 +68,11 @@ export function HodAllocationsTab({ department, cfg, subjects, classes, members 
     }
   };
 
+  const vacantAll = (slotsQ.data ?? []).filter(s => !s.ownerTeacherId).length;
+
   return (
     <div className="space-y-4">
+      <HodSignoffCard department={department} vacant={vacantAll} />
       <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-4">
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
           <p className="text-sm font-semibold text-gray-900">Allocations · {formatTermLabel(term.term, term.year)}</p>

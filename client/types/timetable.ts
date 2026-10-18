@@ -165,6 +165,18 @@ export interface TimetableEntry {
   approvedAt: Timestamp | null;
   rejectedReason: string | null;
 
+  /**
+   * Set on rows of a generated (published) timetable: 'YYYY-MM-DD' it took
+   * effect, and — once replaced — the day it stopped (exclusive). Past dates
+   * (registers, Who's Teaching, coverage) use the timetable that was in
+   * force on that date. Older rows have neither: an active one counts from
+   * the start, an archived one never.
+   */
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  /** timetable_versions/{id} the row was published from. */
+  versionId?: string | null;
+
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
 }

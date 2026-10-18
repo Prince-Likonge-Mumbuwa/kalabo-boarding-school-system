@@ -9,7 +9,7 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { deleteDoc, doc, setDoc, Timestamp } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, setDoc, Timestamp } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
 const now = Date.now();
@@ -94,22 +94,78 @@ describe('attendance registers', () => {
   });
 });
 
-describe('timetable submissions and rows', () => {
+describe('timetable rows and submissions: the school publishes, teachers only read', () => {
   beforeEach(() => seed(true));
-  it('teacher creates own pending submission and rows for a subject they teach', async () => {
-    await assertSucceeds(setDoc(doc(as('T1'), 'timetable_submissions/s2'), submission()));
-    await assertSucceeds(setDoc(doc(as('T1'), 'timetable_entries/e2'), entry({ batchId: 's2', periodIndex: 7 })));
-    await assertFails(setDoc(doc(as('T2'), 'timetable_entries/e3'), entry({ submittedByUid: 'T2' })));
-    await assertFails(setDoc(doc(as('T1'), 'timetable_entries/e4'), entry({ status: 'active' })));
+  it('teachers can no longer create, change or delete timetable rows or submissions', async () => {
+    await assertFails(setDoc(doc(as('T1'), 'timetable_submissions/s2'), submission()));
+    await assertFails(setDoc(doc(as('T1'), 'timetable_entries/e2'), entry({ batchId: 's2', periodIndex: 7 })));
+    await assertFails(setDoc(doc(as('T1'), 'timetable_submissions/sub1'), submission({ status: 'superseded' })));
+    await assertFails(deleteDoc(doc(as('T1'), 'timetable_entries/e1')));
+    await assertSucceeds(getDoc(doc(as('T1'), 'timetable_entries/e1')));
   });
-  it('teacher may supersede / shrink own pending submission, not approve it or touch others', async () => {
-    await assertSucceeds(setDoc(doc(as('T1'), 'timetable_submissions/sub1'), submission({ status: 'superseded' })));
-    await assertFails(setDoc(doc(as('T1'), 'timetable_submissions/sub1'), submission({ status: 'approved' })));
-    await assertFails(setDoc(doc(as('T2'), 'timetable_submissions/sub1'), submission({ status: 'superseded' })));
-    await assertSucceeds(deleteDoc(doc(as('T1'), 'timetable_entries/e1')));
+  it('the admin publishes (writes rows) and retires old ones', async () => {
+    await assertSucceeds(setDoc(doc(as('ADMIN'), 'timetable_entries/v1_8a__MATH_1_1'), entry({ status: 'active', versionId: 'v1', effectiveFrom: '2026-10-19' })));
+    await assertSucceeds(setDoc(doc(as('ADMIN'), 'timetable_entries/e1'), entry({ status: 'archived', effectiveTo: '2026-10-19' })));
+    await assertSucceeds(setDoc(doc(as('ADMIN'), 'timetable_submissions/sub1'), submission({ status: 'superseded' })));
   });
-  it('admin approves: archive + activate', async () => {
-    await assertSucceeds(setDoc(doc(as('ADMIN'), 'timetable_entries/e1'), entry({ status: 'active' })));
-    await assertSucceeds(setDoc(doc(as('ADMIN'), 'timetable_submissions/sub1'), submission({ status: 'approved' })));
+});
+
+describe('timetable generator', () => {
+  async function seedRoles() {
+    await env.withSecurityRulesDisabled(async ctx => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'users/ADMIN'), { userType: 'admin' });
+      for (const t of ['HOD', 'HOD2', 'T1']) await setDoc(doc(db, `users/${t}`), { userType: 'teacher' });
+      await setDoc(doc(db, 'staff_roles/HOD__hod'), { role: 'hod', department: 'Mathematics', status: 'active' });
+      await setDoc(doc(db, 'staff_roles/HOD2__hod'), { role: 'hod', department: 'Languages', status: 'active' });
+      await setDoc(doc(db, 'staff_roles/HOD__timetabler'), { role: 'timetabler', teacherId: 'HOD', status: 'active' });
+      await setDoc(doc(db, 'timetable_versions/pub'), { status: 'published', term: 'Term 3', year: 2026, createdBy: 'ADMIN' });
+      await setDoc(doc(db, 'timetable_signoffs/lang'), { department: 'Languages', term: 'Term 3', year: 2026, byUid: 'HOD2', byRole: 'hod' });
+    });
+  }
+  beforeEach(seedRoles);
+  const draft = (over: Record<string, any> = {}) => ({ name: 'Draft', term: 'Term 3', year: 2026, status: 'draft', lessons: [], slots: {}, createdBy: 'HOD', ...over });
+  const signoff = (over: Record<string, any> = {}) => ({ department: 'Mathematics', term: 'Term 3', year: 2026, byUid: 'HOD', byName: 'HOD', byRole: 'hod', vacantCount: 0, ...over });
+
+  it('curriculum: admin and Timetabler HoDs may edit; other HoDs and teachers may not', async () => {
+    await assertSucceeds(setDoc(doc(as('ADMIN'), 'timetable_config/school'), { levels: {} }));
+    await assertSucceeds(setDoc(doc(as('HOD'), 'timetable_config/school'), { levels: {} }));
+    await assertFails(setDoc(doc(as('HOD2'), 'timetable_config/school'), { levels: {} }));
+    await assertFails(setDoc(doc(as('T1'), 'timetable_config/school'), { levels: {} }));
+    await assertSucceeds(getDoc(doc(as('T1'), 'timetable_config/school')));
+  });
+
+  it('a Timetabler works on drafts but cannot publish or touch the published timetable', async () => {
+    await assertSucceeds(setDoc(doc(as('HOD'), 'timetable_versions/d1'), draft()));
+    await assertSucceeds(setDoc(doc(as('HOD'), 'timetable_versions/d1'), draft({ name: 'Renamed' })));
+    await assertFails(setDoc(doc(as('HOD'), 'timetable_versions/d1'), draft({ status: 'published' })));
+    await assertFails(setDoc(doc(as('HOD'), 'timetable_versions/pub'), draft({ status: 'archived' })));
+    await assertFails(deleteDoc(doc(as('HOD'), 'timetable_versions/pub')));
+    await assertSucceeds(deleteDoc(doc(as('HOD'), 'timetable_versions/d1')));
+    await assertFails(setDoc(doc(as('HOD2'), 'timetable_versions/d2'), draft({ createdBy: 'HOD2' })));
+    await assertFails(setDoc(doc(as('T1'), 'timetable_versions/d3'), draft({ createdBy: 'T1' })));
+    await assertSucceeds(setDoc(doc(as('ADMIN'), 'timetable_versions/pub'), draft({ status: 'archived', createdBy: 'ADMIN' })));
+  });
+
+  it('a Timetabler role is not enough without an active HoD role', async () => {
+    await env.withSecurityRulesDisabled(async ctx => {
+      await setDoc(doc(ctx.firestore(), 'staff_roles/T1__timetabler'), { role: 'timetabler', teacherId: 'T1', status: 'active' });
+    });
+    await assertFails(setDoc(doc(as('T1'), 'timetable_versions/x'), draft({ createdBy: 'T1' })));
+  });
+
+  it('a HoD marks only their own department complete; the admin any', async () => {
+    await assertSucceeds(setDoc(doc(as('HOD'), 'timetable_signoffs/math'), signoff()));
+    await assertFails(setDoc(doc(as('HOD'), 'timetable_signoffs/lang2'), signoff({ department: 'Languages' })));
+    await assertFails(setDoc(doc(as('HOD'), 'timetable_signoffs/math2'), signoff({ byRole: 'admin' })));
+    await assertFails(deleteDoc(doc(as('HOD'), 'timetable_signoffs/lang')));
+    await assertSucceeds(deleteDoc(doc(as('HOD2'), 'timetable_signoffs/lang')));
+    await assertFails(setDoc(doc(as('T1'), 'timetable_signoffs/t'), signoff({ byUid: 'T1' })));
+    await assertSucceeds(setDoc(doc(as('ADMIN'), 'timetable_signoffs/bus'), signoff({ department: 'Business Studies', byUid: 'ADMIN', byRole: 'admin' })));
+  });
+
+  it('only the admin gives the Timetabler role', async () => {
+    await assertFails(setDoc(doc(as('HOD2'), 'staff_roles/HOD2__timetabler'), { role: 'timetabler', status: 'active' }));
+    await assertSucceeds(setDoc(doc(as('ADMIN'), 'staff_roles/HOD2__timetabler'), { role: 'timetabler', status: 'active' }));
   });
 });

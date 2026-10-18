@@ -56,19 +56,7 @@ async function live(teacher: string, scope: string[], entries: any[]) {
   await approveSubmission(r.submissionId, 'ADMIN');
   return r;
 }
-/** Every write a teacher made (not ADMIN approval writes) passes the rules model. */
-function expectTeacherWritesAllowed(uid: string, from = 0) {
-  for (const w of writeLog.slice(from)) {
-    const col = w.path.split('/')[0];
-    if (w.after?.approvedByUid || w.after?.status === 'archived' || w.after?.decidedBy) continue;
-    expect(
-      teacherWriteAllowed({ uid, enforceAuthority: true, slots: Object.fromEntries(store.get('class_slots')!) }, col, w.op, w.before, w.after),
-      `${w.op} ${w.path}`,
-    ).toBe(true);
-  }
-}
-
-describe('submit and approve', () => {
+describe('submit and approve (the older teacher workflow, now admin-only)', () => {
   it('several periods in one class on one day, incl. a triple', async () => {
     await live('T1', ['8a__MATH'], tick('8a__MATH', [1, 5], [1, 6], [1, 7], [1, 1]));
     expect(rows().map(r => r.periodIndex).sort((a, b) => a - b)).toEqual([1, 5, 6, 7]);
@@ -142,7 +130,6 @@ describe('submit and approve', () => {
     expect(store.get('timetable_submissions')!.get(a.submissionId)!.status).toBe('superseded');
     expect(rows('pending').map(r => r.periodIndex)).toEqual([2]);
     await expect(approveSubmission(a.submissionId, 'ADMIN')).rejects.toThrow(/superseded/);
-    expectTeacherWritesAllowed('T1');
   });
 
   it('pending view shows before/after; reject keeps the live timetable and records the reason', async () => {
@@ -159,10 +146,13 @@ describe('submit and approve', () => {
     expect(mine[0].rejectedReason).toBe('Wrong day');
   });
 
-  it('all teacher writes pass the rules (authority enforced)', async () => {
+  it('teachers can no longer write timetable rows or submissions (the timetable is published by the school)', async () => {
     const from = writeLog.length;
     await submitTimetable('T1', 'T1', { term: TERM, year: 2026, scopeSlotIds: ['8a__MATH', '8b__MATH'], entries: tick('8a__MATH', [1, 1], [1, 2]) });
-    expectTeacherWritesAllowed('T1', from);
+    const env = { uid: 'T1', enforceAuthority: true, slots: Object.fromEntries(store.get('class_slots')!) };
+    const writes = writeLog.slice(from);
+    expect(writes.length).toBeGreaterThan(0);
+    for (const w of writes) expect(teacherWriteAllowed(env, w.path.split('/')[0], w.op, w.before, w.after), `${w.op} ${w.path}`).toBe(false);
   });
 });
 
