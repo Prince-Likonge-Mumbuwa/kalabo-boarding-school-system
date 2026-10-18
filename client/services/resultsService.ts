@@ -30,6 +30,7 @@ import {
   buildReportCard,
   classPositions,
   gradeForPercentage,
+  isPassPercentage,
   learnerProgress,
   subjectProgress,
   type GridCell,
@@ -1493,7 +1494,7 @@ class ResultsService {
           ? Math.round(data.percentages.reduce((a, b) => a + b, 0) / data.percentages.length)
           : 0;
         const passRate = data.percentages.length > 0
-          ? Math.round((data.percentages.filter(p => p >= 50).length / data.percentages.length) * 100)
+          ? Math.round((data.percentages.filter(p => isPassPercentage(p)).length / data.percentages.length) * 100)
           : 0;
 
         return {
@@ -1557,7 +1558,7 @@ class ResultsService {
           ? Math.round(data.percentages.reduce((a, b) => a + b, 0) / data.percentages.length)
           : 0;
         const passRate = data.percentages.length > 0
-          ? Math.round((data.percentages.filter(p => p >= 50).length / data.percentages.length) * 100)
+          ? Math.round((data.percentages.filter(p => isPassPercentage(p)).length / data.percentages.length) * 100)
           : 0;
 
         const gradeCounts = new Map<number, number>();
@@ -1664,7 +1665,7 @@ class ResultsService {
       const totalPercentage = examResults.reduce((sum, r) => sum + r.percentage, 0);
       const avgMarks = examResults.length > 0 ? Math.round(totalPercentage / examResults.length) : 0;
       const passRate = examResults.length > 0
-        ? Math.round((examResults.filter(r => r.percentage >= 50).length / examResults.length) * 100)
+        ? Math.round((examResults.filter(r => isPassPercentage(r.percentage)).length / examResults.length) * 100)
         : 0;
 
       return {
@@ -1711,7 +1712,7 @@ class ResultsService {
           : 0,
         passRate: results.length > 0
           ? Math.round(
-              (results.filter(r => r.percentage >= 50).length /
+              (results.filter(r => isPassPercentage(r.percentage)).length /
                Math.max(results.filter(r => r.percentage >= 0).length, 1)) * 100
             )
           : 0,

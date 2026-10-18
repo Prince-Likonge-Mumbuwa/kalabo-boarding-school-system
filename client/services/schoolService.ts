@@ -57,6 +57,7 @@ import * as assignmentEngine from './assignmentEngine';
 import { admissionYearFor, getSchoolYear } from './promotionService';
 import { validateZambianNumber } from '@/lib/phone';
 import { departmentLabel, normalizeDepartments, teacherDepartments } from './departmentService';
+import { isFailGrade, isQualityGrade, isQuantityGrade } from './resultsGrid';
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -2146,9 +2147,9 @@ const resultsAnalysisService = {
 
       const gradeDistribution = await resultsAnalysisService.getGradeDistribution(classId, 'endOfTerm');
 
-      const qualityResults = results.filter(r => r.grade <= 6);
-      const quantityResults = results.filter(r => r.grade <= 8);
-      const failResults = results.filter(r => r.grade === 9);
+      const qualityResults = results.filter(r => isQualityGrade(r.grade));
+      const quantityResults = results.filter(r => isQuantityGrade(r.grade));
+      const failResults = results.filter(r => isFailGrade(r.grade));
 
       const performance = {
         quality: {
@@ -2181,9 +2182,9 @@ const resultsAnalysisService = {
 
       const subjectPerformance = Array.from(subjectMap.entries()).map(([subject, data]) => {
         const total = data.grades.length;
-        const quality = data.grades.filter(g => g <= 6).length;
-        const quantity = data.grades.filter(g => g <= 8).length;
-        const fail = data.grades.filter(g => g === 9).length;
+        const quality = data.grades.filter(g => isQualityGrade(g)).length;
+        const quantity = data.grades.filter(g => isQuantityGrade(g)).length;
+        const fail = data.grades.filter(g => isFailGrade(g)).length;
 
         return {
           subject,
@@ -2249,9 +2250,9 @@ const resultsAnalysisService = {
 
       return Array.from(subjectMap.entries()).map(([subject, data]) => {
         const total = data.grades.length;
-        const quality = data.grades.filter(g => g <= 6).length;
-        const quantity = data.grades.filter(g => g <= 8).length;
-        const fail = data.grades.filter(g => g === 9).length;
+        const quality = data.grades.filter(g => isQualityGrade(g)).length;
+        const quantity = data.grades.filter(g => isQuantityGrade(g)).length;
+        const fail = data.grades.filter(g => isFailGrade(g)).length;
         const averageGrade = data.grades.reduce((sum, g) => sum + g, 0) / total;
 
         return {

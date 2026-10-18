@@ -928,7 +928,7 @@ export default function TeacherDashboard() {
                 label="Pass Rate"
                 value={stats.passRate > 0 ? `${stats.passRate}%` : '—'}
                 icon={TrendingUp}
-                description={`Average pass rate • ${academicTerm.label}`}
+                description={`Marks of 40%+ (grades 1–8) • ${academicTerm.label}`}
                 color="green"
                 isLoading={resultsLoading}
                 subtext={stats.averagePercentage > 0 ? `${stats.averagePercentage}% avg` : undefined}
