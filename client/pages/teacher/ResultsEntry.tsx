@@ -1327,22 +1327,33 @@ export default function ResultsEntry() {
     }
   }, [students, savedBaseline]);
 
-  // Load drafts from localStorage
+  // Drafts are kept on this device PER TEACHER (results_drafts:{uid}), so
+  // they survive a reload, an app update or the end of a 2-hour session, and
+  // another teacher signing in on the same device never sees them.
+  // Drafts saved by older versions under the shared key move to the first
+  // teacher who opens Results Entry on the device.
+  const draftsKey = user?.uid ? `results_drafts:${user.uid}` : null;
   useEffect(() => {
-    const savedDrafts = localStorage.getItem('results_drafts');
-    if (savedDrafts) {
-      try {
-        setDrafts(JSON.parse(savedDrafts));
-      } catch (e) {
-        console.error('Failed to load drafts:', e);
+    if (!draftsKey) { setDrafts([]); return; }
+    try {
+      let raw = localStorage.getItem(draftsKey);
+      const legacy = localStorage.getItem('results_drafts');
+      if (!raw && legacy) {
+        localStorage.setItem(draftsKey, legacy);
+        raw = legacy;
       }
+      if (legacy) localStorage.removeItem('results_drafts');
+      setDrafts(raw ? JSON.parse(raw) : []);
+    } catch (e) {
+      console.error('Failed to load drafts:', e);
     }
-  }, []);
+  }, [draftsKey]);
 
   const saveDrafts = useCallback((newDrafts: SavedDraft[]) => {
     setDrafts(newDrafts);
-    localStorage.setItem('results_drafts', JSON.stringify(newDrafts));
-  }, []);
+    if (!draftsKey) return;
+    try { localStorage.setItem(draftsKey, JSON.stringify(newDrafts)); } catch { /* storage full or blocked */ }
+  }, [draftsKey]);
 
   // Auto-select first subject if only one available
   useEffect(() => {

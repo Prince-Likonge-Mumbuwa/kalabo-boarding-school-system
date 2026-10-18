@@ -190,9 +190,22 @@ describe('Results Entry page', () => {
     await waitFor(() => expect(inputFor('Alice').value).toBe('40'));
     fireEvent.change(inputFor('Alice'), { target: { value: '35' } });
     await waitFor(() => {
-      const drafts = JSON.parse(localStorage.getItem('results_drafts') || '[]');
+      // Kept per teacher, never under the shared key.
+      const drafts = JSON.parse(localStorage.getItem(`results_drafts:${stable.user.uid}`) || '[]');
       expect(drafts[0]?.results.find((r: any) => r.id === 'docA')?.marks).toBe('35');
     }, { timeout: 4000 });
+    expect(localStorage.getItem('results_drafts')).toBeNull();
+  });
+
+  it("another teacher on the same device does not see the first teacher's drafts", async () => {
+    localStorage.setItem('results_drafts:SOMEONE_ELSE', JSON.stringify([{
+      id: 'draft_x', classId: 'C1', className: 'Form 1A', subject: 'Mathematics', examType: 'week4',
+      term: 'Term 3', year: 2026, totalMarks: 50, lastModified: new Date().toISOString(), completedCount: 1, totalStudents: 3,
+      results: [{ id: 'docC', studentId: 'F1A_003', name: 'Chipo', marks: '12' }],
+    }]));
+    renderPage();
+    await waitFor(() => expect(inputFor('Alice').value).toBe('40'));
+    expect(screen.queryByTitle('Load draft')).toBeNull();
   });
 
   it('marks can be entered over an exam recorded as not conducted', async () => {

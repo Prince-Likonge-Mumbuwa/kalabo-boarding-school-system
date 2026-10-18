@@ -16,7 +16,7 @@ import { MODEL_VERSION } from '@/lib/face/core';
 import { FrameReader, Tracker, runLoop, type Box } from '@/lib/face/live';
 import { readFaces, warmUp, FaceError } from '@/lib/face';
 import { FACE_MAX_ANGLES, FACE_TARGET_ANGLES, type FaceStatus } from '@/types/face';
-import { Stage, useCamera } from './camera';
+import { Stage, frameBox, useCamera } from './camera';
 
 export interface EnrolLearner {
   /** learners/{id} — the identity everything is stored under. */
@@ -209,6 +209,11 @@ function EnrolBody({ learner, status, onChanged, onNext }: {
 
 const ENROL_MIN_PX = 96; // a good template needs a reasonably large face
 const HOLD_MS = 700;
+// A saved face is compared with every scan for years: insist on a sharp,
+// roughly frontal picture — but never block for long in poor light.
+const ENROL_MIN_SHARP = 0.2;
+const ENROL_MIN_FRONTAL = 0.2;
+const QUALITY_PATIENCE_MS = 2500;
 
 function LiveEnrol({ learner, existing, onAdded, onClose }: {
   learner: EnrolLearner; existing: number; onAdded: (count: number) => void; onClose: () => void;
@@ -247,6 +252,11 @@ function LiveEnrol({ learner, existing, onAdded, onClose }: {
         const t = tracker.tracks.find(x => x.seenAt === now)!;
         const held = now - t.stableSince;
         if (held < HOLD_MS) return setState({ msg: 'Hold still…', tone: 'hold', progress: held / HOLD_MS });
+        if (held < HOLD_MS + QUALITY_PATIENCE_MS) {
+          const q = reader.quality(face);
+          if (q.frontal < ENROL_MIN_FRONTAL) return setState({ msg: 'Turn a little more towards the camera', tone: 'warn', progress: 0 });
+          if (q.sharp < ENROL_MIN_SHARP) return setState({ msg: 'Hold still — the picture is blurred', tone: 'warn', progress: 0 });
+        }
         busy = true;
         setState({ msg: 'Saving…', tone: 'hold', progress: 1 });
         try {
@@ -261,7 +271,7 @@ function LiveEnrol({ learner, existing, onAdded, onClose }: {
           busy = false;
           tracker.reset();
         }
-      }, () => alive);
+      }, () => alive, 60, () => cam.video.current);
     }).catch((e: Error) => setError(e.message));
     return () => { alive = false; stop(); };
   }, [cam.ready, capturing, learner.id, cam.video]);
@@ -271,7 +281,11 @@ function LiveEnrol({ learner, existing, onAdded, onClose }: {
   return (
     <div className="space-y-3">
       {cam.error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{cam.error}</p> : (
-        <Stage cam={cam} width={frame.w} height={frame.h} boxes={frame.box && capturing ? [{ key: 1, box: frame.box, tone, label: '' }] : []}>
+        <Stage
+          cam={cam}
+          aspect={frame.w && frame.h ? frame.w / frame.h : undefined}
+          boxes={frame.box && capturing ? [{ key: 1, box: frameBox(frame.box, frame.w, frame.h, cam.mirror), tone, label: '' }] : []}
+        >
           <div className={`absolute inset-x-0 bottom-0 flex items-center gap-2 px-3 py-2 text-sm text-white ${noteColour}`} role="status">
             {state.tone === 'done' ? <Check size={16} /> : <ScanFace size={16} />} {state.msg}
             {state.tone === 'hold' && (

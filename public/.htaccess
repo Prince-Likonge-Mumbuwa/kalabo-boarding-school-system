@@ -1,6 +1,17 @@
 # Hostinger (Apache / LiteSpeed) settings for the school app.
 # Copied into dist/spa by the build — upload it together with the other files.
 
+# --- Host page cache (LiteSpeed on Hostinger) ---------------------------
+# Pages and version.json must always come from the files just published,
+# never from the host's page cache — otherwise an update only appears after
+# people clear their cache. Build files (hashed names), pictures and face
+# models may be cached. Must come before the rules below.
+<IfModule LiteSpeed>
+  RewriteEngine On
+  RewriteCond %{REQUEST_URI} !^/(assets|images|models)/
+  RewriteRule .* - [E=Cache-Control:no-cache]
+</IfModule>
+
 # --- Single-page app: every page address loads index.html ---------------
 <IfModule mod_rewrite.c>
   RewriteEngine On
@@ -18,7 +29,9 @@
   # Face recognition models: a missing model must be a 404, never the app
   # page, or face recognition fails with a confusing error.
   RewriteRule ^models/ - [L,R=404]
-  RewriteRule ^ index.html [L]
+  # NOCACHE: the app page must never be kept by a browser, proxy or the
+  # host's cache, whatever address it was opened at.
+  RewriteRule ^ index.html [L,E=NOCACHE:1]
 </IfModule>
 
 # --- File types ----------------------------------------------------------
@@ -46,10 +59,13 @@
   </FilesMatch>
   # The camera may be used by this site only (face recognition).
   Header always set Permissions-Policy "camera=(self), microphone=(), geolocation=()"
-  # The page and the service worker must always be checked for updates.
-  <FilesMatch "^(index\.html|sw\.js|manifest\.json)$">
+  # The page, the service worker and the version file must always be
+  # checked for updates (open tabs read version.json to notice a new build).
+  <FilesMatch "^(index\.html|sw\.js|manifest\.json|version\.json)$">
     Header set Cache-Control "no-cache, must-revalidate"
   </FilesMatch>
+  Header set Cache-Control "no-cache, must-revalidate" env=NOCACHE
+  Header set Cache-Control "no-cache, must-revalidate" env=REDIRECT_NOCACHE
 </IfModule>
 
 # --- Compression (smaller downloads) ------------------------------------

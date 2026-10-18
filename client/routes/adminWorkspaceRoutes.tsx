@@ -25,6 +25,7 @@ export const WORKSPACE_ROUTES = {
     '/dashboard/admin/timetable/periods',
     '/dashboard/admin/timetable/holidays',
     '/dashboard/admin/timetable/approvals',
+    '/dashboard/admin/face-recognition',
   ],
 } as const;
 

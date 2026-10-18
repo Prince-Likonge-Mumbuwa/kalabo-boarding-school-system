@@ -6,7 +6,8 @@ import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
 import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
 import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { FaceRecognitionSettingsCard } from '@/components/face/FaceRecognitionSettingsCard';
+import { FaceRecognitionToggleCard } from '@/components/face/FaceRecognitionToggleCard';
+import { MyDepartmentsCard } from '@/components/departments/MyDepartmentsCard';
 import {
   User,
   Mail,
@@ -735,6 +736,9 @@ export default function Settings() {
             </div>
           </div>
 
+          {/* Departments (teachers): read only — set by the HoD or an admin */}
+          {user?.userType === 'teacher' && <MyDepartmentsCard />}
+
           {/* 3. Qualifications (Simplified - String Array) */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
@@ -809,8 +813,9 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Face recognition (admins) */}
-          {user?.userType === 'admin' && <FaceRecognitionSettingsCard />}
+          {/* Face recognition (admins): on/off only — enrolment and match
+              levels are in Attendance → Face recognition */}
+          {user?.userType === 'admin' && <FaceRecognitionToggleCard />}
 
           {/* 5. Delete Account */}
           <div className="bg-white rounded-xl border border-red-200 shadow-sm overflow-hidden">

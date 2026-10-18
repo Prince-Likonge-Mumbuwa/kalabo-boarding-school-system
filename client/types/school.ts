@@ -122,6 +122,8 @@ export interface Teacher {
   email: string;
   phone?: string;
   department?: string;
+  /** Departments the teacher belongs to (users/{id}.departments). */
+  departments?: string[];
   subjects?: string[];
   assignedClasses?: string[];
 

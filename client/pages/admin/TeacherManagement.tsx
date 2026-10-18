@@ -4,6 +4,9 @@ import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useAuth } from '@/hooks/useAuth';
 import { TeacherRolesSection } from '@/components/admissions/TeacherRolesSection';
+import { TeacherDepartmentsSection } from '@/components/departments/TeacherDepartmentsSection';
+import { useHods } from '@/hooks/useDepartments';
+import { DepartmentSubjectsDialog } from '@/components/departments/DepartmentSubjectsDialog';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -117,6 +120,9 @@ export default function TeacherManagement() {
   // Selected teacher state for the right panel
   const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
 
+  // Departments → subjects dialog
+  const [showDepartments, setShowDepartments] = useState(false);
+
   // Overlapping slots viewer state
   const [showOverlappingSlots, setShowOverlappingSlots] = useState(false);
   const [overlappingSlots, setOverlappingSlots] = useState<assignmentEngine.SlotOverlap[]>([]);
@@ -130,7 +136,6 @@ export default function TeacherManagement() {
     name: '',
     email: '',
     phone: '',
-    department: '',
     subjects: [] as string[],
     newSubject: '',
   });
@@ -326,7 +331,6 @@ export default function TeacherManagement() {
         name: selectedTeacher.name || '',
         email: selectedTeacher.email || '',
         phone: selectedTeacher.phone || '',
-        department: selectedTeacher.department || '',
         subjects: Array.isArray(selectedTeacher.subjects) ? selectedTeacher.subjects : [],
         newSubject: '',
       });
@@ -341,6 +345,10 @@ export default function TeacherManagement() {
   }, [filteredTeachers, selectedTeacherId]);
 
   const activeTeacher = filteredTeachers.find(t => t.id === selectedTeacherId) || null;
+  const hodsQ = useHods();
+  const activeHod = activeTeacher
+    ? (hodsQ.data ?? []).find(r => r.teacherId === activeTeacher.id && r.status === 'active') ?? null
+    : null;
 
   // ==================== SHARED ERROR TOAST ====================
   const toastError = useCallback((title: string, error: any, fallback: string) => {
@@ -452,7 +460,6 @@ export default function TeacherManagement() {
           name: editTeacherData.name,
           email: editTeacherData.email,
           phone: editTeacherData.phone,
-          department: editTeacherData.department,
           subjects: editTeacherData.subjects,
         },
       });
@@ -1215,6 +1222,15 @@ export default function TeacherManagement() {
                   </button>
 
                   <button
+                    onClick={() => setShowDepartments(true)}
+                    className="inline-flex items-center justify-center bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 px-4 py-2.5 gap-2 text-sm sm:text-base"
+                    title="Which subjects belong to which department"
+                  >
+                    <BookOpen size={18} />
+                    Departments
+                  </button>
+
+                  <button
                     onClick={handleShowOverlappingSlots}
                     className="inline-flex items-center justify-center bg-rose-600 text-white rounded-xl hover:bg-rose-700 font-medium transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 px-4 py-2.5 gap-2 text-sm sm:text-base"
                     title="Subjects with more than one primary teacher, or more than one cover"
@@ -1489,9 +1505,14 @@ export default function TeacherManagement() {
                             >
                               {activeTeacher.status?.replace('_', ' ') || 'Active'}
                             </span>
-                            {activeTeacher.department && (
-                              <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
-                                {activeTeacher.department}
+                            {(activeTeacher.departments ?? []).map((d: string) => (
+                              <span key={d} className="text-xs font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
+                                {d}
+                              </span>
+                            ))}
+                            {activeHod && (
+                              <span className="text-xs font-semibold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full" title={`Head of ${activeHod.department}`}>
+                                HoD · {activeHod.department}
                               </span>
                             )}
                           </div>
@@ -1590,6 +1611,13 @@ export default function TeacherManagement() {
                         )}
                       </div>
                     </div>
+
+                    {/* Departments + Head of Department */}
+                    <TeacherDepartmentsSection
+                      teacher={{ id: activeTeacher.id, name: activeTeacher.name, departments: activeTeacher.departments }}
+                      isAdmin={!!isUserAdmin}
+                      actor={{ uid: user?.uid || '', name: user?.fullName || 'Admin' }}
+                    />
 
                     {/* School-wide roles (Admissions officer) */}
                     <TeacherRolesSection
@@ -1847,6 +1875,14 @@ export default function TeacherManagement() {
         onAssign={handleAssignTeacher}
         onClose={resetModalState}
       />
+
+      {isUserAdmin && (
+        <DepartmentSubjectsDialog
+          open={showDepartments}
+          onOpenChange={setShowDepartments}
+          actor={{ uid: user?.uid || '', name: user?.fullName || 'Admin' }}
+        />
+      )}
 
       <EditTeacherModal
         isOpen={activeModal === 'edit'}

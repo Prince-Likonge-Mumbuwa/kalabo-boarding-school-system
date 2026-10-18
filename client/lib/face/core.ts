@@ -76,8 +76,8 @@ export function resizeLinear(img: Rgba, nw: number, nh: number): Rgba {
 }
 
 /** Same rule as the Python service: shrink so the longest side is at most 1280 px. */
-export function fitImage(img: Rgba): Rgba {
-  const scale = MAX_SIDE / Math.max(img.width, img.height);
+export function fitImage(img: Rgba, maxSide = MAX_SIDE): Rgba {
+  const scale = maxSide / Math.max(img.width, img.height);
   if (scale >= 1) return img;
   return resizeLinear(img, Math.trunc(img.width * scale), Math.trunc(img.height * scale));
 }
@@ -226,9 +226,12 @@ export async function embed(ort: Ort, sface: OrtSession, img: Rgba, face: Raw): 
 
 export class FaceError extends Error {}
 
-/** Find faces and return one embedding each. With single, require exactly one clear face (enrolment). */
-export async function analyse(ort: Ort, yunet: OrtSession, sface: OrtSession, input: Rgba, single = false): Promise<Analysis> {
-  const img = fitImage(input);
+/**
+ * Find faces and return one embedding each. With single, require exactly one clear face (enrolment).
+ * maxSide: class photos use a larger size so faces at the back are big enough to recognise.
+ */
+export async function analyse(ort: Ort, yunet: OrtSession, sface: OrtSession, input: Rgba, single = false, maxSide = MAX_SIDE): Promise<Analysis> {
+  const img = fitImage(input, maxSide);
   const found = await detect(ort, yunet, img);
   const faces: Face[] = [];
   for (const f of found) {

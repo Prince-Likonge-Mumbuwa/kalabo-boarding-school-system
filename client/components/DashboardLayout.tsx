@@ -3,6 +3,7 @@ import { useEmbedded } from '@/components/workspace/embedded';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useAdmissionsOfficer } from '@/hooks/useAdmissionsOfficer';
+import { useMyHodRole } from '@/hooks/useDepartments';
 import { useTeacherClasses, holdsFormTeacherSlot } from '@/hooks/useTeacherClasses';
 import {
   Menu,
@@ -22,6 +23,7 @@ import {
   ClipboardCheck,
   Activity,
   UserPlus,
+  Award,
 } from 'lucide-react';
 
 // Union of all navigable tab ids — keeps activeTab type-safe across pages.
@@ -42,6 +44,7 @@ type ActiveTab =
   | 'sba-overview'
   | 'year-transition'
   | 'admissions'
+  | 'my-department'
   | 'admissions-classes'
   | 'results-sba'
   | 'attendance-timetable'
@@ -75,6 +78,7 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
 
   const isAdmin = user?.userType === 'admin';
   const { isOfficer } = useAdmissionsOfficer();
+  const { role: hodRole } = useMyHodRole();
   // "My Class" is only for a class's form teacher (or the teacher covering them).
   const { data: teacherClasses } = useTeacherClasses({ enabled: user?.userType === 'teacher' });
   const isFormTeacher = holdsFormTeacherSlot(teacherClasses);
@@ -108,6 +112,8 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
     { id: 'sba', label: 'SBA Entry', icon: ClipboardCheck, path: '/dashboard/teacher/sba-entry' },
     // Only for teachers the admin made admissions officers.
     ...(isOfficer ? [{ id: 'admissions', label: 'Admissions', icon: UserPlus, path: '/dashboard/teacher/admissions' }] : []),
+    // Only for a Head of Department (appointed in Teacher Management).
+    ...(hodRole ? [{ id: 'my-department', label: 'My Department', icon: Award, path: '/dashboard/teacher/department' }] : []),
   ];
 
   const menuItems = isAdmin ? adminMenuItems : teacherMenuItems;
@@ -144,7 +150,9 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
             </div>
             <div className="flex-1 min-w-0">
               <p className="font-semibold text-sm truncate">{user?.fullName}</p>
-              <p className="text-xs text-gray-400 capitalize truncate">{user?.userType}</p>
+              <p className="text-xs text-gray-400 capitalize truncate">
+                {hodRole ? `HoD · ${hodRole.department}` : user?.userType}
+              </p>
             </div>
           </div>
         </div>

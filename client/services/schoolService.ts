@@ -56,6 +56,7 @@ import { normalizeSubjectName } from './resultsService';
 import * as assignmentEngine from './assignmentEngine';
 import { admissionYearFor, getSchoolYear } from './promotionService';
 import { validateZambianNumber } from '@/lib/phone';
+import { departmentLabel, normalizeDepartments, teacherDepartments } from './departmentService';
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -778,6 +779,7 @@ const classService = {
           email: data.email || '',
           phone: data.phone || '',
           department: data.department || 'General',
+          departments: teacherDepartments(data),
           subjects: data.subjects || [],
           assignedClasses: data.assignedClasses || [],
           status: data.status || 'active',
@@ -792,8 +794,8 @@ const classService = {
 
       const teachersByDepartment: Record<string, number> = {};
       teachers.forEach(teacher => {
-        const dept = teacher.department || 'General';
-        teachersByDepartment[dept] = (teachersByDepartment[dept] || 0) + 1;
+        const depts = teacher.departments?.length ? teacher.departments : ['General'];
+        for (const dept of depts) teachersByDepartment[dept] = (teachersByDepartment[dept] || 0) + 1;
       });
 
       return {
@@ -1632,6 +1634,7 @@ const teacherService = {
           email: data.email || '',
           phone: data.phone || data.contactNumber || '',
           department: data.department || 'General',
+          departments: teacherDepartments(data),
           subjects: data.subjects || [],
           assignedClasses: data.assignedClasses || [],
           isFormTeacher: data.isFormTeacher || false,
@@ -1674,6 +1677,7 @@ const teacherService = {
           email: data.email || '',
           phone: data.phone || '',
           department: data.department || 'General',
+          departments: teacherDepartments(data),
           subjects: data.subjects || [],
           assignedClasses: data.assignedClasses || [],
           isFormTeacher: data.isFormTeacher || false,
@@ -1907,7 +1911,13 @@ const teacherService = {
       }
       if (updates.email !== undefined) firestoreUpdates.email = updates.email;
       if (updates.phone !== undefined) firestoreUpdates.phone = updates.phone;
-      if (updates.department !== undefined) firestoreUpdates.department = updates.department;
+      if (updates.departments !== undefined) {
+        const list = normalizeDepartments(updates.departments);
+        firestoreUpdates.departments = list;
+        firestoreUpdates.department = departmentLabel(list);
+      } else if (updates.department !== undefined) {
+        firestoreUpdates.department = updates.department;
+      }
       if (updates.subjects !== undefined) firestoreUpdates.subjects = updates.subjects;
       if (updates.dateOfBirth !== undefined) {
         firestoreUpdates.dateOfBirth = normalizeDateOfBirth(updates.dateOfBirth);

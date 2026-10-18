@@ -53,6 +53,63 @@ service cloud.firestore {
       return collection in ['face_templates', 'face_status', 'face_audit'];
     }
 
+    // ==================== HEADS OF DEPARTMENT ====================
+    //
+    // staff_roles/{uid}__hod  { department, status }   — given by an admin.
+    // system/departments      { names, subjects: { [department]: [normalizedSubject] } }
+    //
+    // A HoD may:
+    //   - add teachers to / remove them from THEIR department (users.departments),
+    //   - allocate teachers of their department to their department's subjects,
+    //     through the same assignment engine documents the admin uses
+    //     (class_slots, teacher_assignments, assignment_events and the
+    //     membership caches classes.teachers / users.assignedClasses).
+    // A HoD may not touch Form Teacher slots or start covers / TP.
+
+    function hodRolePath(uid) {
+      return /databases/$(database)/documents/staff_roles/$(uid + '__hod');
+    }
+
+    function isHod() {
+      return isTeacher(request.auth.uid)
+        && exists(hodRolePath(request.auth.uid))
+        && get(hodRolePath(request.auth.uid)).data.get('status', '') == 'active';
+    }
+
+    // Only call after isHod().
+    function hodDept() {
+      return get(hodRolePath(request.auth.uid)).data.get('department', '');
+    }
+
+    function hodSubjects() {
+      return get(/databases/$(database)/documents/system/departments).data
+        .get('subjects', {}).get(hodDept(), []);
+    }
+
+    function inHodDept(teacherId) {
+      let u = get(/databases/$(database)/documents/users/$(teacherId)).data;
+      // Older records only have the single `department` text; once the list
+      // exists it is the only one that counts (as in the app).
+      return u.get('departments', []).hasAny([hodDept()])
+        || (u.get('departments', null) == null && u.get('department', '') == hodDept());
+    }
+
+    // A slot write by a HoD. `before` is null when the slot is new.
+    function hodMaySlot(slotId, before, after) {
+      return isHod()
+        && slotId == after.get('classId', '') + '__' + after.get('normalizedSubject', '')
+        && after.get('isFormTeacherSlot', false) == false
+        && after.get('normalizedSubject', '') in hodSubjects()
+        && (after.get('ownerTeacherId', null) == null || inHodDept(after.ownerTeacherId))
+        && (
+          after.get('delegateTeacherId', null) == null
+          || (before != null
+              && after.get('delegateTeacherId', null) == before.get('delegateTeacherId', null)
+              && after.get('delegateStart', null) == before.get('delegateStart', null)
+              && after.get('delegateEnd', null) == before.get('delegateEnd', null))
+        );
+    }
+
     // ==================== ASSIGNMENT ENGINE: AUTHORITY ====================
 
     function engineDoc() {
@@ -236,8 +293,36 @@ service cloud.firestore {
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'userType', 'status',
           'assignedClasses', 'assignedClassId', 'assignedClassName',
-          'isFormTeacher', 'formClassId', 'formClassName'
+          'isFormTeacher', 'formClassId', 'formClassName',
+          // departments are set by the HoD or an admin, never by the teacher
+          'departments', 'department'
         ])
+      ) || (
+        // A HoD adds a teacher to / removes them from their own department only.
+        isHod()
+        && resource.data.get('userType', '') == 'teacher'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['departments', 'department', 'updatedAt'])
+        && request.resource.data.get('departments', []) is list
+        && request.resource.data.get('departments', []).toSet()
+             .difference(resource.data.get('departments', []).toSet())
+             .hasOnly([hodDept(), resource.data.get('department', '')])
+        && resource.data.get('departments', []).toSet()
+             .difference(request.resource.data.get('departments', []).toSet())
+             .hasOnly([hodDept()])
+      ) || (
+        // After a HoD allocation the engine rebuilds the teacher's class list.
+        // Form-class pointers may be written back, but never changed
+        // (missing → null is the same value).
+        isHod()
+        && resource.data.get('userType', '') == 'teacher'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+             'assignedClasses', 'updatedAt',
+             'formClassId', 'formClassName', 'isFormTeacher', 'assignedClassId', 'assignedClassName'])
+        && request.resource.data.get('formClassId', null) == resource.data.get('formClassId', null)
+        && request.resource.data.get('formClassName', null) == resource.data.get('formClassName', null)
+        && request.resource.data.get('assignedClassId', null) == resource.data.get('assignedClassId', null)
+        && request.resource.data.get('assignedClassName', null) == resource.data.get('assignedClassName', null)
+        && request.resource.data.get('isFormTeacher', false) == resource.data.get('isFormTeacher', false)
       );
 
       allow delete: if isAdmin(request.auth.uid);
@@ -264,6 +349,13 @@ service cloud.firestore {
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'teachers', 'formTeacherId', 'formTeacherName'
         ])
+      ) || (
+        // After a HoD allocation the engine rebuilds the class's teacher list
+        // (the Form Teacher pointer may be written back, never changed).
+        isHod()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['teachers', 'updatedAt', 'formTeacherId', 'formTeacherName'])
+        && request.resource.data.get('formTeacherId', null) == resource.data.get('formTeacherId', null)
+        && request.resource.data.get('formTeacherName', null) == resource.data.get('formTeacherName', null)
       );
     }
 
@@ -324,25 +416,51 @@ service cloud.firestore {
       // admin's. Slots hold class/subject/teacher names and cover dates —
       // the same teacher names already shown on public result rows.
       allow read: if true;
-      allow create, update: if isAdmin(request.auth.uid);
+      allow create: if isAdmin(request.auth.uid)
+        || hodMaySlot(slotId, null, request.resource.data);
+      allow update: if isAdmin(request.auth.uid)
+        || (hodMaySlot(slotId, resource.data, request.resource.data)
+            && resource.data.get('normalizedSubject', '') == request.resource.data.get('normalizedSubject', ''));
       allow delete: if isAdmin(request.auth.uid);
     }
 
     match /teacher_assignments/{assignmentId} {
       allow read: if isAuthenticated();
 
-      allow create: if isAdmin(request.auth.uid)
-        && isValidAssignmentShape(request.resource.data);
+      allow create: if isValidAssignmentShape(request.resource.data) && (
+        isAdmin(request.auth.uid)
+        || (
+          // HoD: a substantive allocation of a department teacher to a department subject
+          isHod()
+          && request.resource.data.normalizedSubject in hodSubjects()
+          && request.resource.data.isFormTeacher == false
+          && request.resource.data.roleType == 'substantive'
+          && request.resource.data.status == 'active'
+          && request.resource.data.get('assignedBy', null) == request.auth.uid
+          && inHodDept(request.resource.data.teacherId)
+        )
+      );
 
-      allow update: if isAdmin(request.auth.uid)
-        && isValidAssignmentUpdate();
+      allow update: if isValidAssignmentUpdate() && (
+        isAdmin(request.auth.uid)
+        || (
+          // HoD: ending a tenure on one of their department's subjects
+          isHod()
+          && resource.data.get('normalizedSubject', '') in hodSubjects()
+          && resource.data.get('isFormTeacher', false) == false
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'endReason', 'endDate', 'updatedAt'])
+          && request.resource.data.status == 'ended'
+        )
+      );
 
       allow delete: if false;
     }
 
     match /assignment_events/{eventId} {
       allow read: if isAdmin(request.auth.uid);
-      allow create: if isAdmin(request.auth.uid);
+      allow create: if isAdmin(request.auth.uid)
+        || (isHod() && request.resource.data.get('actorId', null) == request.auth.uid);
       allow update, delete: if false;
     }
 

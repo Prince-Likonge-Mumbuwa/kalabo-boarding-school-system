@@ -87,12 +87,21 @@ Do these once, in order.
    copy `tick-v4/web/public/models/sface.onnx` into `public/models/`.
 
 5. **Pilot.** While the switch is off, only **admins** see the face features:
-   Settings → Face recognition → a class → *Enrol faces*. Try it in real
-   classroom light.
+   Attendance → **Face recognition** tab → a class → *Enrol faces*. Try it in
+   real classroom light.
 
-6. **Switch on** in Settings → Face recognition → *On for all teachers*.
-   Form teachers then see **Enrol faces** in My Class, and every teacher sees
-   **Scan faces** on Attendance Tracking.
+6. **Switch on** in Settings → Face recognition (the switch is the only face
+   setting left in Settings). Form teachers then see **Enrol faces** in My
+   Class and on Attendance Tracking, and every teacher sees **Scan faces** on
+   Attendance Tracking.
+
+7. **Redeploy `faceMatch`** after updating (Oct 2026): it adds the
+   "clearly one learner" rule, the warm-up call and a faster sign-in check.
+   The app works with the old function too, just without those.
+   ```
+   cd sms-functions
+   firebase deploy --only functions:faceMatch
+   ```
 
 ## Daily use
 
@@ -103,9 +112,23 @@ by itself when exactly one face is close, clear and still. Add 3 angles.
 *Next learner →* moves down the class.
 
 **Take a register:** Attendance Tracking → choose the class and lesson as now
-→ *Scan faces* → *Start camera* (or *Photo*). Green = clear match, amber =
-check, red = not known. *Tick N present*, review the list, then **Save**.
-Learners ticked by face show a small "face" tag until saved.
+→ *Scan faces* (the button shows how many learners of the class have a face
+saved) → *Start camera* (or *Photo*). Green = clear match, amber = check (or
+"Name…" while a borderline match is being confirmed), red = not known.
+*Tick N present*, review the list, then **Save**. Learners ticked by face
+show a small "face" tag until saved.
+
+**Fast roll call:**
+- Tick *Tick clear matches automatically*; with *Sound on* each tick beeps
+  (and buzzes on phones), so you needn't watch the screen.
+- **Zoom** on the back rows: pinch, mouse wheel, double-tap, the slider or
+  1× 2× 3× 4×; drag to look around (the small map shows where you are).
+  Phones whose camera supports zoom use the camera's own zoom first (full
+  sensor quality), then a crop. Without zoom, faces smaller than about 80
+  camera pixels are not even found; zoomed, faces of 30–60 px are.
+- The bar at the top counts *N of M present*; *Not yet* lists who is left.
+- On a phone the scanner fills the screen; the light button appears when the
+  camera has a torch.
 
 **Withdraw consent:** open the learner in *Enrol faces* → *Withdraw consent*.
 All their saved faces are deleted at once.
@@ -123,8 +146,30 @@ report (`kalabo-face-import.csv`). Instructions are at the top of the script.
 
 | | Default | |
 |---|---|---|
-| Clear match at | 0.45 | at or above: pre-ticked |
+| Clear match at | 0.45 | at or above (and clearly above every other learner, by 0.05): pre-ticked |
 | Possible match at | 0.363 | between the two: "check" (teacher decides); below: not recognised |
+
+Settings holds only the on/off switch. Match levels, class progress,
+*Enrol faces* for any class and *Delete all faces* are in Attendance →
+Face recognition (admins).
+
+## How live recognition stays fast and accurate
+
+- Frames are taken as the camera delivers them (never the same one twice);
+  the camera is opened at full HD so zooming has pixels to use.
+- Only the zoomed part is analysed; a zoomed crop is enlarged so distant
+  faces pass the size check (anything under 28 camera pixels is ignored).
+- Only the pixels around each face are read for recognition.
+- Each sighting gets a quality score (size in camera pixels, sharpness,
+  head turn). A new face waits up to 0.65 s for a good sighting; the best 3
+  sightings of a face are combined before asking the server (in tests,
+  combining lifted similarity from 0.83–0.89 to 0.93).
+- A match close to the threshold is confirmed by a second answer (~0.2 s
+  later); a strong match counts at once. One learner can only be one face.
+- Up to 6 faces per request and 3 requests on the way; the server is woken
+  and the class's faces loaded as soon as the scanner opens.
+- Enrolment refuses blurred or turned-away pictures (for up to 2.5 s), so
+  saved faces are good ones.
 
 ## Before going live
 
@@ -142,6 +187,7 @@ report (`kalabo-face-import.csv`). Instructions are at the top of the script.
 |---|---|
 | "The camera needs … https" | Open the school system through its https address. |
 | "Face recognition is switched off" | An admin switches it on in Settings (admins can always use it). |
+| Back rows not recognised | Zoom in on them (pinch / wheel / 2×–4×). |
 | "Record guardian consent before adding a face" | Tick the consent button first. |
 | "Face recognition is not set up on the server yet" | Deploy the functions (step 2). |
 | Scan finds faces but names nobody | Learners of that class need faces enrolled; or lower "Clear match" slightly. |
@@ -150,16 +196,19 @@ report (`kalabo-face-import.csv`). Instructions are at the top of the script.
 ## Files
 
 - `client/lib/face/` — engine from Tick (`core.ts`, `index.ts`, `live.ts`),
+  `quality.ts` (sighting quality, combining), `zoom.ts` (zoom maths),
   `faceApi.ts` (calls to the functions), `register.ts` (suggestions)
 - `client/components/face/` — `FaceScanDialog`, `FaceEnrolDialog`,
-  `ClassFaceEnrolment`, `FaceRecognitionSettingsCard`, `camera`
+  `ClassFaceEnrolment`, `FaceRecognitionPanel` (Attendance tab),
+  `FaceRecognitionToggleCard` (Settings switch), `camera` (camera, zoom)
 - `client/hooks/useFaceRecognition.ts`, `client/types/face.ts`
 - Changed: `AttendanceTracking.tsx`, `MyClass.tsx`, `Settings.tsx`,
   `useAttendanceSession.ts`, `attendanceService.ts`, `types/attendance.ts`,
   `lib/firebase.ts`, `firestore.rules`, `vite.config.ts`, `package.json`,
   `public/.htaccess`, `public/sw.js`
 - `sms-functions/functions/src/face/` — `functions.js`, `sync.js` (scheduled clean-up), `lib.js`
-- Tests: `client/lib/face/register.spec.ts`,
+- Tests: `client/lib/face/register.spec.ts`, `client/lib/face/live.spec.ts`,
+  `client/components/face/faceSettings.spec.tsx`,
   `client/hooks/useAttendanceSession.face.spec.tsx`,
   `client/pages/teacher/AttendanceTracking.face.spec.tsx`,
   `client/services/attendanceService.spec.ts`,

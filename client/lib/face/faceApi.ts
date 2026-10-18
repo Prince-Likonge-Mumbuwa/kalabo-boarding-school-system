@@ -83,5 +83,18 @@ export const faceApi = {
   match: (body: { classId: string; width: number; height: number; live?: boolean; faces: Array<{ box: Box; embedding: number[] }> }) =>
     call<typeof body, MatchResult>('faceMatch', body),
 
+  /**
+   * Wake the server and load the class's faces before the first real scan
+   * (a cold server can take seconds). The answer is ignored; the server
+   * neither logs nor proposes anything for a warm-up.
+   */
+  warm: (classId: string) => {
+    const embedding = new Array(128).fill(0);
+    embedding[0] = 1;
+    return call<{ classId: string; width: number; height: number; live: true; warm: true; faces: Array<{ box: Box; embedding: number[] }> }, MatchResult>(
+      'faceMatch', { classId, width: 1, height: 1, live: true, warm: true, faces: [{ box: [0, 0, 1, 1], embedding }] },
+    ).catch(() => null);
+  },
+
   purgeAll: () => call<{ action: 'purgeAll' }, { ok: true; learners: number }>('faceAdmin', { action: 'purgeAll' }),
 };
