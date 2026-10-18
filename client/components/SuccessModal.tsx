@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { type ReactNode } from 'react';
 import { CheckCircle, X, Copy, Download, Trash2, Archive, AlertTriangle } from 'lucide-react';
 
 interface SuccessModalProps {
@@ -13,6 +13,8 @@ interface SuccessModalProps {
   importedCount?: number;
   studentIds?: string[];
   deletedCount?: number;
+  /** Extra actions (e.g. "Capture face now" after adding a learner). */
+  children?: ReactNode;
 }
 
 export const SuccessModal = ({
@@ -26,7 +28,8 @@ export const SuccessModal = ({
   actionType,
   importedCount,
   studentIds,
-  deletedCount
+  deletedCount,
+  children
 }: SuccessModalProps) => {
   if (!isOpen) return null;
 
@@ -139,6 +142,8 @@ export const SuccessModal = ({
             </div>
           </div>
         )}
+
+        {children && <div className="mb-4 flex justify-center">{children}</div>}
 
         {actionType === 'import' && importedCount !== undefined && studentIds && studentIds.length > 0 && (
           <div className="bg-gray-50 rounded-xl p-4 mb-4">

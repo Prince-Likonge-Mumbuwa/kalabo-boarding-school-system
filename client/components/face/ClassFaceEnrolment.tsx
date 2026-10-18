@@ -1,5 +1,6 @@
 // Enrol faces for a whole class, one learner after another.
-// Used by form teachers (My Class, Attendance Tracking) and admins (Attendance → Face recognition).
+// Used by form teachers (My Class, Attendance Tracking) and admins (Attendance → Face recognition,
+// Classes → a class's learners).
 //
 // The learner list is the class's existing learners (active / no status —
 // the same rule as the register). Face status is looked up by learner
@@ -7,7 +8,7 @@
 import React, { useMemo, useState } from 'react';
 import { Loader2, ScanFace, Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useClassFaceStatus, useInvalidateFaceStatus } from '@/hooks/useFaceRecognition';
+import { useLearnersFaceStatus, useInvalidateFaceStatus } from '@/hooks/useFaceRecognition';
 import { faceBadge, type FaceBadge } from '@/types/face';
 import { FaceEnrolDialog, type EnrolLearner } from './FaceEnrolDialog';
 
@@ -41,7 +42,8 @@ export function ClassFaceEnrolment({ open, onOpenChange, classId, className, lea
   className: string;
   learners: ClassLearner[];
 }) {
-  const statusQ = useClassFaceStatus(classId, { enabled: open });
+  const ids = useMemo(() => learners.filter(countedLearner).map(l => l.id), [learners]);
+  const statusQ = useLearnersFaceStatus(ids, { enabled: open });
   const invalidate = useInvalidateFaceStatus();
   const [filter, setFilter] = useState<'all' | FaceBadge>('all');
   const [search, setSearch] = useState('');

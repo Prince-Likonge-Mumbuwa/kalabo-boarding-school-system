@@ -120,14 +120,23 @@ describe('My Department → Allocations (same engine as Teacher Management)', ()
     expect(await screen.findByText(/Computer Science: 0 of 2 classes allocated/)).toBeTruthy();
   });
 
-  it('asks the admin to set the subjects when the department has none', async () => {
+  it('the HoD chooses the department subjects when there are none; another department\'s are locked', async () => {
     resetStore({
-      system: { departments: { names: ['Mathematics'] } },
+      system: { departments: { subjects: { 'Natural Sciences': ['Biology'] } } },
       users: { T1: { userType: 'teacher', fullName: 'Muhau N', departments: ['Mathematics'] } },
       staff_roles: { [hodRoleId('T1')]: { teacherId: 'T1', teacherName: 'Muhau N', role: 'hod', department: 'Mathematics', status: 'active' } },
+      class_slots: { F1A__Mathematics: { classId: 'F1A', normalizedSubject: 'Mathematics', subject: 'Mathematics' } },
     });
     page('allocations');
-    expect(await screen.findByText(/No subjects are set for Mathematics yet/)).toBeTruthy();
+    expect(await screen.findByText(/Subjects taught in Mathematics/)).toBeTruthy();
+    const maths = await screen.findByRole('button', { name: /^Mathematics$/ });
+    expect((screen.getByRole('button', { name: /Biology/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(maths);
+    fireEvent.click(screen.getByRole('button', { name: /Save subjects \(1\)/ }));
+    await waitFor(() => expect(getDocData('system', 'departments')?.subjects).toEqual({ 'Natural Sciences': ['Biology'], Mathematics: ['Mathematics'] }));
+    // now the allocation view for the new subject
+    expect(await screen.findByRole('tab', { name: /Mathematics/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Change subjects/ })).toBeTruthy();
   });
 });
 

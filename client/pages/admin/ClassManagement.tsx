@@ -37,6 +37,9 @@ import { IndividualLearnerModal } from '@/components/IndividualLearnerModal';
 import { LearnersListView } from '@/components/LearnersListView';
 import { TeachersListView } from '@/components/TeachersListView';
 import { SuccessModal } from '@/components/SuccessModal';
+import { CaptureFaceNowButton, LearnerFaceDialog, type FaceLearner } from '@/components/face/LearnerFace';
+import { ClassFaceEnrolment } from '@/components/face/ClassFaceEnrolment';
+import { useFaceAccess } from '@/hooks/useFaceRecognition';
 import { EditLearnerModal } from '@/components/EditLearnerModal';
 import { PDFDownloadModal } from '@/components/PDFDownloadModal';
 import { BulkActionsModal } from '@/components/BulkActionsModal';
@@ -145,6 +148,9 @@ export default function ClassManagement() {
   } | null>(null);
 
   // State for success modal data
+  const [faceLearner, setFaceLearner] = useState<FaceLearner | null>(null);
+  const [showFaceEnrolment, setShowFaceEnrolment] = useState(false);
+  const faceAccess = useFaceAccess();
   const [successData, setSuccessData] = useState<{
     title: string;
     message: string;
@@ -155,6 +161,7 @@ export default function ClassManagement() {
     importedCount?: number;
     studentIds?: string[];
     deletedCount?: number;
+    learnerId?: string;
   } | null>(null);
 
   // Build filters object
@@ -505,6 +512,7 @@ export default function ClassManagement() {
         title: 'Learner Added Successfully!',
         message: `${data.fullName} has been added to ${selectedClass.name}.`,
         studentId: result.studentId,
+        learnerId: (result as { learnerId?: string }).learnerId,
         studentName: data.fullName,
         className: selectedClass.name,
         actionType: 'add',
@@ -1570,7 +1578,21 @@ export default function ClassManagement() {
             setShowLearnersListModal(false);
             setShowPDFModal(true);
           }}
+          onEnrolFaces={faceAccess.canUse ? () => {
+            setShowLearnersListModal(false);
+            setShowFaceEnrolment(true);
+          } : undefined}
           onClose={() => setShowLearnersListModal(false)}
+        />
+      )}
+
+      {selectedClass && showFaceEnrolment && (
+        <ClassFaceEnrolment
+          open
+          onOpenChange={o => { if (!o) { setShowFaceEnrolment(false); setShowLearnersListModal(true); } }}
+          classId={selectedClass.id}
+          className={selectedClass.name}
+          learners={classLearners.map(l => ({ id: l.id, studentId: l.studentId, fullName: l.fullName, status: l.status }))}
         />
       )}
 
@@ -1648,7 +1670,17 @@ export default function ClassManagement() {
         importedCount={successData?.importedCount}
         studentIds={successData?.studentIds}
         deletedCount={successData?.deletedCount}
-      />
+      >
+        {successData?.actionType === 'add' && successData.learnerId && (
+          <CaptureFaceNowButton
+            onClick={() => {
+              setFaceLearner({ id: successData.learnerId!, studentId: successData.studentId || '', fullName: successData.studentName || '', className: successData.className || '' });
+              setShowSuccessModal(false);
+            }}
+          />
+        )}
+      </SuccessModal>
+      <LearnerFaceDialog learner={faceLearner} onClose={() => setFaceLearner(null)} />
     </>
   );
 }

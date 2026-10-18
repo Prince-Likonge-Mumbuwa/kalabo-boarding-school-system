@@ -14,14 +14,16 @@ import { useQuery } from '@tanstack/react-query';
 import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
 import { useSlotsForSubjects } from '@/hooks/useDepartments';
 import { isEngineReady } from '@/services/assignmentEngine';
-import { allocationRows, type AllocationRow } from '@/services/departmentService';
+import { allocationRows, type AllocationRow, type DepartmentConfig } from '@/services/departmentService';
+import { HodSubjectsEditor } from './HodSubjectsEditor';
 import { formatTermLabel, getCurrentAcademicTerm } from '@/utils/academicTerm';
 import type { HodMember } from './types';
 
 const VACANT = '';
 
-export function HodAllocationsTab({ department, subjects, classes, members }: {
+export function HodAllocationsTab({ department, cfg, subjects, classes, members }: {
   department: string;
+  cfg: DepartmentConfig;
   /** Normalised subject names of the department. */
   subjects: string[];
   classes: Array<{ id: string; name: string }>;
@@ -40,13 +42,7 @@ export function HodAllocationsTab({ department, subjects, classes, members }: {
   const vacant = rows.filter(r => !r.ownerTeacherId).length;
   const memberIds = new Set(members.map(m => m.id));
 
-  if (!subjects.length) {
-    return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        No subjects are set for {department} yet. An administrator chooses them in Teacher Management → <b>Departments</b>.
-      </div>
-    );
-  }
+  if (!subjects.length) return <HodSubjectsEditor department={department} cfg={cfg} subjects={subjects} />;
 
   const change = async (row: AllocationRow, teacherId: string) => {
     setBusy(row.classId); setMsg(null);
@@ -78,6 +74,7 @@ export function HodAllocationsTab({ department, subjects, classes, members }: {
           <p className="text-sm font-semibold text-gray-900">Allocations · {formatTermLabel(term.term, term.year)}</p>
           <p className="text-xs text-gray-500">A change applies from now and stays until changed. Same records as Teacher Management.</p>
         </div>
+        <div className="mb-3"><HodSubjectsEditor department={department} cfg={cfg} subjects={subjects} /></div>
         <div className="flex flex-wrap gap-2" role="tablist" aria-label="Subject">
           {subjects.map(s => (
             <button

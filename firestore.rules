@@ -86,6 +86,19 @@ service cloud.firestore {
         .get('subjects', {}).get(hodDept(), []);
     }
 
+    // system/departments write by a HoD: only subjects[their department]
+    // (a list), plus who/when.
+    function hodSubjectsOnly() {
+      let before = resource == null ? {} : resource.data;
+      let after = request.resource.data;
+      return after.diff(before).affectedKeys().hasOnly(['subjects', 'updatedBy', 'updatedByName', 'updatedAt'])
+        && after.get('updatedBy', '') == request.auth.uid
+        && after.get('subjects', {}) is map
+        && after.get('subjects', {}).diff(before.get('subjects', {})).affectedKeys().hasOnly([hodDept()])
+        && after.get('subjects', {}).get(hodDept(), []) is list
+        && after.get('subjects', {}).get(hodDept(), []).size() <= 40;
+    }
+
     function inHodDept(teacherId) {
       let u = get(/databases/$(database)/documents/users/$(teacherId)).data;
       // Older records only have the single `department` text; once the list
@@ -467,6 +480,8 @@ service cloud.firestore {
     match /system/{docId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin(request.auth.uid);
+      // A HoD chooses their own department's subjects; nothing else changes.
+      allow create, update: if docId == 'departments' && isHod() && hodSubjectsOnly();
     }
 
     // ==================== YEAR TRANSITION ====================

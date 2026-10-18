@@ -95,10 +95,17 @@ export async function getDoc(ref: any) {
 }
 
 // ---------- writes ----------
+// set(..., { merge: true }) merges nested maps, as Firestore does.
+const isPlain = (v: unknown): v is Data => !!v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+const deepMerge = (a: Data, b: Data): Data => {
+  const out: Data = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = isPlain(v) && isPlain(out[k]) ? deepMerge(out[k], v) : v;
+  return out;
+};
 const applySet = (ref: any, data: Data, opts?: { merge?: boolean }) => {
   const m = colOf(ref.col);
   const before = m.get(ref.id) ? structuredClone(m.get(ref.id)!) : null;
-  const after = opts?.merge && before ? { ...before, ...structuredClone(data) } : structuredClone(data);
+  const after = opts?.merge && before ? deepMerge(before, structuredClone(data)) : structuredClone(data);
   m.set(ref.id, after);
   writeLog.push({ op: 'set', path: ref.path, before, after: structuredClone(after) });
 };
@@ -159,3 +166,4 @@ export const runTransaction = async (_db: any, fn: (tx: any) => Promise<any>) =>
   ops.forEach(o => o());
   return out;
 };
+export const documentId = () => '__name__';

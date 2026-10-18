@@ -44,6 +44,13 @@ A scheduled job, `faceSyncScheduled` (every 3 hours), tidies the face records:
 - learner **archived, graduated, transferred out or deleted** → their face
   data is deleted (biometric data is not kept for people who have left).
 
+After a **year transition** (run, resumed or undone) the app asks the server
+to do this clean-up at once, so leavers' faces are deleted and promoted
+learners show in their new class straight away. (Undoing a transition after
+that brings the leavers back without faces; capture them again.) Face badges
+in the app are looked up by learner id, so they are right even before the
+clean-up.
+
 (A Firestore trigger would do this instantly, but this project's Firestore
 database is in `asia-southeast3`, where Google does not offer Firestore
 triggers. That is also why a Firestore-triggered function such as the
@@ -104,6 +111,17 @@ Do these once, in order.
    ```
 
 ## Daily use
+
+**Capture at enrolment:** after **Add Learner** (Classes, My Class) and after
+**Admissions** → *Save and generate student ID*, press *Capture face now*.
+**Edit Learner** shows the learner's face status with *Capture face* /
+*Manage face*. The face is saved under the new learner's record, so it follows
+them from then on.
+
+**Learners already in the system without a face:** Classes → a class's
+learners → **Faces** (admins), My Class → *Enrol faces* (form teachers), or
+Attendance → Face recognition → a class. Filter *Needs photo* / *No consent*
+and work down the list.
 
 **Enrol (form teacher, once per learner):** My Class → *Enrol faces* → pick a
 learner (or *Start with the first learner who needs a face*) → confirm the
@@ -199,7 +217,7 @@ Face recognition (admins).
   `quality.ts` (sighting quality, combining), `zoom.ts` (zoom maths),
   `faceApi.ts` (calls to the functions), `register.ts` (suggestions)
 - `client/components/face/` — `FaceScanDialog`, `FaceEnrolDialog`,
-  `ClassFaceEnrolment`, `FaceRecognitionPanel` (Attendance tab),
+  `ClassFaceEnrolment`, `LearnerFace` (Add / Edit Learner, Admissions), `FaceRecognitionPanel` (Attendance tab),
   `FaceRecognitionToggleCard` (Settings switch), `camera` (camera, zoom)
 - `client/hooks/useFaceRecognition.ts`, `client/types/face.ts`
 - Changed: `AttendanceTracking.tsx`, `MyClass.tsx`, `Settings.tsx`,

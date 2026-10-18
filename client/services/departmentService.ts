@@ -8,9 +8,10 @@
 //                                        old single `department` text is kept
 //                                        in step (names joined) so every
 //                                        existing screen still shows it.
-//   system/departments.names             the school's list of departments.
-//                                        Admins can add to it; until they do,
-//                                        DEFAULT_DEPARTMENTS is used.
+//   SCHOOL_DEPARTMENTS                   the school's seven departments (fixed).
+//   system/departments.subjects          each department's subjects, chosen
+//                                        by its Head of Department (or an
+//                                        admin).
 //   staff_roles/{teacherId}__hod         Head of Department, given by an
 //                                        admin. Same pattern as the
 //                                        admissions officer role: only admins
@@ -43,18 +44,37 @@ export const HOD_ROLE = 'hod';
 export const hodRoleId = (teacherId: string) => `${teacherId}__${HOD_ROLE}`;
 const DEPARTMENTS_DOC = ['system', 'departments'] as const;
 
-/** Used until an admin saves the school's own list. */
-export const DEFAULT_DEPARTMENTS = [
+/** The school's departments. */
+export const SCHOOL_DEPARTMENTS = [
+  'Languages',
   'Mathematics',
   'Natural Sciences',
-  'Languages',
-  'Social Sciences',
-  'Business Studies',
+  'Practical Subjects',
   'Expressive Arts',
-  'Design & Technology',
-  'Home Economics',
-  'Agricultural Science',
+  'Business Studies',
+  'Social Sciences',
 ] as const;
+/** @deprecated use SCHOOL_DEPARTMENTS */
+export const DEFAULT_DEPARTMENTS = SCHOOL_DEPARTMENTS;
+
+/** Names used before the school's list was fixed, and where they belong now. */
+const LEGACY_DEPARTMENTS: Record<string, string> = {
+  'design & technology': 'Practical Subjects',
+  'design and technology': 'Practical Subjects',
+  'home economics': 'Practical Subjects',
+  'agricultural science': 'Practical Subjects',
+  'practicals': 'Practical Subjects',
+  'sciences': 'Natural Sciences',
+  'science': 'Natural Sciences',
+  'maths': 'Mathematics',
+  'language': 'Languages',
+};
+
+/** The school's spelling of a department name (older names mapped); other text unchanged. */
+export function canonicalDepartment(name: string): string {
+  const k = name.trim().toLowerCase();
+  return SCHOOL_DEPARTMENTS.find(d => d.toLowerCase() === k) ?? LEGACY_DEPARTMENTS[k] ?? name.trim();
+}
 
 export interface HodRole {
   id: string;
@@ -83,7 +103,7 @@ export function normalizeDepartments(raw: unknown): string[] {
   const out: string[] = [];
   for (const v of raw) {
     if (typeof v !== 'string') continue;
-    const name = v.replace(/\s+/g, ' ').trim().slice(0, 60);
+    const name = canonicalDepartment(v.replace(/\s+/g, ' ').trim().slice(0, 60));
     if (!name || seen.has(key(name))) continue;
     seen.add(key(name));
     out.push(name);
@@ -108,7 +128,7 @@ export const departmentLabel = (departments: string[]) => departments.join(', ')
 
 /** Is `name` one of `list` (case-insensitive)? */
 export const hasDepartment = (list: string[] | undefined, name: string) =>
-  !!list?.some(d => key(d) === key(name));
+  !!list?.some(d => key(canonicalDepartment(d)) === key(canonicalDepartment(name)));
 
 /**
  * The school list plus any department a teacher already has that is not on
@@ -142,47 +162,18 @@ export function membersOf<T extends { departments?: string[] }>(teachers: T[], d
 
 // ==================== DEPARTMENT LIST ====================
 
+/** The school's departments (fixed list). */
 export async function getDepartmentList(): Promise<string[]> {
-  try {
-    const snap = await getDoc(doc(db, ...DEPARTMENTS_DOC));
-    const names = normalizeDepartments(snap.exists() ? snap.data()?.names : null);
-    return names.length ? names : [...DEFAULT_DEPARTMENTS];
-  } catch {
-    return [...DEFAULT_DEPARTMENTS];
-  }
-}
-
-/** Admin: add a department to the school list (the defaults are saved with it the first time). */
-export async function addDepartment(name: string, by: Actor): Promise<string> {
-  const [clean] = normalizeDepartments([name]);
-  if (!clean) throw new Error('Type a department name.');
-  const ref = doc(db, ...DEPARTMENTS_DOC);
-  const snap = await getDoc(ref);
-  const current = normalizeDepartments(snap.exists() ? snap.data()?.names : null);
-  const base = current.length ? current : [...DEFAULT_DEPARTMENTS];
-  if (hasDepartment(base, clean)) return base.find(d => key(d) === key(clean))!;
-  await setDoc(ref, { names: [...base, clean], updatedBy: by.uid, updatedByName: by.name, updatedAt: serverTimestamp() }, { merge: true });
-  return clean;
-}
-
-/** Admin: remove a department nobody belongs to from the school list. */
-export async function removeDepartment(name: string, by: Actor): Promise<void> {
-  const ref = doc(db, ...DEPARTMENTS_DOC);
-  const snap = await getDoc(ref);
-  const current = normalizeDepartments(snap.exists() ? snap.data()?.names : null);
-  const base = current.length ? current : [...DEFAULT_DEPARTMENTS];
-  await setDoc(ref, {
-    names: base.filter(d => key(d) !== key(name)),
-    updatedBy: by.uid, updatedByName: by.name, updatedAt: serverTimestamp(),
-  }, { merge: true });
+  return [...SCHOOL_DEPARTMENTS];
 }
 
 // ==================== DEPARTMENT SUBJECTS ====================
 //
 // system/departments.subjects: { [department]: normalised subject names }.
-// Set by an admin. A subject belongs to at most one department. HoDs may
-// allocate teachers only to their department's subjects (also enforced by
-// the Firestore rules, which read this same map).
+// Chosen by the department's HoD (My Department → Allocations), or by an
+// admin. A subject belongs to at most one department. HoDs may allocate
+// teachers only to their department's subjects (also enforced by the
+// Firestore rules, which read this same map).
 
 export interface DepartmentConfig {
   names: string[];
@@ -198,7 +189,8 @@ export function normalizeDepartmentConfig(d: any): DepartmentConfig {
     const clean = Array.isArray(list) ? Array.from(new Set((list as unknown[]).filter((x): x is string => typeof x === 'string' && !!x.trim()))) : [];
     if (clean.length) subjects[dept] = clean;
   }
-  return { names: names.length ? names : [...DEFAULT_DEPARTMENTS], subjects };
+  void names;
+  return { names: [...SCHOOL_DEPARTMENTS], subjects };
 }
 
 export async function getDepartmentConfig(): Promise<DepartmentConfig> {
@@ -241,10 +233,37 @@ export async function setDepartmentSubjects(department: string, subjects: string
   const snap = await getDoc(ref);
   const cfg = normalizeDepartmentConfig(snap.exists() ? snap.data() : null);
   await setDoc(ref, {
-    names: cfg.names,
     subjects: withDepartmentSubjects(cfg, department, subjects),
     updatedBy: by.uid, updatedByName: by.name, updatedAt: serverTimestamp(),
   }, { merge: false });
+}
+
+/**
+ * HoD: choose their own department's subjects. Only this department's entry
+ * changes (the Firestore rules allow a HoD nothing else), so a subject that
+ * already belongs to another department is refused, not taken.
+ */
+export async function setOwnDepartmentSubjects(department: string, subjects: string[], by: Actor): Promise<string[]> {
+  const ref = doc(db, ...DEPARTMENTS_DOC);
+  const want = Array.from(new Set(subjects.map(s => s.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    const raw = snap.exists() ? snap.data() : null;
+    const cfg = normalizeDepartmentConfig(raw);
+    const taken = want
+      .map(s => ({ s, d: departmentOfSubject(cfg, s) }))
+      .filter((x): x is { s: string; d: string } => !!x.d && key(x.d) !== key(department));
+    if (taken.length) {
+      throw new Error(taken.map(x => `${x.s} belongs to ${x.d}`).join('; ') + '. Ask that Head of Department or an administrator to release it first.');
+    }
+    // Keep the stored key's spelling for this department (the rules compare it exactly).
+    const stored = Object.keys(raw?.subjects ?? {}).find(d => key(d) === key(department)) ?? department;
+    tx.set(ref, {
+      subjects: { [stored]: want },
+      updatedBy: by.uid, updatedByName: by.name, updatedAt: serverTimestamp(),
+    }, { merge: true });
+    return want;
+  });
 }
 
 // ==================== TEACHER MEMBERSHIP ====================
@@ -276,12 +295,19 @@ export async function setMembership(teacherId: string, department: string, membe
   return runTransaction(db, async tx => {
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('Teacher not found.');
-    const current = teacherDepartments(snap.data());
+    const data = snap.data();
+    // Work on the stored names as they are: only this department is added or
+    // removed (the rules compare the stored list exactly).
+    const stored: string[] = Array.isArray(data.departments)
+      ? data.departments.filter((d: unknown): d is string => typeof d === 'string')
+      : teacherDepartments(data);
+    const current = teacherDepartments(data);
+    if (member === hasDepartment(current, dept)) return current;
     const next = member
-      ? (hasDepartment(current, dept) ? current : [...current, dept])
-      : current.filter(d => key(d) !== key(dept));
-    tx.update(ref, { departments: next, department: departmentLabel(next), updatedAt: serverTimestamp() });
-    return next;
+      ? [...stored, department.trim()]
+      : stored.filter(d => !hasDepartment([d], dept));
+    tx.update(ref, { departments: next, department: departmentLabel(normalizeDepartments(next)), updatedAt: serverTimestamp() });
+    return normalizeDepartments(next);
   });
 }
 

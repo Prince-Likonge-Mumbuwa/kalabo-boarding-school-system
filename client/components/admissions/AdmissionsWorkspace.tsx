@@ -50,6 +50,7 @@ import {
 import { teacherService } from '@/services/schoolService';
 import { printAdmissionSlip } from './admissionSlip';
 import { useEmbedded } from '@/components/workspace/embedded';
+import { CaptureFaceNowButton, LearnerFaceDialog } from '@/components/face/LearnerFace';
 
 type Tab = 'admit' | 'progress' | 'admitted' | 'settings';
 
@@ -235,6 +236,7 @@ function AdmitForm(props: {
   const [error, setError] = useState('');
   const [dupes, setDupes] = useState<ExistingLearnerLite[] | null>(null);
   const [done, setDone] = useState<{ record: AdmissionRecord; reason: string } | null>(null);
+  const [faceOpen, setFaceOpen] = useState(false);
 
   useEffect(() => {
     if (!settings.levels.some(l => levelKey(l) === levelKey(form.level))) {
@@ -294,9 +296,11 @@ function AdmitForm(props: {
           <button onClick={() => printAdmissionSlip(r)} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium">
             <Printer size={15} /> Print admission slip
           </button>
+          <CaptureFaceNowButton onClick={() => setFaceOpen(true)} />
           <button
             onClick={() => {
               setDone(null);
+              setFaceOpen(false);
               setForm(emptyForm(form.level, year));
               setAllergiesText('');
             }}
@@ -305,6 +309,10 @@ function AdmitForm(props: {
             <UserPlus size={15} /> Admit next learner
           </button>
         </div>
+        <LearnerFaceDialog
+          learner={faceOpen ? { id: r.learnerId, studentId: r.studentId, fullName: r.fullName, className: r.className } : null}
+          onClose={() => setFaceOpen(false)}
+        />
       </Card>
     );
   }

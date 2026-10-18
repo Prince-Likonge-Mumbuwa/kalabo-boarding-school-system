@@ -130,3 +130,37 @@ describe('HoD allocation through the real assignment engine', () => {
     await expect(engine.assignOwner({ teacherId: 'T3', classId: 'F2A', subject: 'Mathematics' })).rejects.toBeTruthy();
   });
 });
+
+describe('department subjects (system/departments)', () => {
+  const by = (uid: string) => ({ updatedBy: uid, updatedByName: uid, updatedAt: new Date() });
+
+  it("the HoD sets their own department's subjects (and only that)", async () => {
+    await assertSucceeds(setDoc(doc(as('HOD'), 'system/departments'), { subjects: { Mathematics: ['Mathematics'] }, ...by('HOD') }, { merge: true }));
+    await assertSucceeds(setDoc(doc(as('HOD'), 'system/departments'), { subjects: { Mathematics: [] }, ...by('HOD') }, { merge: true }));
+    // another department's entry, the names, or a non-list
+    await assertFails(setDoc(doc(as('HOD'), 'system/departments'), { subjects: { Languages: [] }, ...by('HOD') }, { merge: true }));
+    await assertFails(setDoc(doc(as('HOD'), 'system/departments'), { names: ['Mathematics'], ...by('HOD') }, { merge: true }));
+    await assertFails(setDoc(doc(as('HOD'), 'system/departments'), { subjects: { Mathematics: 'Mathematics' }, ...by('HOD') }, { merge: true }));
+    // must sign the change as themselves
+    await assertFails(setDoc(doc(as('HOD'), 'system/departments'), { subjects: { Mathematics: ['Mathematics'] }, ...by('ADMIN') }, { merge: true }));
+  });
+
+  it('the HoD may create the document when no subjects were ever saved', async () => {
+    await env.withSecurityRulesDisabled(async ctx => { await (await import('firebase/firestore')).deleteDoc(doc(ctx.firestore(), 'system/departments')); });
+    await assertSucceeds(setDoc(doc(as('HOD'), 'system/departments'), { subjects: { Mathematics: ['Mathematics'] }, ...by('HOD') }, { merge: true }));
+  });
+
+  it('teachers, ended HoDs and other system documents are refused; admins may do anything', async () => {
+    await assertFails(setDoc(doc(as('T2'), 'system/departments'), { subjects: { Mathematics: [] }, ...by('T2') }, { merge: true }));
+    await assertFails(setDoc(doc(as('HOD2'), 'system/departments'), { subjects: { Languages: [] }, ...by('HOD2') }, { merge: true }));
+    await assertFails(setDoc(doc(as('HOD'), 'system/faceRecognition'), { enabled: true }, { merge: true }));
+    await assertSucceeds(setDoc(doc(as('ADMIN'), 'system/departments'), { subjects: { Languages: ['English', 'Mathematics'] } }, { merge: true }));
+  });
+
+  it('the real service: setOwnDepartmentSubjects as the HoD', async () => {
+    h.db = as('HOD'); h.uid = 'HOD';
+    const { setOwnDepartmentSubjects } = await import('@/services/departmentService');
+    await expect(setOwnDepartmentSubjects('Mathematics', ['Mathematics', 'Further Mathematics'], { uid: 'HOD', name: 'Hod' })).resolves.toEqual(['Further Mathematics', 'Mathematics']);
+    await expect(setOwnDepartmentSubjects('Mathematics', ['English'], { uid: 'HOD', name: 'Hod' })).rejects.toThrow(/English belongs to Languages/);
+  });
+});

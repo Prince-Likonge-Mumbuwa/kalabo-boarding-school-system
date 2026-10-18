@@ -7,6 +7,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 vi.mock('firebase/firestore', async () => await import('../../test/fakeFirestore'));
 vi.mock('@/lib/firebase', () => ({ db: {}, auth: {} }));
 vi.mock('firebase/auth', () => ({ getAuth: () => ({ currentUser: { uid: 'OFF1' } }) }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'OFF1', fullName: 'Mrs Officer', userType: 'teacher' } }) }));
+vi.mock('@/components/face/FaceEnrolDialog', () => ({ FaceEnrolDialog: ({ learner }: any) => <p>face dialog for {learner.name} ({learner.id})</p> }));
 const printed = vi.hoisted(() => ({ calls: [] as any[] }));
 vi.mock('./admissionSlip', () => ({ printAdmissionSlip: (r: any) => printed.calls.push(r) }));
 
@@ -19,7 +21,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2027-01-12T09:00:00'));
   resetStore({
-    system: { academicYear: { currentYear: 2027 } },
+    system: { academicYear: { currentYear: 2027 }, faceRecognition: { enabled: true } },
     classes: {
       A: { name: 'Form 1A', type: 'form', level: 1, section: 'A', isActive: true, students: 0 },
       B: { name: 'Form 1B', type: 'form', level: 1, section: 'B', isActive: true, students: 0 },
@@ -64,6 +66,11 @@ describe('Admissions workspace', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Print admission slip/ }));
     expect(printed.calls[0]).toMatchObject({ studentId: 'F1A_001', className: 'Form 1A' });
+
+    // The face is captured at enrolment, under the new learner's record.
+    fireEvent.click(await screen.findByRole('button', { name: /Capture face now/ }));
+    const learnerId = getDocData('admissions', '2027-0001')?.learnerId;
+    expect(await screen.findByText(`face dialog for Mutinta Mwiinga (${learnerId})`)).toBeTruthy();
 
     // Progress shows the class filling.
     fireEvent.click(screen.getByRole('tab', { name: /Class progress/ }));

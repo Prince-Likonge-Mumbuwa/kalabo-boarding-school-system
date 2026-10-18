@@ -16,6 +16,7 @@ import {
 import { Learner } from '@/types/school';
 import type { Enrollment } from '@/types/promotion';
 import { loadLearnerEnrollments } from '@/services/enrollmentService';
+import { LearnerFaceDialog, LearnerFaceRow } from '@/components/face/LearnerFace';
 
 interface EditLearnerModalProps {
   isOpen: boolean;
@@ -172,6 +173,9 @@ export const EditLearnerModal = ({
     }
   };
 
+  const [faceOpen, setFaceOpen] = useState(false);
+  const faceLearner = { id: learner.id, studentId: learner.studentId || '', fullName: learner.fullName || '', className };
+
   if (!isOpen) return null;
 
   return (
@@ -218,6 +222,8 @@ export const EditLearnerModal = ({
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[60vh] overflow-y-auto">
+            {learner.id && <LearnerFaceRow learner={faceLearner} onOpen={() => setFaceOpen(true)} />}
+
             {/* Required Fields */}
             <div className="space-y-5">
               <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
@@ -523,6 +529,7 @@ export const EditLearnerModal = ({
           </div>
         </div>
       </div>
+      <LearnerFaceDialog learner={faceOpen ? faceLearner : null} onClose={() => setFaceOpen(false)} />
     </div>
   );
 };

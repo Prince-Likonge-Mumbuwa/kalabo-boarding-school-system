@@ -14,16 +14,25 @@ text is kept in step (names joined with commas), so every older screen,
 filter and PDF still shows it. Teachers whose record only has the old text
 are read as members of that department.
 
-The school's list is `system/departments.names`. Until an admin adds a
-department, the default list is used: Mathematics, Natural Sciences,
-Languages, Social Sciences, Business Studies, Expressive Arts, Design &
-Technology, Home Economics, Agricultural Science.
+The school's departments (fixed): **Languages, Mathematics, Natural
+Sciences, Practical Subjects, Expressive Arts, Business Studies, Social
+Sciences**. Older names are read as their new department (Design &
+Technology, Home Economics, Agricultural Science → Practical Subjects).
 
 ## Department subjects
 
-Teacher Management → **Departments** (admin): choose the subjects each
-department is responsible for (`system/departments.subjects`). A subject
-belongs to one department. This decides what a HoD may allocate.
+The **Head of Department** chooses the department's subjects: My Department
+→ **Allocations** → *Change subjects* (shown at once when none are chosen).
+A subject belongs to one department: a subject another department already
+has can't be chosen (that HoD, or an admin, releases it first). Admins can
+also change any department's subjects in Teacher Management →
+**Departments**. Stored in `system/departments.subjects`.
+
+## Who belongs where (admin)
+
+Teacher Management → **Departments**: every department with its Head of
+Department, its teachers (HoD first) and its subjects, plus the teachers who
+are in no department yet.
 
 ## Head of Department
 
@@ -50,7 +59,7 @@ themselves HoD.
   approved timetable, covers included) against the registers saved, with
   missed lessons listed and the daily register of form teachers. Same data
   as the admin's "Who's Teaching".
-- **Allocations:** for each department subject, which teacher teaches it in
+- **Allocations:** the department's subjects (chosen here), and for each one which teacher teaches it in
   each class. Changing a teacher, or making a class vacant, uses exactly the
   same assignment engine calls as Teacher Management (class slots + history
   rows), so the admin's Teacher Management, Results Entry, the Results Entry
@@ -66,6 +75,8 @@ themselves HoD.
 - A teacher cannot change `departments` / `department` on their own record.
 - An active HoD may change another teacher's departments only by adding or
   removing their own department.
+- An active HoD may change `system/departments` only to set their own
+  department's subject list.
 - An active HoD may write the assignment engine's documents only for their
   department's subjects, only with teachers of their department, never Form
   Teacher slots or covers / TP. The membership caches the engine rebuilds
@@ -81,9 +92,10 @@ themselves HoD.
 
 - `client/services/departmentService.ts`, `client/hooks/useDepartments.ts`
 - `client/components/departments/` — `DepartmentPicker`,
-  `TeacherDepartmentsSection` (Teacher Management), `DepartmentSubjectsDialog`
-  (Teacher Management → Departments), `MyDepartmentsCard` (Settings, read
-  only), `hod/` (the four My Department tabs)
+  `TeacherDepartmentsSection` (Teacher Management), `DepartmentsOverviewDialog`
+  (Teacher Management → Departments), `SubjectPicker`, `MyDepartmentsCard`
+  (Settings, read only), `hod/` (the four My Department tabs and
+  `HodSubjectsEditor`)
 - `client/pages/teacher/MyDepartment.tsx` (route
   `/dashboard/teacher/department`)
 - Tests: `client/services/departmentService.spec.ts`,

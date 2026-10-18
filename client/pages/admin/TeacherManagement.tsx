@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { TeacherRolesSection } from '@/components/admissions/TeacherRolesSection';
 import { TeacherDepartmentsSection } from '@/components/departments/TeacherDepartmentsSection';
 import { useHods } from '@/hooks/useDepartments';
-import { DepartmentSubjectsDialog } from '@/components/departments/DepartmentSubjectsDialog';
+import { DepartmentsOverviewDialog } from '@/components/departments/DepartmentsOverviewDialog';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -1224,7 +1224,7 @@ export default function TeacherManagement() {
                   <button
                     onClick={() => setShowDepartments(true)}
                     className="inline-flex items-center justify-center bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 px-4 py-2.5 gap-2 text-sm sm:text-base"
-                    title="Which subjects belong to which department"
+                    title="Who belongs to each department, its Head of Department and subjects"
                   >
                     <BookOpen size={18} />
                     Departments
@@ -1877,7 +1877,7 @@ export default function TeacherManagement() {
       />
 
       {isUserAdmin && (
-        <DepartmentSubjectsDialog
+        <DepartmentsOverviewDialog
           open={showDepartments}
           onOpenChange={setShowDepartments}
           actor={{ uid: user?.uid || '', name: user?.fullName || 'Admin' }}

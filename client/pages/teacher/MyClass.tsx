@@ -40,13 +40,14 @@ import { useDebounce } from '@/hooks/useDebounce';
 // Import modal components
 import { IndividualLearnerModal } from '@/components/IndividualLearnerModal';
 import { SuccessModal } from '@/components/SuccessModal';
+import { CaptureFaceNowButton, LearnerFaceDialog, type FaceLearner } from '@/components/face/LearnerFace';
 import { EditLearnerModal } from '@/components/EditLearnerModal';
 import { PDFDownloadModal } from '@/components/PDFDownloadModal';
 import { BulkActionsModal } from '@/components/BulkActionsModal';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { CSVImportModal } from '@/components/CSVImportModal';
 import { ClassFaceEnrolment, FaceBadgeChip } from '@/components/face/ClassFaceEnrolment';
-import { useClassFaceStatus, useFaceAccess } from '@/hooks/useFaceRecognition';
+import { useLearnersFaceStatus, useFaceAccess } from '@/hooks/useFaceRecognition';
 import { faceBadge } from '@/types/face';
 
 // Types
@@ -105,6 +106,7 @@ export default function MyClass() {
   } | null>(null);
 
   // Success modal data
+  const [faceLearner, setFaceLearner] = useState<FaceLearner | null>(null);
   const [successData, setSuccessData] = useState<{
     title: string;
     message: string;
@@ -115,6 +117,7 @@ export default function MyClass() {
     importedCount?: number;
     studentIds?: string[];
     deletedCount?: number;
+    learnerId?: string;
   } | null>(null);
 
   // Confirmation modal config
@@ -227,7 +230,8 @@ export default function MyClass() {
   } = useSchoolLearners(myClass?.id);
 
   // Face status of this class's learners, keyed by learner document id.
-  const faceStatusQ = useClassFaceStatus(myClass?.id, { enabled: faceAccess.canUse });
+  const faceLearnerIds = useMemo(() => (classLearners ?? []).map((l: any) => l.id as string), [classLearners]);
+  const faceStatusQ = useLearnersFaceStatus(faceLearnerIds, { enabled: faceAccess.canUse });
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
@@ -305,6 +309,7 @@ export default function MyClass() {
         title: 'Learner Added Successfully!',
         message: `${data.fullName} has been added to ${myClass.name}.`,
         studentId: result.studentId,
+        learnerId: (result as { learnerId?: string }).learnerId,
         studentName: data.fullName,
         className: myClass.name,
         actionType: 'add',
@@ -1521,7 +1526,17 @@ export default function MyClass() {
             importedCount={successData?.importedCount}
             studentIds={successData?.studentIds}
             deletedCount={successData?.deletedCount}
-          />
+          >
+            {successData?.actionType === 'add' && successData.learnerId && (
+              <CaptureFaceNowButton
+                onClick={() => {
+                  setFaceLearner({ id: successData.learnerId!, studentId: successData.studentId || '', fullName: successData.studentName || '', className: successData.className || '' });
+                  setShowSuccessModal(false);
+                }}
+              />
+            )}
+          </SuccessModal>
+          <LearnerFaceDialog learner={faceLearner} onClose={() => setFaceLearner(null)} />
         </>
       )}
     </>
