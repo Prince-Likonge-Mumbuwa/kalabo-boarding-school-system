@@ -24,6 +24,7 @@ export const WORKSPACE_ROUTES = {
     '/dashboard/admin/timetable-live',
     '/dashboard/admin/timetable/periods',
     '/dashboard/admin/timetable/holidays',
+    '/dashboard/admin/timetable',
     '/dashboard/admin/timetable/approvals',
     '/dashboard/admin/face-recognition',
   ],
@@ -48,7 +49,7 @@ export function adminWorkspaceRoutes() {
     group('admissions-classes', AdmissionsClassesWorkspace, WORKSPACE_ROUTES.admissionsClasses),
     // Results & SBA — the monitor reads class_slots + results directly
     group('results-sba', ResultsSbaWorkspace, WORKSPACE_ROUTES.resultsSba),
-    // Attendance (Periods, Holidays, Approvals are tabs)
+    // Attendance & Timetable (Periods, Holidays, Timetable generator are tabs)
     group('attendance-timetable', AttendanceTimetableWorkspace, WORKSPACE_ROUTES.attendanceTimetable),
   ];
 }

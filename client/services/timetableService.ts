@@ -200,6 +200,9 @@ function mapEntry(id: string, d: DocumentData): TimetableEntry {
     approvedByUid: d.approvedByUid ?? null,
     approvedAt: tsToDate(d.approvedAt) as any,
     rejectedReason: d.rejectedReason ?? null,
+    effectiveFrom: typeof d.effectiveFrom === 'string' ? d.effectiveFrom : null,
+    effectiveTo: typeof d.effectiveTo === 'string' ? d.effectiveTo : null,
+    versionId: d.versionId ?? null,
     createdAt: tsToDate(d.createdAt) as any,
     updatedAt: tsToDate(d.updatedAt) as any,
   };
@@ -497,6 +500,29 @@ async function entriesForSlots(
   return results;
 }
 
+/**
+ * Was this row part of the timetable on `dateYMD`? A published timetable
+ * runs from `effectiveFrom`; the one it replaced keeps its dates up to the
+ * day before (`effectiveTo` is exclusive). Rows without dates: active = in
+ * force, archived = not.
+ */
+export function inForceOn(e: Pick<TimetableEntry, 'status' | 'effectiveFrom' | 'effectiveTo'>, dateYMD: string): boolean {
+  const from = e.effectiveFrom ?? null;
+  if (from && dateYMD < from) return false;
+  if (e.status === 'active') return true;
+  if (e.status === 'archived') return !!e.effectiveTo && dateYMD < e.effectiveTo;
+  return false;
+}
+
+/** Rows of these slots in force on a date (live, or archived but in force then). */
+async function entriesForSlotsOn(slotIds: string[], term: TermName, year: number, dateYMD: string): Promise<TimetableEntry[]> {
+  const [active, archived] = await Promise.all([
+    entriesForSlots(slotIds, term, year, 'active'),
+    entriesForSlots(slotIds, term, year, 'archived'),
+  ]);
+  return [...active, ...archived].filter(e => inForceOn(e, dateYMD));
+}
+
 /** Bulk-fetch slot docs by id. Uses `in` chunks of 30. */
 async function getSlotsByIds(ids: string[]): Promise<Map<string, engine.ClassSlot>> {
   const out = new Map<string, engine.ClassSlot>();
@@ -623,7 +649,7 @@ export async function getTodayTimetableForTeacher(
   const attached = await engine.getSlotsForTeacher(teacherId);
   if (attached.length === 0) return [];
   const [raw, { periods, map }] = await Promise.all([
-    entriesForSlots(attached.map(s => s.slot.id), term, year, 'active'),
+    entriesForSlotsOn(attached.map(s => s.slot.id), term, year, dateYMD),
     getPeriodMap(year),
   ]);
   const slotMap = new Map(attached.map(s => [s.slot.id, s.slot]));
@@ -1152,13 +1178,16 @@ export async function getSchoolDayBoard(dateYMD: string, at: Date = new Date()):
   const board: SchoolDayBoard = { date: dateYMD, dayOfWeek: dow, holiday, term, year, periods, classes: [] };
   if (dow === null || holiday) return board;
 
-  const [raw, sessionSnap, leaveSnap] = await Promise.all([
+  const dayRows = (status: TimetableEntryStatus) =>
     getEntriesByFilter([
       { field: 'term', value: term },
       { field: 'year', value: year },
-      { field: 'status', value: 'active' },
+      { field: 'status', value: status },
       { field: 'dayOfWeek', value: dow },
-    ]),
+    ]);
+  const [raw, sessionSnap, leaveSnap] = await Promise.all([
+    // The timetable in force on that date (a replaced one for past dates).
+    Promise.all([dayRows('active'), dayRows('archived')]).then(([a, b]) => [...a, ...b].filter(e => inForceOn(e, dateYMD))),
     getDocs(query(collection(db, 'attendance_sessions'), where('date', '==', dateYMD))),
     getDocs(query(collection(db, USERS), where('status', '==', 'on_leave'))),
   ]);

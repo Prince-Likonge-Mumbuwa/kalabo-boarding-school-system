@@ -7,10 +7,11 @@ import { MemoryRouter } from 'react-router-dom';
 vi.mock('firebase/firestore', async () => await import('../test/fakeFirestore'));
 vi.mock('@/lib/firebase', () => ({ db: {}, auth: {} }));
 vi.mock('firebase/auth', () => ({ getAuth: () => ({}) }));
-const h = vi.hoisted(() => ({ classes: [] as any[], userType: 'teacher', officer: false, hod: null as null | { department: string } }));
+const h = vi.hoisted(() => ({ classes: [] as any[], userType: 'teacher', officer: false, hod: null as null | { department: string }, timetabler: false }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'T1', fullName: 'Mr T', userType: h.userType }, logout: vi.fn() }) }));
 vi.mock('@/hooks/useAdmissionsOfficer', () => ({ useAdmissionsOfficer: () => ({ isOfficer: h.officer, isLoading: false }) }));
 vi.mock('@/hooks/useDepartments', () => ({ useMyHodRole: () => ({ role: h.hod, isHod: !!h.hod, isLoading: false }) }));
+vi.mock('@/hooks/useTimetableBuilder', () => ({ useTimetablerRole: () => ({ isTimetabler: h.timetabler, isLoading: false }) }));
 vi.mock('@/hooks/useTeacherClasses', async () => {
   const actual = await vi.importActual<any>('@/hooks/useTeacherClasses');
   return { ...actual, useTeacherClasses: () => ({ data: h.classes }) };
@@ -21,7 +22,7 @@ import { DashboardLayout } from './DashboardLayout';
 const subject = (normalizedSubjectId: string, relation = 'owner') => ({ normalizedSubjectId, relation });
 const renderIt = () => render(<MemoryRouter><DashboardLayout><div /></DashboardLayout></MemoryRouter>);
 
-beforeEach(() => { cleanup(); h.classes = []; h.userType = 'teacher'; h.officer = false; h.hod = null; });
+beforeEach(() => { cleanup(); h.classes = []; h.userType = 'teacher'; h.officer = false; h.hod = null; h.timetabler = false; });
 
 describe('teacher menu', () => {
   it('hides My Class from a teacher who only teaches subjects', () => {
@@ -53,6 +54,20 @@ describe('teacher menu', () => {
     expect(screen.getByText('HoD · Mathematics')).toBeTruthy();
   });
 
+  it('shows Timetable Builder only to a HoD the admin allowed to generate timetables', () => {
+    h.hod = { department: 'Mathematics' };
+    renderIt();
+    expect(screen.queryByText('Timetable Builder')).toBeNull();
+    cleanup();
+    h.timetabler = true;
+    renderIt();
+    expect(screen.getByText('Timetable Builder')).toBeTruthy();
+    cleanup();
+    h.hod = null; // the HoD role ended: no builder either
+    renderIt();
+    expect(screen.queryByText('Timetable Builder')).toBeNull();
+  });
+
   it('shows Admissions only to admissions officers', () => {
     renderIt();
     expect(screen.queryByText('Admissions')).toBeNull();
@@ -64,7 +79,7 @@ describe('teacher menu', () => {
 });
 
 describe('admin menu (grouped workspaces)', () => {
-  const GROUPED = ['Admissions & Classes', 'Attendance', 'Results & SBA'];
+  const GROUPED = ['Admissions & Classes', 'Attendance & Timetable', 'Results & SBA'];
   const OLD = ['Class Management', 'Admissions', 'Attendance Overview', "Who's Teaching", 'Results Monitor', 'Results Analysis', 'SBA Overview'];
   const KEPT = ['Dashboard', 'Teachers', 'Exam Management', 'Report Cards', 'Year Transition', 'Settings'];
 

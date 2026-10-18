@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useAdmissionsOfficer } from '@/hooks/useAdmissionsOfficer';
 import { useMyHodRole } from '@/hooks/useDepartments';
+import { useTimetablerRole } from '@/hooks/useTimetableBuilder';
 import { useTeacherClasses, holdsFormTeacherSlot } from '@/hooks/useTeacherClasses';
 import {
   Menu,
@@ -25,6 +26,7 @@ import {
   UserPlus,
   Award,
   History,
+  CalendarRange,
 } from 'lucide-react';
 
 // Union of all navigable tab ids — keeps activeTab type-safe across pages.
@@ -46,6 +48,7 @@ type ActiveTab =
   | 'year-transition'
   | 'admissions'
   | 'my-department'
+  | 'timetable-builder'
   | 'admissions-classes'
   | 'results-sba'
   | 'attendance-timetable'
@@ -81,6 +84,7 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
   const isAdmin = user?.userType === 'admin';
   const { isOfficer } = useAdmissionsOfficer();
   const { role: hodRole } = useMyHodRole();
+  const { isTimetabler } = useTimetablerRole();
   // "My Class" is only for a class's form teacher (or the teacher covering them).
   const { data: teacherClasses } = useTeacherClasses({ enabled: user?.userType === 'teacher' });
   const isFormTeacher = holdsFormTeacherSlot(teacherClasses);
@@ -93,8 +97,8 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
     // Admissions + Class Management
     { id: 'admissions-classes', label: 'Admissions & Classes', icon: BookOpen, path: '/dashboard/admin/classes' },
     { id: 'teachers', label: 'Teachers', icon: Users, path: '/dashboard/admin/teachers' },
-    // Attendance Overview + Who's Teaching + Periods / Holidays / Approvals
-    { id: 'attendance-timetable', label: 'Attendance', icon: CalendarCheck, path: '/dashboard/admin/attendance-overview' },
+    // Attendance Overview + Who's Teaching + Periods / Holidays / Timetable generator
+    { id: 'attendance-timetable', label: 'Attendance & Timetable', icon: CalendarCheck, path: '/dashboard/admin/attendance-overview' },
     { id: 'exams', label: 'Exam Management', icon: Calendar, path: '/dashboard/admin/exams' },
     // Results Monitor + Results Analysis + SBA Overview
     { id: 'results-sba', label: 'Results & SBA', icon: BarChart3, path: '/dashboard/admin/results-monitor' },
@@ -108,7 +112,7 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
   const teacherMenuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard/teacher' },
     ...(isFormTeacher ? [{ id: 'my-class', label: 'My Class', icon: GraduationCap, path: '/dashboard/teacher/my-class' }] : []),
-    // NEW: teacher's weekly timetable (per-class grid, submit for approval)
+    // The teacher's timetable as published by the school (read-only, PDF)
     { id: 'my-timetable', label: 'My Timetable', icon: Calendar, path: '/dashboard/teacher/my-timetable' },
     { id: 'attendance', label: 'Attendance Tracking', icon: Clock, path: '/dashboard/teacher/attendance' },
     { id: 'results', label: 'Results Entry', icon: PenTool, path: '/dashboard/teacher/results-entry' },
@@ -118,6 +122,8 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
     ...(isOfficer ? [{ id: 'admissions', label: 'Admissions', icon: UserPlus, path: '/dashboard/teacher/admissions' }] : []),
     // Only for a Head of Department (appointed in Teacher Management).
     ...(hodRole ? [{ id: 'my-department', label: 'My Department', icon: Award, path: '/dashboard/teacher/department' }] : []),
+    // A HoD the admin allowed to generate timetables.
+    ...(hodRole && isTimetabler ? [{ id: 'timetable-builder', label: 'Timetable Builder', icon: CalendarRange, path: '/dashboard/teacher/timetable-builder' }] : []),
   ];
 
   const menuItems = isAdmin ? adminMenuItems : teacherMenuItems;
