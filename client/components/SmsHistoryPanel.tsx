@@ -1,6 +1,8 @@
 // @/components/SmsHistoryPanel.tsx
 // SMS history log with filters, per-row retry, and bulk retry of failed sends.
 // Includes inline phone-number editing for failures caused by bad numbers.
+// Term, year and class pickers are always visible (Report Cards → SMS History);
+// the term and year are shared with the Report Cards tab.
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -18,7 +20,9 @@ import {
   X,
   Eye,
   Pencil,
+  Calendar,
 } from 'lucide-react';
+import { getCurrentAcademicTerm } from '@/utils/academicTerm';
 import {
   smsHistoryService,
   SmsHistoryItem,
@@ -33,6 +37,16 @@ interface SmsHistoryPanelProps {
   classId?: string;
   term?: string;
   year?: number;
+  /** Shows the term picker; called with the term chosen. */
+  onTermChange?: (term: string) => void;
+  /** Shows the year picker; called with the year chosen. */
+  onYearChange?: (year: number) => void;
+  terms?: string[];
+  years?: number[];
+  /** Classes for the class picker (instead of typing a class ID). */
+  classOptions?: { id: string; name: string }[];
+  /** Offer "All classes" (admins). */
+  allowAllClasses?: boolean;
   onRetryComplete?: () => void;
   addToast: (type: ToastType, title: string, message: string) => void;
 }
@@ -84,13 +98,36 @@ const isPhoneFailure = (msg: SmsHistoryItem): boolean => {
   );
 };
 
+const DEFAULT_TERMS = ['Term 1', 'Term 2', 'Term 3'];
+
 export const SmsHistoryPanel = ({
   classId,
-  term,
-  year,
+  term: termProp,
+  year: yearProp,
+  onTermChange,
+  onYearChange,
+  terms = DEFAULT_TERMS,
+  years: yearsProp,
+  classOptions,
+  allowAllClasses = true,
   onRetryComplete,
   addToast,
 }: SmsHistoryPanelProps) => {
+  // Term / year: the page's when it manages them, else kept here.
+  const auto = getCurrentAcademicTerm();
+  const [ownTerm, setOwnTerm] = useState<string>(termProp || auto.term);
+  const [ownYear, setOwnYear] = useState<number>(yearProp || auto.year);
+  useEffect(() => { if (termProp) setOwnTerm(termProp); }, [termProp]);
+  useEffect(() => { if (yearProp) setOwnYear(yearProp); }, [yearProp]);
+  const term = ownTerm;
+  const year = ownYear;
+  const years = useMemo(() => {
+    const list = yearsProp?.length ? [...yearsProp] : [auto.year, auto.year - 1, auto.year - 2];
+    if (!list.includes(year)) list.push(year);
+    return list.sort((a, b) => b - a);
+  }, [yearsProp, auto.year, year]);
+  const chooseTerm = (t: string) => { setOwnTerm(t); onTermChange?.(t); };
+  const chooseYear = (y: number) => { setOwnYear(y); onYearChange?.(y); };
   const { updateLearner } = useSchoolLearners();
 
   const [messages, setMessages] = useState<SmsHistoryItem[]>([]);
@@ -305,14 +342,14 @@ export const SmsHistoryPanel = ({
 
   return (
     <>
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="mobile-form bg-white rounded-xl border border-gray-200 overflow-hidden">
         {/* Header */}
-        <div className="p-4 border-b border-gray-100">
+        <div className="p-3 sm:p-4 border-b border-gray-100">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
               <MessageCircle size={20} className="text-blue-600" />
               <h3 className="font-semibold text-gray-900">SMS History</h3>
-              <span className="text-xs text-gray-500">({stats.total} loaded)</span>
+              <span className="text-xs text-gray-500">({stats.total} loaded · {term} {year})</span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {selectedIds.size > 0 && (
@@ -365,11 +402,47 @@ export const SmsHistoryPanel = ({
               <button
                 onClick={() => fetchHistory(true)}
                 disabled={isLoading}
-                className="p-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                aria-label="Refresh SMS history"
+                className="p-2 sm:p-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
               >
                 <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
               </button>
             </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+            <label className="relative col-span-1">
+              <span className="sr-only">Term</span>
+              <Calendar size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <select
+                aria-label="SMS history term"
+                value={term}
+                onChange={e => chooseTerm(e.target.value)}
+                className="w-full sm:w-32 pl-8 pr-2 py-2 border border-gray-300 rounded-lg text-sm bg-white font-medium"
+              >
+                {terms.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+            <select
+              aria-label="SMS history year"
+              value={year}
+              onChange={e => chooseYear(Number(e.target.value))}
+              className="w-full sm:w-24 px-2 py-2 border border-gray-300 rounded-lg text-sm bg-white font-medium"
+            >
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            {classOptions && (
+              <select
+                aria-label="SMS history class"
+                value={classFilter}
+                onChange={e => setClassFilter(e.target.value)}
+                className="col-span-2 w-full sm:w-48 px-2 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+              >
+                {allowAllClasses && <option value="">All classes</option>}
+                {!allowAllClasses && !classFilter && <option value="">Choose a class</option>}
+                {classOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            )}
           </div>
 
           <div className="mt-3 flex gap-3 text-xs overflow-x-auto">
@@ -379,7 +452,7 @@ export const SmsHistoryPanel = ({
           </div>
 
           {showFilters && (
-            <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 sm:grid-cols-3 gap-2">
               <select
                 value={statusFilter}
                 onChange={e => setStatusFilter(e.target.value)}
@@ -403,19 +476,21 @@ export const SmsHistoryPanel = ({
                 <option value="bulk">Bulk</option>
                 <option value="announcement">Announcement</option>
               </select>
-              <input
-                type="text"
-                placeholder="Class ID filter..."
-                value={classFilter}
-                onChange={e => setClassFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-              />
+              {!classOptions && (
+                <input
+                  type="text"
+                  placeholder="Class ID filter..."
+                  value={classFilter}
+                  onChange={e => setClassFilter(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              )}
             </div>
           )}
         </div>
 
         {/* List */}
-        <div className="max-h-[560px] overflow-y-auto">
+        <div className="max-h-[70vh] sm:max-h-[560px] overflow-y-auto overscroll-contain">
           {isLoading && messages.length === 0 ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 size={24} className="animate-spin text-blue-600" />
@@ -455,7 +530,7 @@ export const SmsHistoryPanel = ({
                 return (
                   <div
                     key={msg.id}
-                    className={`px-4 py-3 border-b border-gray-50 hover:bg-gray-50 ${
+                    className={`px-3 sm:px-4 py-3 border-b border-gray-50 hover:bg-gray-50 ${
                       isSelected ? 'bg-blue-50' : ''
                     }`}
                   >
@@ -465,7 +540,8 @@ export const SmsHistoryPanel = ({
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => toggleSelect(msg.id)}
-                          className="mt-1 rounded"
+                          className="mt-1 h-4 w-4 rounded"
+                          aria-label="Select for retry"
                         />
                       )}
                       <div className="flex-1 min-w-0">
@@ -536,8 +612,9 @@ export const SmsHistoryPanel = ({
                       <div className="flex items-center gap-1 flex-shrink-0">
                         <button
                           onClick={() => setPreviewMessage(msg)}
-                          className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg"
+                          className="p-2 sm:p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg"
                           title="Preview"
+                          aria-label="Preview message"
                         >
                           <Eye size={14} />
                         </button>
@@ -545,8 +622,9 @@ export const SmsHistoryPanel = ({
                           <button
                             onClick={() => handleRetryOne(msg.id)}
                             disabled={isRetrying}
-                            className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg disabled:opacity-50"
+                            className="p-2 sm:p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg disabled:opacity-50"
                             title="Retry"
+                            aria-label="Retry message"
                           >
                             {isRetrying ? (
                               <Loader2 size={14} className="animate-spin" />
@@ -579,12 +657,12 @@ export const SmsHistoryPanel = ({
 
       {/* Preview modal */}
       {previewMessage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div
             className="fixed inset-0 bg-black/50"
             onClick={() => setPreviewMessage(null)}
           />
-          <div className="relative bg-white rounded-xl max-w-lg w-full p-5 shadow-2xl">
+          <div className="relative bg-white rounded-t-2xl sm:rounded-xl max-w-lg w-full max-h-[90dvh] overflow-y-auto p-4 sm:p-5 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold text-gray-900">Message Preview</h3>
               <button

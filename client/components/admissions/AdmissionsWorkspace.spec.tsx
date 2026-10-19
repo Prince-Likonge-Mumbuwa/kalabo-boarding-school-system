@@ -43,6 +43,13 @@ const renderIt = (isAdmin = false) =>
 
 const type = (label: string, value: string) =>
   fireEvent.change(screen.getByLabelText(new RegExp(`^${label}`)), { target: { value } });
+// Date of birth is three dropdowns: day, month, year.
+const dob = (iso: string) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  fireEvent.change(screen.getByLabelText('Year of birth'), { target: { value: String(y) } });
+  fireEvent.change(screen.getByLabelText('Month of birth'), { target: { value: String(m) } });
+  fireEvent.change(screen.getByLabelText('Day of birth'), { target: { value: String(d) } });
+};
 
 describe('Admissions workspace', () => {
   it('an officer enrols a learner: class shown before saving, student id generated, slip printed', async () => {
@@ -52,7 +59,7 @@ describe('Admissions workspace', () => {
 
     type('Full name', 'Mutinta Mwiinga');
     fireEvent.click(screen.getByRole('button', { name: 'Female' }));
-    type('Date of birth', '2013-04-02');
+    dob('2013-04-02');
     type('Home address', 'Kalabo');
     type('Guardian name', 'Mr Mwiinga');
     type('Guardian phone', '0971234567');
@@ -82,7 +89,7 @@ describe('Admissions workspace', () => {
     await screen.findByText('Learner');
     type('Full name', 'Mutinta Mwiinga');
     fireEvent.click(screen.getByRole('button', { name: 'Female' }));
-    type('Date of birth', '2013-04-02');
+    dob('2013-04-02');
     type('Home address', 'Kalabo');
     type('Guardian name', 'Mr Mwiinga');
     type('Guardian phone', '0971234567');
@@ -108,7 +115,7 @@ describe('Admissions workspace', () => {
     await screen.findByText('Learner');
     type('Full name', 'Mutinta Mwiinga');
     fireEvent.click(screen.getByRole('button', { name: 'Female' }));
-    type('Date of birth', '2013-04-02');
+    dob('2013-04-02');
     type('Home address', 'Kalabo');
     type('Guardian name', 'Mr Mwiinga');
     type('Guardian phone', '0971234567');
