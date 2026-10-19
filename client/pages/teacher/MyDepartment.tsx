@@ -1,7 +1,8 @@
 // @/pages/teacher/MyDepartment.tsx
 //
 // Head of Department:
-//   Results      results entry progress of the department's teachers
+//   Results      results entry progress of the department's teachers, for
+//                the term chosen (current term by default)
 //   Roll call    registers taken for the lessons they taught on a day
 //   Allocations  the department's subjects (chosen by the HoD), and which
 //                department teacher teaches each of them in each class (the
@@ -10,9 +11,9 @@
 //
 // Everything reads and writes the same records as the admin screens, so the
 // two views always agree.
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Award, BarChart3, CalendarCheck, Loader2, RefreshCw, Shuffle, Users } from 'lucide-react';
+import { Award, BarChart3, Calendar, CalendarCheck, Loader2, RefreshCw, Shuffle, Users } from 'lucide-react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useDepartmentConfig, useMyHodRole, useSlotsForSubjects } from '@/hooks/useDepartments';
 import { useSchoolTeachers } from '@/hooks/useSchoolTeachers';
@@ -24,6 +25,9 @@ import { HodRollCallTab } from '@/components/departments/hod/HodRollCallTab';
 import { HodAllocationsTab } from '@/components/departments/hod/HodAllocationsTab';
 import { HodTeachersTab } from '@/components/departments/hod/HodTeachersTab';
 import type { HodMember } from '@/components/departments/hod/types';
+import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
+
+const TERM_OPTIONS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
 
 const TABS = [
   { id: 'results', label: 'Results', icon: BarChart3 },
@@ -40,7 +44,11 @@ export default function MyDepartment() {
   const cfgQ = useDepartmentConfig();
   const [params, setParams] = useSearchParams();
   const tab: TabId = (TABS.find(t => t.id === params.get('tab'))?.id ?? 'results') as TabId;
-  const monitor = useResultsEntryMonitor({ enabled: !!role && tab === 'results' });
+  // Results: the current term by default; the HoD can look at any term of
+  // the current academic year (same as the admin's Results Entry Monitor).
+  const autoTerm = useMemo(() => getCurrentAcademicTerm(), []);
+  const [selectedTerm, setSelectedTerm] = useState<TermName>(autoTerm.term as TermName);
+  const monitor = useResultsEntryMonitor({ term: selectedTerm, year: autoTerm.year, enabled: !!role && tab === 'results' });
 
   const teachers = allTeachers as unknown as HodMember[];
   const members = useMemo(() => {
@@ -80,14 +88,30 @@ export default function MyDepartment() {
             <p className="text-sm text-gray-500">{members.length} teacher{members.length === 1 ? '' : 's'} · {subjects.length} subject{subjects.length === 1 ? '' : 's'}</p>
           </div>
           {tab === 'results' && (
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+            <label className="relative">
+              <span className="sr-only">Term</span>
+              <Calendar size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <select
+                value={selectedTerm}
+                onChange={e => setSelectedTerm(e.target.value as TermName)}
+                aria-label="Term"
+                className="rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-8 text-sm font-medium text-gray-900"
+              >
+                {TERM_OPTIONS.map(t => (
+                  <option key={t} value={t}>{t} {autoTerm.year}{t === autoTerm.term ? ' (current)' : ''}</option>
+                ))}
+              </select>
+            </label>
             <button
               type="button"
               onClick={() => monitor.refetch()}
               disabled={monitor.isFetching}
-              className="inline-flex items-center justify-center gap-2 self-start rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50 sm:self-auto"
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50 sm:self-auto"
             >
               <RefreshCw size={14} className={monitor.isFetching ? 'animate-spin' : ''} /> Refresh
             </button>
+            </div>
           )}
         </div>
 

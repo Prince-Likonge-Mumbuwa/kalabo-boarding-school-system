@@ -57,9 +57,19 @@ export function setAuditActor(a: AuditActor | null) { actor = a; }
 // ---------- describing a write ----------
 
 const SKIP_FIELDS = new Set(['updatedAt', 'createdAt', 'lastUpdated', 'updatedBy', 'updatedByName', 'updatedByUid', 'modifiedAt']);
-const LABEL_FIELDS = ['fullName', 'name', 'teacherName', 'studentName', 'className', 'title', 'subject', 'examName'];
+const LABEL_FIELDS = ['fullName', 'name', 'studentName', 'teacherName', 'className', 'title', 'subject', 'examName'];
+/**
+ * Kept first among the values, so the Audit Trail can say WHICH class,
+ * subject, exam (Week 4 / Week 8 / End of Term), term and year a change was
+ * for, e.g. "saved Week 4 marks for 38 learners — Form 2A · Mathematics ·
+ * Term 3 2026".
+ */
+const CONTEXT_FIELDS = [
+  'className', 'subjectName', 'subject', 'examType', 'examName', 'term', 'year', 'examYear',
+  'date', 'kind', 'period', 'studentName', 'fullName', 'name', 'marks', 'totalMarks', 'grade', 'status',
+];
 const MAX_FIELDS = 15;
-const MAX_VALUES = 10;
+const MAX_VALUES = 18;
 
 const isSentinel = (v: any) => !!v && typeof v === 'object' && typeof v._methodName === 'string';
 
@@ -85,7 +95,8 @@ export function describeWrite(op: AuditOpKind, ref: { path?: string; id?: string
     const keys = Object.keys(data).filter(k => !SKIP_FIELDS.has(k));
     if (keys.length) out.fields = keys.slice(0, MAX_FIELDS);
     const values: Record<string, string | number | boolean | null> = {};
-    for (const k of keys) {
+    const ordered = [...CONTEXT_FIELDS.filter(k => keys.includes(k)), ...keys.filter(k => !CONTEXT_FIELDS.includes(k))];
+    for (const k of ordered) {
       if (Object.keys(values).length >= MAX_VALUES) break;
       const s = shortValue(data[k]);
       if (s !== undefined) values[k] = s;

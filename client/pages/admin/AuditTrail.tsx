@@ -6,7 +6,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { ChevronDown, Download, History, Loader2, RefreshCw, Search } from 'lucide-react';
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { areaOf, auditCsv, loadAuditTrail, type AuditRow } from '@/services/auditService';
+import { areaOf, auditCsv, contextLine, loadAuditTrail, type AuditRow } from '@/services/auditService';
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const fromIso = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, (m || 1) - 1, d || 1); };
@@ -152,6 +152,9 @@ export default function AuditTrail() {
                                 <span className="font-medium text-gray-800">{o.op === 'event' ? o.action : `${VERB[o.op] ?? o.op} · ${areaOf(o.collection)}`}</span>
                                 {o.path && <span className="ml-2 break-all font-mono text-gray-500">{o.path}</span>}
                                 {o.label && <span className="ml-2 text-gray-700">“{o.label}”</span>}
+                                {o.op !== 'event' && contextLine(o) && (
+                                  <span className="mt-0.5 block text-gray-700">{contextLine(o)}</span>
+                                )}
                                 {o.values && Object.keys(o.values).length > 0 && (
                                   <span className="mt-0.5 block break-words text-gray-600">
                                     {Object.entries(o.values).map(([k, v]) => `${k}: ${v === null ? '—' : String(v)}`).join(' · ')}
