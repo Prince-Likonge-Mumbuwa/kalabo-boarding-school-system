@@ -250,3 +250,12 @@
     color: hsl(var(--destructive-foreground));
   }
 }
+/* Phones: form fields at 16px so iOS / Android don't zoom in when a field is
+   tapped. Add `mobile-form` to a form or modal to use it. */
+@media (max-width: 639px) {
+  .mobile-form input:not([type='checkbox']):not([type='radio']),
+  .mobile-form select,
+  .mobile-form textarea {
+    font-size: 16px;
+  }
+}

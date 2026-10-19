@@ -55,6 +55,7 @@ import { CaptureFaceNowButton, LearnerFaceDialog, type FaceLearner } from '@/com
 import { ClassFaceEnrolment, FaceBadgeChip } from '@/components/face/ClassFaceEnrolment';
 import { useFaceAccess, useLearnersFaceStatus } from '@/hooks/useFaceRecognition';
 import { faceBadge } from '@/types/face';
+import { DateOfBirthSelect } from '@/components/DateOfBirthSelect';
 
 type Tab = 'admit' | 'progress' | 'admitted' | 'settings';
 
@@ -368,7 +369,7 @@ function AdmitForm(props: {
   );
 
   return (
-    <div className="grid lg:grid-cols-3 gap-5">
+    <div className="mobile-form grid lg:grid-cols-3 gap-5">
       <div className="lg:col-span-2 space-y-5">
         {!settings.isOpen && <Banner tone="warn">Admissions are closed for officers. As admin you can still admit.</Banner>}
 
@@ -390,7 +391,18 @@ function AdmitForm(props: {
                 ))}
               </div>
             </Field>
-            {input('dateOfBirth', 'Date of birth', { type: 'date', required: true })}
+            <div>
+              <span className="block text-xs font-medium text-gray-600 mb-1">Date of birth<span className="text-red-500"> *</span></span>
+              <DateOfBirthSelect
+                value={form.dateOfBirth}
+                minYear={new Date().getFullYear() - 30}
+                maxYear={new Date().getFullYear() - 8}
+                onChange={v => set('dateOfBirth', v.iso)}
+                invalid={!!errors.dateOfBirth}
+                idPrefix="admission-dob"
+              />
+              {errors.dateOfBirth && <span className="block text-xs text-red-600 mt-1">{errors.dateOfBirth}</span>}
+            </div>
             {input('address', 'Home address', { required: true })}
             {input('examNumber', 'ECZ exam number', { placeholder: 'Last national exam' })}
             {input('previousSchool', 'Previous school')}

@@ -4,7 +4,6 @@ import {
   X,
   User,
   Phone,
-  Hash,
   Loader2,
   AlertCircle,
   Users,
@@ -17,6 +16,7 @@ import { Learner } from '@/types/school';
 import type { Enrollment } from '@/types/promotion';
 import { loadLearnerEnrollments } from '@/services/enrollmentService';
 import { LearnerFaceDialog, LearnerFaceRow } from '@/components/face/LearnerFace';
+import { DateOfBirthSelect, type DobParts } from '@/components/DateOfBirthSelect';
 
 interface EditLearnerModalProps {
   isOpen: boolean;
@@ -59,12 +59,16 @@ export const EditLearnerModal = ({
     alternativeGuardianPhone: '',
     sponsor: '',
     birthYear: '' as number | '',
+    dateOfBirth: '',
     previousSchool: '',
     medicalNotes: '',
     allergies: ''
   });
   
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Day / month chosen but not both (a year alone is fine: older records).
+  const [dobPartial, setDobPartial] = useState(false);
+  useEffect(() => { if (isOpen) setDobPartial(false); }, [isOpen, learner]);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Load learner data when modal opens
@@ -82,6 +86,7 @@ export const EditLearnerModal = ({
         alternativeGuardianPhone: learner.alternativeGuardianPhone || '',
         sponsor: learner.sponsor || '',
         birthYear: learner.birthYear || '',
+        dateOfBirth: (learner as any).dateOfBirth || '',
         previousSchool: learner.previousSchool || '',
         medicalNotes: learner.medicalNotes || '',
         allergies: learner.allergies ? learner.allergies.join(', ') : ''
@@ -119,9 +124,13 @@ export const EditLearnerModal = ({
     }
 
     if (!formData.birthYear) {
-      newErrors.birthYear = 'Birth year is required';
+      newErrors.birthYear = 'Choose the year of birth';
     } else if (formData.birthYear < 1990 || formData.birthYear > currentYear) {
       newErrors.birthYear = `Enter a valid year (1990-${currentYear})`;
+    } else if (dobPartial) {
+      newErrors.birthYear = 'Choose both the day and the month, or leave both empty';
+    } else if (formData.dateOfBirth && new Date(formData.dateOfBirth + 'T00:00:00') > new Date()) {
+      newErrors.birthYear = 'Date of birth cannot be in the future';
     }
 
     setErrors(newErrors);
@@ -151,6 +160,8 @@ export const EditLearnerModal = ({
         alternativeGuardianPhone: formData.alternativeGuardianPhone || undefined,
         sponsor: formData.sponsor.trim(),
         birthYear: formData.birthYear as number,
+        // The full date when known — otherwise only the year is changed.
+        ...(formData.dateOfBirth ? { dateOfBirth: formData.dateOfBirth } : {}),
         previousSchool: formData.previousSchool.trim() || undefined,
         medicalNotes: formData.medicalNotes.trim() || undefined,
         allergies: allergiesArray
@@ -166,11 +177,9 @@ export const EditLearnerModal = ({
     setFormData(prev => ({ ...prev, [field]: digits }));
   };
 
-  const handleBirthYearChange = (value: string) => {
-    const num = parseInt(value);
-    if (value === '' || (!isNaN(num) && num >= 1000 && num <= 9999)) {
-      setFormData(prev => ({ ...prev, birthYear: value === '' ? '' : num }));
-    }
+  const handleDobChange = (v: DobParts & { iso: string }) => {
+    setDobPartial(!v.iso && (!!v.day || !!v.month));
+    setFormData(prev => ({ ...prev, birthYear: v.year ? Number(v.year) : '', dateOfBirth: v.iso }));
   };
 
   const [faceOpen, setFaceOpen] = useState(false);
@@ -179,16 +188,16 @@ export const EditLearnerModal = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
+    <div className="mobile-form fixed inset-0 z-50 overflow-y-auto">
       <div className="fixed inset-0 bg-black/50" onClick={onClose} />
       
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative bg-white rounded-2xl w-full max-w-2xl shadow-2xl">
+      <div className="flex min-h-full items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="relative bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[95vh]">
           {/* Header */}
-          <div className="p-6 border-b border-gray-200 sticky top-0 bg-white rounded-t-2xl z-10">
+          <div className="p-4 sm:p-6 border-b border-gray-200 bg-white rounded-t-2xl z-10 flex-shrink-0">
             <div className="flex items-center justify-between mb-2">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">Edit Learner</h2>
+              <div className="min-w-0">
+                <h2 className="text-lg sm:text-xl font-bold text-gray-900">Edit Learner</h2>
                 <p className="text-sm text-gray-600 mt-1">Class: {className}</p>
                 {learner.studentId && (
                   <p className="text-xs font-mono text-gray-500 mt-1">
@@ -221,7 +230,7 @@ export const EditLearnerModal = ({
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[60vh] overflow-y-auto">
+          <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-5 flex-1 overflow-y-auto">
             {learner.id && <LearnerFaceRow learner={faceLearner} onOpen={() => setFaceOpen(true)} />}
 
             {/* Required Fields */}
@@ -271,54 +280,54 @@ export const EditLearnerModal = ({
                 {errors.address && <p className="mt-1 text-sm text-red-600">{errors.address}</p>}
               </div>
 
-              {/* Birth Year & Gender */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <div className="flex items-center gap-2">
-                      <Hash size={16} className="text-gray-400" />
-                      Birth Year *
-                    </div>
-                  </label>
-                  <input
-                    type="number"
-                    min="1990"
-                    max={currentYear}
-                    value={formData.birthYear}
-                    onChange={(e) => handleBirthYearChange(e.target.value)}
-                    className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                      errors.birthYear ? 'border-red-300' : 'border-gray-300'
-                    }`}
-                    disabled={isLoading}
-                  />
-                  {errors.birthYear && <p className="mt-1 text-sm text-red-600">{errors.birthYear}</p>}
-                </div>
+              {/* Date of birth */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <div className="flex items-center gap-2">
+                    <Calendar size={16} className="text-gray-400" />
+                    Date of Birth *
+                  </div>
+                </label>
+                <DateOfBirthSelect
+                  value={formData.dateOfBirth}
+                  fallbackYear={formData.birthYear || null}
+                  minYear={1990}
+                  maxYear={currentYear}
+                  onChange={handleDobChange}
+                  invalid={!!errors.birthYear}
+                  disabled={isLoading}
+                  idPrefix="edit-learner-dob"
+                />
+                {errors.birthYear
+                  ? <p className="mt-1 text-sm text-red-600">{errors.birthYear}</p>
+                  : !formData.dateOfBirth && <p className="mt-1 text-xs text-gray-500">Only the year is saved until a day and month are chosen.</p>}
+              </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <div className="flex items-center gap-2">
-                      <Users size={16} className="text-gray-400" />
-                      Gender *
-                    </div>
-                  </label>
-                  <select
-                    value={formData.gender}
-                    onChange={(e) => setFormData(prev => ({ ...prev, gender: e.target.value as 'male' | 'female' }))}
-                    className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                      errors.gender ? 'border-red-300' : 'border-gray-300'
-                    }`}
-                    disabled={isLoading}
-                  >
-                    <option value="">Select Gender</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                  </select>
-                  {errors.gender && <p className="mt-1 text-sm text-red-600">{errors.gender}</p>}
-                </div>
+              {/* Gender */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <div className="flex items-center gap-2">
+                    <Users size={16} className="text-gray-400" />
+                    Gender *
+                  </div>
+                </label>
+                <select
+                  value={formData.gender}
+                  onChange={(e) => setFormData(prev => ({ ...prev, gender: e.target.value as 'male' | 'female' }))}
+                  className={`w-full px-4 py-2.5 border rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    errors.gender ? 'border-red-300' : 'border-gray-300'
+                  }`}
+                  disabled={isLoading}
+                >
+                  <option value="">Select Gender</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+                {errors.gender && <p className="mt-1 text-sm text-red-600">{errors.gender}</p>}
               </div>
 
               {/* Guardian & Sponsor */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     <div className="flex items-center gap-2">
@@ -420,7 +429,7 @@ export const EditLearnerModal = ({
                 </div>
 
                 {/* Alternative Guardian */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Alternative Guardian
@@ -498,7 +507,7 @@ export const EditLearnerModal = ({
           </form>
 
           {/* Form Actions */}
-          <div className="p-6 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
+          <div className="p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-gray-200 bg-gray-50 sm:rounded-b-2xl flex-shrink-0">
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"

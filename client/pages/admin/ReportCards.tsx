@@ -1240,6 +1240,12 @@ export default function ReportCards() {
               classId={selectedClass}
               term={selectedTerm}
               year={selectedYear}
+              onTermChange={t => setSelectedTerm(t as TermName)}
+              onYearChange={setSelectedYear}
+              terms={terms}
+              years={years}
+              classOptions={classOptions}
+              allowAllClasses={user?.userType !== 'teacher'}
               addToast={addToast}
               onRetryComplete={refetch}
             />

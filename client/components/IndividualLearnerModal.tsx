@@ -1,4 +1,5 @@
 // @/components/IndividualLearnerModal.tsx
+import { DateOfBirthSelect } from '@/components/DateOfBirthSelect';
 import { useState, useEffect, useRef } from 'react';
 import {
   X,
@@ -181,8 +182,6 @@ export const IndividualLearnerModal = ({
     : null;
 
   // Min/max for date inputs
-  const minDob = `${minDobYear}-01-01`;
-  const maxDob = `${currentYear}-12-31`;
   const today = new Date().toISOString().split('T')[0];
 
   // Handle click outside to close
@@ -270,7 +269,7 @@ export const IndividualLearnerModal = ({
 
       // ✅ Date of birth
       if (!formData.dateOfBirth) {
-        newErrors.dateOfBirth = 'Date of birth is required';
+        newErrors.dateOfBirth = 'Choose the day, month and year of birth';
       } else {
         const dob = new Date(formData.dateOfBirth + 'T00:00:00');
         const todayDate = new Date();
@@ -678,10 +677,10 @@ export const IndividualLearnerModal = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 flex items-center justify-center p-2 sm:p-4">
+    <div className="mobile-form fixed inset-0 z-50 overflow-y-auto bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div
         ref={modalRef}
-        className="relative bg-white rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[98vh] sm:max-h-[95vh]"
+        className="relative bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[100dvh] sm:max-h-[95vh]"
       >
         {/* Header */}
         <div className="p-4 sm:p-6 border-b border-gray-200 bg-white rounded-t-2xl flex-shrink-0">
@@ -897,18 +896,14 @@ export const IndividualLearnerModal = ({
                         Date of Birth *
                       </div>
                     </label>
-                    <input
-                      type="date"
+                    <DateOfBirthSelect
                       value={formData.dateOfBirth}
-                      min={minDob}
-                      max={maxDob}
-                      onChange={(e) =>
-                        setFormData((prev) => ({ ...prev, dateOfBirth: e.target.value }))
-                      }
-                      className={`w-full px-3 sm:px-4 py-2 sm:py-2.5 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                        errors.dateOfBirth ? 'border-red-300' : 'border-gray-300'
-                      }`}
+                      minYear={minDobYear}
+                      maxYear={currentYear}
+                      onChange={(v) => setFormData((prev) => ({ ...prev, dateOfBirth: v.iso }))}
+                      invalid={!!errors.dateOfBirth}
                       disabled={isLoading}
+                      idPrefix="add-learner-dob"
                     />
                     {errors.dateOfBirth && (
                       <p className="mt-1 text-xs sm:text-sm text-red-600">{errors.dateOfBirth}</p>
