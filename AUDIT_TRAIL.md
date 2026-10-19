@@ -18,7 +18,12 @@ recognition actions done on the server.
 - **Face recognition** (from `face_audit`, written by the server): consent
   recorded or withdrawn, faces added or removed, scans, and clean-ups.
 - Changes made within about a second by the same person (one save) form
-  **one entry**, e.g. "Saved 38 results".
+  **one entry**, written as a sentence that names the person and what the
+  change was for, e.g. "Muhau Nakwebwa saved Week 4 marks for 38 learners —
+  Form 2A · Mathematics · Term 3 2026", "… took the register (2 periods) —
+  Form 1B · Biology · Mon 19 Oct 2026 · periods 3, 4". The class, subject,
+  exam (Week 4 / Week 8 / End of Term), term and year are kept with every
+  change; for older entries and deletions they are read from the record ID.
 
 Only changes that **succeeded** are recorded. Recording happens after the
 save and can never slow down or stop it.

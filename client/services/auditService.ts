@@ -72,27 +72,142 @@ export const areaOf = (collectionName: string) => noun(collectionName)[0];
 
 const VERB: Record<string, string> = { create: 'Created', set: 'Saved', merge: 'Saved', update: 'Updated', delete: 'Deleted' };
 
-/** Pure: one sentence for a group of changes, e.g. "Updated learner Amy Banda (guardianPhone)". */
+// ---------- what a change was for (class, subject, exam, term…) ----------
+
+const EXAM_NAMES: Record<string, string> = { week4: 'Week 4', week8: 'Week 8', endOfTerm: 'End of Term' };
+
+interface OpContext {
+  exam?: string;      // "Week 4"
+  className?: string; // "Form 2A"
+  subject?: string;   // "Mathematics"
+  term?: string;      // "Term 3 2026"
+  date?: string;      // "Mon 19 Oct 2026" (registers)
+  period?: string;    // "3"
+  person?: string;    // learner / record name
+  mark?: string;      // "45/50"
+}
+
+const str = (v: unknown) => (v === undefined || v === null || v === '' ? undefined : String(v));
+
+function niceDate(v: unknown): string | undefined {
+  const t = str(v);
+  if (!t) return undefined;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
+  if (!m) return t;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** Pure: the class, subject, exam, term and year a change was for, from its values (or its record ID). */
+export function contextOf(o: AuditOp): OpContext {
+  const v = o.values ?? {};
+  const c: OpContext = {};
+  const examType = str(v.examType);
+  c.exam = (examType && EXAM_NAMES[examType]) || str(v.examName)?.replace(/\s+(Test|Exam)$/i, '');
+  c.className = str(v.className);
+  c.subject = str(v.subjectName) ?? str(v.subject);
+  const term = str(v.term);
+  const year = str(v.year);
+  if (term) c.term = year && !term.includes(year) ? `${term} ${year}` : term;
+  else if (str(v.examYear)) c.term = `${v.examYear} exam year`;
+  else if (year) c.term = year;
+  c.date = niceDate(v.date);
+  c.period = str(v.period);
+  c.person = str(v.studentName) ?? o.label;
+  if (typeof v.marks === 'number' && v.marks >= 0) c.mark = typeof v.totalMarks === 'number' ? `${v.marks}/${v.totalMarks}` : String(v.marks);
+  else if (str(v.status) === 'absent') c.mark = 'absent';
+
+  // Older entries (and deletions) carry no values: read what the record ID
+  // holds — results/<learner>_<subject>_<week4|week8|endOfTerm>_<Term3>_<2026>.
+  if (o.collection === 'results' && (!c.exam || !c.term)) {
+    const m = /_([^_]+)_(week4|week8|endOfTerm)_Term(\d)_(\d{4})$/.exec(o.docId);
+    if (m) {
+      c.subject ??= m[1].replace(/([a-z])([A-Z])/g, '$1 $2');
+      c.exam ??= EXAM_NAMES[m[2]];
+      c.term ??= `Term ${m[3]} ${m[4]}`;
+    }
+  }
+  return c;
+}
+
+const placeOf = (c: OpContext, withPeriod = true) =>
+  [c.className, c.subject, c.exam && !c.term ? c.exam : undefined, c.term, c.date, withPeriod && c.period ? `period ${c.period}` : undefined]
+    .filter(Boolean).join(' · ');
+
+/** Pure: "Form 2A · Mathematics · Term 3 2026" for one change (empty when unknown). */
+export const contextLine = (o: AuditOp) => {
+  const c = contextOf(o);
+  return [c.person && c.person !== c.className ? c.person : undefined, c.exam, placeOf(c)].filter(Boolean).join(' · ');
+};
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Pure: one sentence for changes of one kind to one collection, all for the same class / subject / exam / term. */
+function describeGroup(verb: string, col: string, list: AuditOp[]): string {
+  const c = contextOf(list[0]);
+  const ctx = placeOf(c, col !== 'attendance_sessions' || list.length === 1);
+  const tail = ctx ? ` — ${ctx}` : '';
+  const n = list.length;
+
+  if (col === 'results') {
+    const what = c.exam ? `${c.exam} ` : '';
+    if (n === 1) {
+      const who = c.person ? ` of ${c.person}` : '';
+      const mark = c.mark && verb !== 'Deleted' ? ` (${c.mark})` : '';
+      return `${verb} the ${what}mark${who}${mark}${tail}`;
+    }
+    if (verb === 'Deleted') return `Deleted ${what}marks of ${plural(n, 'learner')}${tail}`;
+    return `${verb} ${what}marks for ${plural(n, 'learner')}${tail}`;
+  }
+  if (col === 'sba_results') {
+    if (n === 1) return `${verb} the SBA marks${c.person ? ` of ${c.person}` : ''}${tail}`;
+    return `${verb} SBA marks for ${plural(n, 'learner')}${tail}`;
+  }
+  if (col === 'attendance_sessions') {
+    const periods = list.map(o => contextOf(o).period).filter(Boolean);
+    const p = n > 1 && periods.length ? ` · periods ${periods.join(', ')}` : '';
+    const what = verb === 'Deleted' ? 'Deleted the register' : 'Took the register';
+    return `${what}${n > 1 ? ` (${plural(n, 'period')})` : ''}${tail}${p}`;
+  }
+
+  const [, one, many] = noun(col);
+  if (n === 1) {
+    const o = list[0];
+    const name = o.label || o.docId;
+    const fields = o.op === 'update' && o.fields?.length ? ` (${o.fields.slice(0, 4).join(', ')}${o.fields.length > 4 ? '…' : ''})` : '';
+    const extra = ctx && ctx !== name ? ` — ${ctx}` : '';
+    return `${verb} ${one}${name ? ` ${name}` : ''}${fields}${extra}`;
+  }
+  return `${verb} ${n} ${many}${tail}`;
+}
+
+/** Pure: one sentence for a group of changes, e.g. "Saved Week 4 marks for 38 learners — Form 2A · Mathematics · Term 3 2026". */
 export function summarizeOps(ops: AuditOp[]): string {
   const events = ops.filter(o => o.op === 'event').map(o => o.action || 'Event');
-  const groups = new Map<string, AuditOp[]>();
+  const groups = new Map<string, { verb: string; col: string; list: AuditOp[] }>();
   for (const o of ops) {
     if (o.op === 'event') continue;
-    const k = `${VERB[o.op] ?? 'Changed'}|${o.collection}`;
-    groups.set(k, [...(groups.get(k) ?? []), o]);
+    const verb = VERB[o.op] ?? 'Changed';
+    const c = contextOf(o);
+    // Registers of a double lesson are one action: group without the period.
+    const k = [verb, o.collection, c.className, c.subject, c.exam, c.term, c.date].join('|');
+    const g = groups.get(k) ?? { verb, col: o.collection, list: [] };
+    g.list.push(o);
+    groups.set(k, g);
   }
-  const parts = [...groups.entries()].map(([k, list]) => {
-    const [verb, col] = k.split('|');
-    const [, one, many] = noun(col);
-    if (list.length === 1) {
-      const o = list[0];
-      const name = o.label || o.docId;
-      const fields = o.op === 'update' && o.fields?.length ? ` (${o.fields.slice(0, 4).join(', ')}${o.fields.length > 4 ? '…' : ''})` : '';
-      return `${verb} ${one}${name ? ` ${name}` : ''}${fields}`;
-    }
-    return `${verb} ${list.length} ${many}`;
-  });
+  const parts = [...groups.values()].map(g => describeGroup(g.verb, g.col, g.list));
   return [...events, ...parts].join('; ') || 'No details';
+}
+
+/** Words that read naturally after a name ("Muhau Nakwebwa saved …"). */
+const VERB_START = /^(Saved|Created|Updated|Deleted|Changed|Took|Signed|Recorded|Withdrew|Added|Removed|Scanned|Synced|Entered)\b/;
+
+/** Pure: the sentence with the person in front, e.g. "Muhau Nakwebwa saved Week 4 marks for …". */
+export function withActor(name: string, sentence: string): string {
+  const who = name.trim();
+  if (!who) return sentence;
+  if (VERB_START.test(sentence)) return `${who} ${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}`;
+  return `${who}: ${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}`;
 }
 
 const FACE_ACTIONS: Record<string, string> = {
@@ -129,7 +244,7 @@ export function mapAppEntry(id: string, d: any): AuditRow {
     page: d.page || undefined,
     ops,
     areas: Array.from(new Set(ops.map(o => areaOf(o.collection)))),
-    summary: summarizeOps(ops),
+    summary: withActor(d.actorName || '', summarizeOps(ops)),
   };
 }
 
@@ -150,7 +265,7 @@ export function mapFaceEntry(id: string, d: any): AuditRow {
     actorRole: userId === 'system' ? 'system' : '',
     ops: [{ op: 'event', collection: 'face', docId: String(details.learnerId || ''), path: details.learnerId ? `learners/${details.learnerId}` : '', action: what, values }],
     areas: ['Face recognition'],
-    summary: learner ? `${what} — ${learner}` : what,
+    summary: withActor(userName || (userId === 'system' ? 'System' : ''), learner ? `${what} — ${learner}` : what),
   };
 }
 

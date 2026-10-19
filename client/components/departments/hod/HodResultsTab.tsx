@@ -1,5 +1,5 @@
 // HoD → Results: how far each department teacher has got with results
-// entry this term. Same numbers as the admin's Results Entry Monitor (same
+// entry in the chosen term (the term picker is in the page header). Same numbers as the admin's Results Entry Monitor (same
 // grid as Results Entry), filtered to the department.
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, Loader2, Search, Users } from 'lucide-react';
@@ -48,7 +48,13 @@ export function HodResultsTab({ members, monitor, teachersLoading }: {
 
   return (
     <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <p className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
+        Showing <span className="font-semibold text-gray-900">{monitor.termLabel}</span>
+        {monitor.isCurrentTerm
+          ? <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">Current term</span>
+          : <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">Past / upcoming term</span>}
+      </p>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           ['Teachers', String(members.length)],
           ['Entered', summary.required ? `${summary.pct}%` : '—'],
@@ -102,7 +108,7 @@ export function HodResultsTab({ members, monitor, teachersLoading }: {
                           <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${cls}`}>{label}</span>
                         </>
                       ) : (
-                        <span className="text-xs text-gray-500">No marks due this term</span>
+                        <span className="text-xs text-gray-500">No marks due in {monitor.termLabel}</span>
                       )}
                     </div>
                     {hasWork && progress!.missingEntries.length > 0 && (
