@@ -7,9 +7,10 @@ import { MemoryRouter } from 'react-router-dom';
 vi.mock('firebase/firestore', async () => await import('../test/fakeFirestore'));
 vi.mock('@/lib/firebase', () => ({ db: {}, auth: {} }));
 vi.mock('firebase/auth', () => ({ getAuth: () => ({}) }));
-const h = vi.hoisted(() => ({ classes: [] as any[], userType: 'teacher', officer: false, hod: null as null | { department: string }, timetabler: false }));
+const h = vi.hoisted(() => ({ classes: [] as any[], userType: 'teacher', officer: false, guidance: false, hod: null as null | { department: string }, timetabler: false }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'T1', fullName: 'Mr T', userType: h.userType }, logout: vi.fn() }) }));
 vi.mock('@/hooks/useAdmissionsOfficer', () => ({ useAdmissionsOfficer: () => ({ isOfficer: h.officer, isLoading: false }) }));
+vi.mock('@/hooks/useGuidanceOfficer', () => ({ useGuidanceOfficer: () => ({ isOfficer: h.guidance, isLoading: false }) }));
 vi.mock('@/hooks/useDepartments', () => ({ useMyHodRole: () => ({ role: h.hod, isHod: !!h.hod, isLoading: false }) }));
 vi.mock('@/hooks/useTimetableBuilder', () => ({ useTimetablerRole: () => ({ isTimetabler: h.timetabler, isLoading: false }) }));
 vi.mock('@/hooks/useTeacherClasses', async () => {
@@ -22,7 +23,7 @@ import { DashboardLayout } from './DashboardLayout';
 const subject = (normalizedSubjectId: string, relation = 'owner') => ({ normalizedSubjectId, relation });
 const renderIt = () => render(<MemoryRouter><DashboardLayout><div /></DashboardLayout></MemoryRouter>);
 
-beforeEach(() => { cleanup(); h.classes = []; h.userType = 'teacher'; h.officer = false; h.hod = null; h.timetabler = false; });
+beforeEach(() => { cleanup(); h.classes = []; h.userType = 'teacher'; h.officer = false; h.guidance = false; h.hod = null; h.timetabler = false; });
 
 describe('teacher menu', () => {
   it('hides My Class from a teacher who only teaches subjects', () => {
@@ -76,12 +77,21 @@ describe('teacher menu', () => {
     renderIt();
     expect(screen.getByText('Admissions')).toBeTruthy();
   });
+
+  it('shows Guidance & Counselling only to guidance officers', () => {
+    renderIt();
+    expect(screen.queryByText('Guidance & Counselling')).toBeNull();
+    cleanup();
+    h.guidance = true;
+    renderIt();
+    expect(screen.getByRole('button', { name: 'Guidance & Counselling' })).toBeTruthy();
+  });
 });
 
 describe('admin menu (grouped workspaces)', () => {
   const GROUPED = ['Admissions & Classes', 'Attendance & Timetable', 'Results & SBA'];
   const OLD = ['Class Management', 'Admissions', 'Attendance Overview', "Who's Teaching", 'Results Monitor', 'Results Analysis', 'SBA Overview'];
-  const KEPT = ['Dashboard', 'Teachers', 'Exam Management', 'Report Cards', 'Year Transition', 'Settings'];
+  const KEPT = ['Dashboard', 'Teachers', 'Exam Management', 'Report Cards', 'Guidance & Sponsors', 'Year Transition', 'Settings'];
 
   it('shows the three workspaces instead of the seven separate pages', () => {
     h.userType = 'admin';

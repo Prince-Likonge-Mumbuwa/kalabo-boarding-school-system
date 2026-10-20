@@ -3,6 +3,7 @@ import { useEmbedded } from '@/components/workspace/embedded';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useAdmissionsOfficer } from '@/hooks/useAdmissionsOfficer';
+import { useGuidanceOfficer } from '@/hooks/useGuidanceOfficer';
 import { useMyHodRole } from '@/hooks/useDepartments';
 import { useTimetablerRole } from '@/hooks/useTimetableBuilder';
 import { useTeacherClasses, holdsFormTeacherSlot } from '@/hooks/useTeacherClasses';
@@ -27,6 +28,7 @@ import {
   Award,
   History,
   CalendarRange,
+  HeartHandshake,
 } from 'lucide-react';
 
 // Union of all navigable tab ids — keeps activeTab type-safe across pages.
@@ -53,6 +55,7 @@ type ActiveTab =
   | 'results-sba'
   | 'attendance-timetable'
   | 'audit-trail'
+  | 'guidance'
   | (string & {}); // allow any string for forward-compatibility without losing hints
 
 interface DashboardLayoutProps {
@@ -83,6 +86,7 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
 
   const isAdmin = user?.userType === 'admin';
   const { isOfficer } = useAdmissionsOfficer();
+  const { isOfficer: isGuidanceOfficer } = useGuidanceOfficer();
   const { role: hodRole } = useMyHodRole();
   const { isTimetabler } = useTimetablerRole();
   // "My Class" is only for a class's form teacher (or the teacher covering them).
@@ -103,6 +107,8 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
     // Results Monitor + Results Analysis + SBA Overview
     { id: 'results-sba', label: 'Results & SBA', icon: BarChart3, path: '/dashboard/admin/results-monitor' },
     { id: 'reports', label: 'Report Cards', icon: FileText, path: '/dashboard/admin/report-cards' },
+    // Sponsored learners' results and one-time sponsor codes.
+    { id: 'guidance', label: 'Guidance & Sponsors', icon: HeartHandshake, path: '/dashboard/admin/guidance' },
     // New academic year: promote learners, graduate the final year.
     { id: 'year-transition', label: 'Year Transition', icon: GraduationCap, path: '/dashboard/admin/year-transition' },
     // Who did what, and when.
@@ -120,6 +126,8 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
     { id: 'sba', label: 'SBA Entry', icon: ClipboardCheck, path: '/dashboard/teacher/sba-entry' },
     // Only for teachers the admin made admissions officers.
     ...(isOfficer ? [{ id: 'admissions', label: 'Admissions', icon: UserPlus, path: '/dashboard/teacher/admissions' }] : []),
+    // Only for teachers the admin made guidance & counselling officers.
+    ...(isGuidanceOfficer ? [{ id: 'guidance', label: 'Guidance & Counselling', icon: HeartHandshake, path: '/dashboard/teacher/guidance' }] : []),
     // Only for a Head of Department (appointed in Teacher Management).
     ...(hodRole ? [{ id: 'my-department', label: 'My Department', icon: Award, path: '/dashboard/teacher/department' }] : []),
     // A HoD the admin allowed to generate timetables.

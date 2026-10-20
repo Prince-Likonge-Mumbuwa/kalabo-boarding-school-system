@@ -8,7 +8,7 @@
 //                  (fixes blank Avg column), grade descriptions wired, exam-config aware.
 
 import { useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { learnerService } from '@/services/schoolService';
 import { resultsService, ReportCardData } from '@/services/resultsService';
@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { SCHOOL_LOGO_URL } from '@/lib/schoolLogo';
 import { validateZambianNumber } from '@/lib/phone';
+import { SponsorPortalPanel } from '@/components/guidance/SponsorPortalPanel';
 
 const TERMS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
 
@@ -45,6 +46,12 @@ const TERMS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
    ============================================================ */
 
 const ParentPortal = () => {
+  // Parents look up by phone; sponsors use a one-time code from the
+  // guidance office (?mode=sponsor opens that side directly).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const mode: 'parent' | 'sponsor' = searchParams.get('mode') === 'sponsor' ? 'sponsor' : 'parent';
+  const setMode = (m: 'parent' | 'sponsor') =>
+    setSearchParams(m === 'sponsor' ? { mode: 'sponsor' } : {}, { replace: true });
   const [phone, setPhone] = useState('');
   const [searching, setSearching] = useState(false);
   const [children, setChildren] = useState<Learner[]>([]);
@@ -230,7 +237,9 @@ const ParentPortal = () => {
                 Parent Portal
               </h1>
               <p className="text-gray-200 text-sm sm:text-base">
-                Access your child's academic results
+                {mode === 'sponsor'
+                  ? "Download the report cards of the learners you sponsor"
+                  : "Access your child's academic results"}
               </p>
             </div>
 
@@ -245,6 +254,26 @@ const ParentPortal = () => {
               </Link>
             </div>
 
+            {/* Parent / Sponsor */}
+            <div className="mb-4 grid grid-cols-2 gap-1 p-1 bg-white/10 border border-white/20 rounded-xl backdrop-blur-sm animate-fadeInUp">
+              {(['parent', 'sponsor'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={`py-2 text-sm font-semibold rounded-lg transition-colors ${
+                    mode === m ? 'bg-white text-gray-900 shadow' : 'text-white/80 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  {m === 'parent' ? 'Parent / Guardian' : 'Sponsor'}
+                </button>
+              ))}
+            </div>
+
+            {mode === 'sponsor' ? (
+              <SponsorPortalPanel />
+            ) : (
+            <>
             {/* Search card */}
             <div className="bg-white/15 backdrop-blur-xl rounded-2xl shadow-2xl p-6 sm:p-8 border border-white/30 animate-fadeInUp">
               <div className="mb-6">
@@ -638,6 +667,9 @@ const ParentPortal = () => {
                   N/C = Not Conducted • — = Not Entered • Grades 1–9 (1 best, 9 fail)
                 </p>
               </div>
+            )}
+
+            </>
             )}
 
             {/* Footer */}
