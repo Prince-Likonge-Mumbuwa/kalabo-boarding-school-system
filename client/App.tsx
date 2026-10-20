@@ -30,6 +30,8 @@ const ReportCards = lazy(() => import("./pages/admin/ReportCards"));
 const YearTransition = lazy(() => import("./pages/admin/YearTransition"));
 const AuditTrail = lazy(() => import("./pages/admin/AuditTrail"));
 const OfficerAdmissions = lazy(() => import("./pages/teacher/Admissions"));
+const AdminGuidance = lazy(() => import("./pages/admin/Guidance"));
+const OfficerGuidance = lazy(() => import("./pages/teacher/Guidance"));
 
 // Teacher Pages
 const TeacherDashboard = lazy(() => import("./pages/TeacherDashboard"));
@@ -144,6 +146,18 @@ const App = () => (
             <Route path="/dashboard/teacher/admissions" element={
               <ProtectedRoute allowedRoles={['teacher']}>
                 <OfficerAdmissions />
+              </ProtectedRoute>
+            } />
+
+            {/* Guidance & counselling: sponsored learners, sponsor codes */}
+            <Route path="/dashboard/admin/guidance" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AdminGuidance />
+              </ProtectedRoute>
+            } />
+            <Route path="/dashboard/teacher/guidance" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <OfficerGuidance />
               </ProtectedRoute>
             } />
 

@@ -43,6 +43,8 @@ service cloud.firestore {
         'enrollments', 'promotion_runs', 'promotion_run_items',
         // Admissions
         'staff_roles', 'admission_settings', 'admissions',
+        // Guidance & counselling (one-time sponsor codes)
+        'sponsor_codes',
         // Face recognition (written only by Cloud Functions)
         'face_templates', 'face_status', 'face_audit',
         // Audit trail
@@ -573,6 +575,56 @@ service cloud.firestore {
           && request.resource.data.status == 'admitted'
         );
       allow update, delete: if isAdmin(request.auth.uid);
+    }
+
+    // ==================== GUIDANCE & COUNSELLING ====================
+    //
+    // staff_roles/{teacherId}__guidance-officer: given by the admin. An ACTIVE
+    // guidance officer sees sponsored learners' results and makes sponsor codes.
+    //
+    // sponsor_codes/{code}: the document id IS the one-time code. Sponsors are
+    // signed out, so:
+    //   - anyone may READ one code they already know (get), never list them;
+    //   - anyone may SPEND an active, unexpired code once: status active → used,
+    //     usedAt = now, nothing else changed;
+    //   - officers / admin make codes and may cancel an active one.
+    function isGuidanceOfficer() {
+      return isTeacher(request.auth.uid)
+        && exists(/databases/$(database)/documents/staff_roles/$(request.auth.uid + '__guidance-officer'))
+        && get(/databases/$(database)/documents/staff_roles/$(request.auth.uid + '__guidance-officer')).data.status == 'active';
+    }
+
+    function isGuidanceStaff() {
+      return isAdmin(request.auth.uid) || isGuidanceOfficer();
+    }
+
+    match /sponsor_codes/{code} {
+      allow get: if true;
+      allow list: if isGuidanceStaff();
+      allow create: if isGuidanceStaff()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.status == 'active'
+        && request.resource.data.usedAt == null
+        && request.resource.data.learnerIds is list
+        && request.resource.data.learnerIds.size() > 0
+        && request.resource.data.learnerIds.size() <= 1500
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time;
+      allow update: if (
+          // Spend (Parent Portal, signed out)
+          resource.data.status == 'active'
+          && request.time < resource.data.expiresAt
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'usedAt'])
+          && request.resource.data.status == 'used'
+          && request.resource.data.usedAt == request.time
+        ) || (
+          // Cancel (officer / admin)
+          isGuidanceStaff()
+          && resource.data.status == 'active'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'revokedAt', 'revokedByName'])
+          && request.resource.data.status == 'revoked'
+        );
+      allow delete: if isAdmin(request.auth.uid);
     }
 
     // ==================== ATTENDANCE SESSIONS ====================
