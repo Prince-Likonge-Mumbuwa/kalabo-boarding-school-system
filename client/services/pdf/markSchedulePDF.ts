@@ -2,6 +2,8 @@
 // Features: Clean minimalism, proper alignment, correct math, professional layout
 import { PDFDocument, rgb, StandardFonts, PDFImage } from 'pdf-lib';
 import { embedSchoolLogo } from '@/lib/schoolLogo';
+import type { SubjectProgressReport } from '@/services/markScheduleProgress';
+import { addProgressPages } from './markScheduleProgressPDF';
 
 interface MarkScheduleOptions {
   className: string;
@@ -28,6 +30,14 @@ interface MarkScheduleOptions {
     endOfTerm?: Array<{ studentId: string; marks: number; studentName: string; student_id?: string }>;
   };
   isNotConducted?: boolean;
+  /**
+   * Performance & progress for the subject this year (Term 1 … this term),
+   * from the same grids as the report cards. Adds the progress table and
+   * the progress chart pages. Leave undefined to print the schedule only.
+   */
+  progress?: SubjectProgressReport | null;
+  /** Why the progress could not be loaded (printed instead of the pages). */
+  progressError?: string;
 }
 
 // ==================== OFFICIAL GRADE SYSTEM ====================
@@ -71,7 +81,24 @@ const truncateText = (text: string, maxLength: number): string => {
   return text.substring(0, maxLength - 3) + '...';
 };
 
-export const generateMarkSchedulePDF = async ({
+/** Build the mark schedule and download it. */
+export const generateMarkSchedulePDF = async (opts: MarkScheduleOptions): Promise<void> => {
+  const pdfBytes = await buildMarkSchedulePDF(opts);
+  const { schoolName, className, subject, examType, term, year, isNotConducted = false } = opts;
+  const blob = new Blob([new Uint8Array(pdfBytes).buffer], { type: 'application/pdf' });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  const status = isNotConducted ? '_NOT_CONDUCTED' : '';
+  link.download = `${schoolName.replace(/\s+/g, '_')}_${className.replace(/\s+/g, '_')}_${subject.replace(/\s+/g, '_')}_${examType}${status}_${term.replace(/\s+/g, '_')}_${year}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
+
+/** Build the mark schedule PDF (schedule, then performance & progress pages). */
+export const buildMarkSchedulePDF = async ({
   className,
   subject,
   examType,
@@ -82,8 +109,10 @@ export const generateMarkSchedulePDF = async ({
   teacherName,
   schoolName,
   allExamData,
-  isNotConducted = false
-}: MarkScheduleOptions): Promise<void> => {
+  isNotConducted = false,
+  progress,
+  progressError,
+}: MarkScheduleOptions): Promise<Uint8Array> => {
   try {
     const pdfDoc = await PDFDocument.create();
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -192,7 +221,9 @@ export const generateMarkSchedulePDF = async ({
     yPosition = await addHeader(currentPage, 1);
     
     // ==================== INFO CARD - COMPLETELY RESTRUCTURED ====================
-    const cardHeight = 120;
+    // Tall enough for the four detail rows AND the Entered/Absent/N/A/Pending
+    // figures (they used to hang below the card into the table header).
+    const cardHeight = isNotConducted ? 120 : 146;
     const cardY = yPosition - cardHeight;
     
     // Card background
@@ -594,210 +625,21 @@ export const generateMarkSchedulePDF = async ({
       });
     }
     
-    // ==================== TERM SUMMARY PAGE ====================
-    if (allExamData && (allExamData.week4?.length || allExamData.week8?.length || allExamData.endOfTerm?.length) && !isNotConducted) {
-      const summaryPage = pdfDoc.addPage([pageWidth, pageHeight]);
-      let summaryY = await addHeader(summaryPage, pdfDoc.getPageCount());
-      
-      // Summary title
-      const summaryTitle = 'TERM PERFORMANCE SUMMARY';
-      summaryPage.drawText(summaryTitle, {
-        x: centerX(summaryTitle, 14),
-        y: summaryY,
-        size: 14,
-        font: fontBold,
-        color: colors.primary,
-      });
-      
-      summaryY -= 20;
-      summaryPage.drawLine({
-        start: { x: margin, y: summaryY + 5 },
-        end: { x: pageWidth - margin, y: summaryY + 5 },
-        thickness: 0.8,
-        color: colors.border,
-      });
-      summaryY -= 20;
-      
-      // Summary table headers
-      const summaryHeaders = [
-        { text: '#', width: 25 },
-        { text: 'Student Name', width: 160 },
-        { text: 'Student ID', width: 85 },
-        { text: 'W4', width: 35 },
-        { text: 'W8', width: 35 },
-        { text: 'EOT', width: 35 },
-        { text: 'Avg %', width: 50 },
-        { text: 'Grade', width: 40 },
-      ];
-      
-      // Header background
-      summaryPage.drawRectangle({
-        x: margin,
-        y: summaryY - 20,
-        width: contentWidth,
-        height: 20,
-        color: colors.secondary,
-      });
-      
-      let headerX = margin;
-      summaryHeaders.forEach(header => {
-        summaryPage.drawText(header.text, {
-          x: headerX + 8,
-          y: summaryY - 14,
-          size: 8,
-          font: fontBold,
-          color: rgb(1, 1, 1),
-        });
-        headerX += header.width;
-      });
-      
-      summaryY -= 22;
-      
-      // Create data maps
-      const week4Map = new Map();
-      allExamData.week4?.forEach(item => {
-        if (item.studentId) week4Map.set(item.studentId, item.marks);
-        if (item.student_id) week4Map.set(item.student_id, item.marks);
-      });
-      
-      const week8Map = new Map();
-      allExamData.week8?.forEach(item => {
-        if (item.studentId) week8Map.set(item.studentId, item.marks);
-        if (item.student_id) week8Map.set(item.student_id, item.marks);
-      });
-      
-      const eotMap = new Map();
-      allExamData.endOfTerm?.forEach(item => {
-        if (item.studentId) eotMap.set(item.studentId, item.marks);
-        if (item.student_id) eotMap.set(item.student_id, item.marks);
-      });
-      
-      // Display student summaries
-      for (let i = 0; i < students.length; i++) {
-        const student = students[i];
-        
-        if (summaryY < margin + 40) {
-          summaryPage.drawText('... additional students', {
-            x: margin + 8,
-            y: summaryY,
-            size: 8,
-            font: fontOblique,
-            color: colors.textLight,
-          });
-          break;
-        }
-        
-        if (i % 2 === 0) {
-          summaryPage.drawRectangle({
-            x: margin,
-            y: summaryY - 14,
-            width: contentWidth,
-            height: 14,
-            color: colors.background,
-          });
-        }
-        
-        const week4Mark = week4Map.get(student.studentId);
-        const week8Mark = week8Map.get(student.studentId);
-        const eotMark = eotMap.get(student.studentId);
-        
-        // CORRECT: Calculate percentages using the SAME totalMarks
-        const week4Percent = week4Mark !== undefined && week4Mark >= 0 ? (week4Mark / totalMarks) * 100 : null;
-        const week8Percent = week8Mark !== undefined && week8Mark >= 0 ? (week8Mark / totalMarks) * 100 : null;
-        const eotPercent = eotMark !== undefined && eotMark >= 0 ? (eotMark / totalMarks) * 100 : null;
-        
-        const validPercentages = [week4Percent, week8Percent, eotPercent].filter((p): p is number => p !== null);
-        const avgPercentage = validPercentages.length > 0 
-          ? validPercentages.reduce((a, b) => a + b, 0) / validPercentages.length
-          : null;
-        
-        const avgGrade = avgPercentage !== null ? calculateOfficialGrade(avgPercentage) : -1;
-        const avgGradeText = avgGrade === -1 ? '-' : avgGrade.toString();
-        const avgPercentDisplay = avgPercentage !== null ? `${Math.round(avgPercentage)}%` : '-';
-        
-        const drawMark = (mark: number | undefined, x: number) => {
-          if (mark === undefined) {
-            summaryPage.drawText('-', { x, y: summaryY - 8, size: 8, font, color: colors.textLight });
-          } else if (mark === -1) {
-            summaryPage.drawText('A', { x, y: summaryY - 8, size: 8, font: fontOblique, color: colors.warning });
-          } else if (mark === -2) {
-            summaryPage.drawText('N', { x, y: summaryY - 8, size: 8, font: fontOblique, color: colors.textLight });
-          } else {
-            summaryPage.drawText(mark.toString(), { x, y: summaryY - 8, size: 8, font });
-          }
-        };
-        
-        let rowX = margin;
-        
-        // # column
-        summaryPage.drawText(`${i + 1}`, { x: rowX + 12, y: summaryY - 8, size: 8, font });
-        rowX += 25;
-        
-        // Name column
-        const shortName = truncateText(student.name, 22);
-        summaryPage.drawText(shortName, { x: rowX + 8, y: summaryY - 8, size: 8, font });
-        rowX += 160;
-        
-        // Student ID
-        summaryPage.drawText(student.studentId, { x: rowX + 8, y: summaryY - 8, size: 8, font });
-        rowX += 85;
-        
-        // Marks
-        drawMark(week4Mark, rowX + 12);
-        rowX += 35;
-        drawMark(week8Mark, rowX + 12);
-        rowX += 35;
-        drawMark(eotMark, rowX + 12);
-        rowX += 35;
-        
-        // Average percentage
-        summaryPage.drawText(avgPercentDisplay, { x: rowX + 12, y: summaryY - 8, size: 8, font: fontBold });
-        rowX += 50;
-        
-        // Grade with color
-        const [r, g, b] = getGradeColor(avgGrade);
-        summaryPage.drawText(avgGradeText, {
-          x: rowX + 16,
-          y: summaryY - 8,
-          size: 9,
-          font: fontBold,
-          color: rgb(r, g, b),
-        });
-        
-        summaryY -= 16;
-      }
-      
-      // Summary page footer
-      const summaryFooterY = margin - 10;
-      summaryPage.drawText(`Generated on ${new Date().toLocaleString()}`, {
-        x: margin,
-        y: summaryFooterY,
-        size: 7,
-        font: font,
-        color: colors.textLight,
-      });
+    // ==================== PERFORMANCE & PROGRESS ====================
+    // Every learner across the year's tests, then the class progress chart.
+    // (Replaces the old summary page, which looked marks up by admission
+    // number while results are saved by learner record, so it came out empty.)
+    if (progress !== undefined || progressError) {
+      addProgressPages(pdfDoc, progress ?? null, {
+        font, fontBold, fontOblique,
+        logo: logoImage,
+        schoolName, className, subject, term, year, teacherName,
+      }, progressError);
     }
     
-    // ==================== SAVE AND DOWNLOAD ====================
-    const pdfBytes = await pdfDoc.save();
-    const blob = new Blob([new Uint8Array(pdfBytes).buffer], { type: 'application/pdf' });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    
-    const status = isNotConducted ? '_NOT_CONDUCTED' : '';
-    const fileName = `${schoolName.replace(/\s+/g, '_')}_${className.replace(/\s+/g, '_')}_${subject.replace(/\s+/g, '_')}_${examType}${status}_${term.replace(/\s+/g, '_')}_${year}.pdf`;
-    
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-    
-    console.log('✅ PDF generated successfully');
-    
+    return await pdfDoc.save();
   } catch (error) {
-    console.error('❌ Error generating PDF:', error);
+    console.error('Error generating PDF:', error);
     throw error;
   }
 };

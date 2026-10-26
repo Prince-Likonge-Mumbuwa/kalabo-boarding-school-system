@@ -654,7 +654,7 @@ interface MarksPDFPreviewProps {
   term: TermName;              // FIX: was `string`
   year: number;
   totalMarks: number;
-  onDownload: () => void;
+  onDownload: () => void | Promise<void>;
   allExamData: ExamData | null;
   loadingAllData: boolean;
 }
@@ -674,6 +674,17 @@ const MarksPDFPreview = ({
   loadingAllData
 }: MarksPDFPreviewProps) => {
   const isMobile = useMediaQuery('(max-width: 640px)');
+  // The download also loads this subject's marks for the whole year (for the
+  // progress pages), so it can take a moment.
+  const [downloading, setDownloading] = useState(false);
+  const download = async () => {
+    setDownloading(true);
+    try {
+      await onDownload();
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const savedMarksMap = useMemo(() => {
     const map = new Map();
@@ -758,19 +769,22 @@ const MarksPDFPreview = ({
               <p className="text-xs sm:text-sm text-gray-600 mt-0.5 sm:mt-1 truncate">
                 {classInfo?.name} • {subject} • {examType === 'week4' ? 'Week 4' : examType === 'week8' ? 'Week 8' : 'End of Term'} • {term} {year}
               </p>
+              <p className="text-[11px] text-gray-500 mt-0.5">
+                The PDF also has the progress pages: every learner's marks for each test this year, and the class progress chart.
+              </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <button
-                onClick={onDownload}
-                disabled={loadingAllData}
+                onClick={download}
+                disabled={loadingAllData || downloading}
                 className="inline-flex items-center justify-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 text-sm sm:text-base"
               >
-                {loadingAllData ? (
+                {loadingAllData || downloading ? (
                   <Loader2 size={14} className="animate-spin" />
                 ) : (
                   <Download size={14} />
                 )}
-                <span className="hidden xs:inline">{loadingAllData ? 'Loading...' : 'Download'}</span>
+                <span className="hidden xs:inline">{loadingAllData ? 'Loading...' : downloading ? 'Preparing…' : 'Download'}</span>
               </button>
               <button
                 onClick={onClose}
@@ -2032,7 +2046,27 @@ export default function ResultsEntry() {
         };
       });
 
+      // Performance & progress: this subject's marks for every test of the
+      // year so far (Term 1 … this term), from the report-card grids.
+      let progress = null;
+      let progressError: string | undefined;
+      try {
+        const { loadSubjectProgressReport } = await import('@/services/markScheduleProgressLoader');
+        progress = await loadSubjectProgressReport({
+          classId: selectedClass,
+          subject: selectedSubject,
+          subjectCandidates: [selectedSubjectInfo?.subject, selectedSubjectInfo?.normalizedSubjectId, normalizeSubjectName(selectedSubject)],
+          term,
+          year,
+        });
+      } catch (e: any) {
+        console.error('Progress report error:', e);
+        progressError = e?.message || 'unknown error';
+      }
+
       await generateMarkSchedulePDF({
+        progress,
+        progressError,
         className: selectedClassData?.name || '',
         subject: selectedSubject,
         examType,
@@ -2051,7 +2085,7 @@ export default function ResultsEntry() {
       console.error('PDF generation error:', error);
       showToast('error', 'Failed to generate PDF. Check console for details.');
     }
-  }, [user, allExamData, examType, students, totalMarks, selectedClassData, selectedSubject, term, year, showToast]);
+  }, [user, allExamData, examType, students, totalMarks, selectedClassData, selectedClass, selectedSubject, selectedSubjectInfo, term, year, showToast]);
 
   const handleClearAllMarks = useCallback(() => {
     const hasSaved = Object.keys(savedBaseline).length > 0;

@@ -77,6 +77,31 @@ Results Entry: drafts are auto-saved for any unsaved change (also when marks
 are already saved) and can be loaded at any time from the drafts list; marks
 can be entered over an exam recorded as "not conducted".
 
+## Mark schedule PDF (Results Entry → Download)
+
+1. **Mark schedule** (portrait): the selected test's marks, %, grade.
+2. **Performance progress** (landscape, as many pages as the class needs):
+   every learner, every test of the year so far — Term 1 W4, W8, EOT, term
+   average, Term 2 … up to the term shown — then the year average, grade,
+   position and change (latest mark minus first). Marks are shown as % so
+   tests with different totals compare; the "out of" row gives each total.
+   ABS absent · N/C not conducted · — not entered yet. Last row: class
+   average.
+3. **Class progress chart**: class average and pass rate test by test with
+   the 40% pass line, grades on the year average, a test-by-test table
+   (entered, absent, not yet, class average, highest, lowest, pass rate,
+   quality), most improved (+10 points or more) and learners who need
+   attention (latest below 40% or down 10 points).
+
+Built from the same grids as the report cards
+(`services/markScheduleProgress.ts`, loaded by
+`markScheduleProgressLoader.ts`): a learner's term average here is the
+subject average on their report card. A past term that can't be loaded is
+named on the chart page; if the year can't be loaded at all, the schedule
+still downloads and the progress page says why. (The old summary page looked
+marks up by admission number, but results are saved by learner record, so it
+came out empty; it also used one test's total for all three tests.)
+
 ## Results deadlines
 
 The admin sets, per term, the last day for entering each test's marks:
