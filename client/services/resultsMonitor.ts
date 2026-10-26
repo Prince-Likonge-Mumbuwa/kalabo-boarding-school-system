@@ -191,7 +191,7 @@ export function aggregateMonitor(
   now: Date = new Date()
 ): { teachers: TeacherProgress[]; vacant: VacantSubject[] } {
   type Acc = {
-    entries: Array<{ classId: string; className: string; subjectName: string; isDelegate: boolean; sp: GridSubjectProgress; names: Map<string, string> }>;
+    entries: Array<{ classId: string; className: string; subjectName: string; isDelegate: boolean; sp: GridSubjectProgress; names: Map<string, string>; activeExams: ExamType[] }>;
     formClasses: Set<string>;
     nameHint: string | null;
   };
@@ -227,6 +227,8 @@ export function aggregateMonitor(
         isDelegate: s.operatorTeacherId === tid && isDelegateRole(s.operatorRole),
         sp,
         names,
+        // The class's own tests (a class may not write one, e.g. Grade 12 EOT).
+        activeExams: g.grid.activeExams,
       });
     }
   }
@@ -248,7 +250,7 @@ export function aggregateMonitor(
         });
       }
       const cp = classMap.get(e.classId)!;
-      cp.subjects.push(toScreenSubjectProgress(e.sp, ctx.activeExams));
+      cp.subjects.push(toScreenSubjectProgress(e.sp, e.activeExams));
       cp.totalRequired += e.sp.requiredEntries;
       cp.completedCount += e.sp.doneEntries;
       cp.missingCount += e.sp.missingEntries;

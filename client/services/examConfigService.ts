@@ -49,6 +49,17 @@ const toDate = (timestamp: any): Date | undefined => {
   return undefined;
 };
 
+/** `notWrittenBy` as { exam: classId[] }, dropping anything malformed; null when empty. */
+function cleanNotWritten(v: any): ExamConfig['notWrittenBy'] {
+  if (!v || typeof v !== 'object') return null;
+  const out: Record<string, string[]> = {};
+  for (const k of ['week4', 'week8', 'endOfTerm']) {
+    const ids = Array.isArray(v[k]) ? v[k].filter((x: unknown) => typeof x === 'string' && x) : [];
+    if (ids.length) out[k] = ids;
+  }
+  return Object.keys(out).length ? (out as ExamConfig['notWrittenBy']) : null;
+}
+
 /**
  * Resolve term metadata (start/end dates, labels, isCurrent flag) for a
  * given term/year pair. Falls back to a computed default if the term is
@@ -114,6 +125,8 @@ function enrichConfig(
     week4Deadline: data.week4Deadline ?? null,
     week8Deadline: data.week8Deadline ?? null,
     endOfTermDeadline: data.endOfTermDeadline ?? null,
+    notWrittenBy: cleanNotWritten(data.notWrittenBy),
+    notWrittenReason: data.notWrittenReason && typeof data.notWrittenReason === 'object' ? data.notWrittenReason : null,
     week4TotalMarks: data.week4TotalMarks,
     week8TotalMarks: data.week8TotalMarks,
     endOfTermTotalMarks: data.endOfTermTotalMarks,
@@ -267,6 +280,8 @@ export const examConfigService = {
         week4Deadline: data.week4Deadline ?? null,
         week8Deadline: data.week8Deadline ?? null,
         endOfTermDeadline: data.endOfTermDeadline ?? null,
+        notWrittenBy: cleanNotWritten(data.notWrittenBy),
+        notWrittenReason: data.notWrittenReason ?? null,
         week4TotalMarks: data.week4TotalMarks ?? 100,
         week8TotalMarks: data.week8TotalMarks ?? 100,
         endOfTermTotalMarks: data.endOfTermTotalMarks ?? 100,
@@ -392,6 +407,10 @@ export const examConfigService = {
           week4Deadline: _ignoreW4Deadline,
           week8Deadline: _ignoreW8Deadline,
           endOfTermDeadline: _ignoreEotDeadline,
+          // Which classes skip a test is decided per term (e.g. Grade 12
+          // only skips End of Term in Term 3): never carried over.
+          notWrittenBy: _ignoreNotWritten,
+          notWrittenReason: _ignoreNotWrittenReason,
           ...copyable
         } = data;
 
@@ -400,6 +419,8 @@ export const examConfigService = {
           week4Deadline: null,
           week8Deadline: null,
           endOfTermDeadline: null,
+          notWrittenBy: null,
+          notWrittenReason: null,
           term: toTerm,
           year: toYear,
           isActive: true,

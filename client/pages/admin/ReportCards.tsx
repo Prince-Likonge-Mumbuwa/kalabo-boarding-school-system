@@ -49,7 +49,7 @@ import {
 } from 'lucide-react';
 
 import { ConfirmationModal } from '@/components/ConfirmationModal';
-import { activeExamsFor, pickTermConfig } from '@/services/resultsGrid';
+import { activeExamsForClass, pickTermConfig } from '@/services/resultsGrid';
 import type { ReportCardData as SharedReportCardData } from '@/services/resultsService';
 import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import { smsService } from '@/services/smsService';
@@ -760,9 +760,11 @@ export default function ReportCards() {
     [examConfigs, selectedTerm, selectedYear]
   );
 
+  // The class's own tests: a class may not write one this term (e.g. Grade 12
+  // at End of Term), and then its report cards have no column for it.
   const configuredExamTypes = useMemo(
-    () => activeExamsFor(currentExamConfig as any) as string[],
-    [currentExamConfig]
+    () => activeExamsForClass(currentExamConfig as any, selectedClass) as string[],
+    [currentExamConfig, selectedClass]
   );
 
   // ---------- Data Fetch ----------

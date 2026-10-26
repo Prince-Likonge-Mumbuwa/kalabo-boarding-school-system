@@ -316,6 +316,41 @@ describe('every screen shows the same numbers', () => {
     expect(alice.cells[report.points[0].key]).toMatchObject({ status: 'entered', percentage: 75 });
   });
 
+  it('a class that does not write a test (e.g. Grade 12 at End of Term): not required anywhere, report cards use the other tests', async () => {
+    const { store } = await import('../test/fakeFirestore');
+    const cfg = store.get('examConfigs')!.get('cfg') as any;
+    cfg.notWrittenBy = { endOfTerm: ['C1'] };
+    cfg.notWrittenReason = { endOfTerm: 'ECZ final examinations' };
+    resultsService.invalidateGrid();
+
+    // Results Entry: only Week 4 counts for this class.
+    const entry = await resultsService.getSubjectCompletionStatus('C1', TERM, YEAR);
+    const eng = entry.find(s => s.subjectId === 'English')!;
+    expect(eng.percentComplete).toBe(100); // W4 all in; EOT not required
+    const maths = entry.find(s => s.subjectId === 'Mathematics')!;
+    expect(maths.percentComplete).toBe(75); // 3 of 4 W4 marks
+
+    // Monitor: no End of Term entries are missing for anyone.
+    const monitor = await loadMonitorData(TERM, YEAR, [{ id: 'C1', name: 'Form 1A', formTeacherId: 'T1' }]);
+    const all = monitor.teachers.flatMap(t => t.missingEntries);
+    expect(all.some(e => e.examType === 'endOfTerm')).toBe(false);
+    expect(monitor.teachers.find(t => t.teacherId === 'T3')!.missingCount).toBe(0);
+    const t1Maths = monitor.teachers.find(t => t.teacherId === 'T1')!.classProgress[0].subjects.find(x => x.subjectId === 'Mathematics')!;
+    expect(t1Maths.expectedExams).toEqual(['week4']);
+
+    // Report card: Week 4 only (40/50 = 80%), even though an EOT mark exists.
+    const card = (await resultsService.generateReportCard('docA', TERM, YEAR, { includeIncomplete: true })) as any;
+    expect(card.activeExams).toEqual(['week4']);
+    const m = card.subjects.find((x: any) => x.subjectId === 'Mathematics' || x.subjectName === 'Mathematics');
+    expect(m.average).toBe(80);
+    expect(card.isProvisional).toBe(false);
+
+    // Mark schedule progress pages: this term shows Week 4 only.
+    const { loadSubjectProgressReport } = await import('./markScheduleProgressLoader');
+    const report = await loadSubjectProgressReport({ classId: 'C1', subject: 'Mathematics', term: TERM, year: YEAR });
+    expect(report.points.map(p => p.short)).toEqual(['T3 W4']);
+  });
+
   it('Report Cards list == report card == SMS', async () => {
     const list = await resultsService.getStudentProgress('C1', TERM, YEAR);
     expect(list.map(s => s.studentName)).toEqual(['Alice Banda', 'Ben Chola', 'Chipo Daka', 'Dalitso Mwale']);

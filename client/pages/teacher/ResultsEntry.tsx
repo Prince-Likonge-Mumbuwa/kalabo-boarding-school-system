@@ -54,6 +54,7 @@ import { useTeacherClasses } from '@/hooks/useTeacherClasses';
 import { loadClassRoster } from '@/services/resultsGridLoader';
 import {
   activeExamsFor,
+  activeExamsForClass,
   pickTermConfig,
   totalMarksFor,
   EXAM_LABELS,
@@ -65,7 +66,7 @@ import { calculateGrade, normalizeSubjectName } from '@/services/resultsService'
 import { BulkResultsEntryModal } from '@/components/results/BulkResultsEntryModal';
 import { DEADLINE_BADGE, deadlineFor, deadlineStatus, formatDay } from '@/services/resultsDeadlines';
 import { DeadlineCountdown } from '@/components/results/DeadlineCountdown';
-import type { ExamType as ExamTypeId } from '@/types/exam';
+import { isExamWrittenBy, type ExamType as ExamTypeId } from '@/types/exam';
 
 // ==================== INTERFACES ====================
 interface StudentResultInput {
@@ -155,8 +156,16 @@ const TERM_OPTIONS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
 // Active exams and total marks use the app-wide rule (isExamActive): the box
 // is ticked AND total marks > 0. The monitor and report cards use the same.
 const SHORT_LABEL: Record<string, string> = { week4: 'W4', week8: 'W8', endOfTerm: 'EOT' };
-const getAvailableExamTypes = (config: any) =>
-  activeExamsFor(config).map(id => ({ id, label: EXAM_LABELS[id], shortLabel: SHORT_LABEL[id] }));
+// A class that does not write a test this term (Exam Management → "not
+// written by", e.g. Grade 12 at End of Term) is not offered it.
+const getAvailableExamTypes = (config: any, classId?: string | null) =>
+  activeExamsForClass(config, classId).map(id => ({ id, label: EXAM_LABELS[id], shortLabel: SHORT_LABEL[id] }));
+
+/** Tests active this term that this class does not write, with the reason. */
+const getNotWrittenExams = (config: any, classId?: string | null) =>
+  activeExamsFor(config)
+    .filter(id => !isExamWrittenBy(config, id, classId))
+    .map(id => ({ id, label: EXAM_LABELS[id], reason: (config?.notWrittenReason?.[id] as string | undefined) || '' }));
 
 /** 0 when the exam has no total marks (it is then not active either). */
 const getTotalMarksForExamType = (config: any, examType: string): number =>
@@ -1270,7 +1279,8 @@ export default function ResultsEntry() {
     () => pickTermConfig(examConfigs as any[], term, year),
     [examConfigs, term, year]
   );
-  const availableExamTypes = useMemo(() => getAvailableExamTypes(currentExamConfig), [currentExamConfig]);
+  const availableExamTypes = useMemo(() => getAvailableExamTypes(currentExamConfig, selectedClass), [currentExamConfig, selectedClass]);
+  const notWrittenExams = useMemo(() => getNotWrittenExams(currentExamConfig, selectedClass), [currentExamConfig, selectedClass]);
   const totalMarks = useMemo(() => getTotalMarksForExamType(currentExamConfig, examType), [currentExamConfig, examType]);
   
   // The teacher's subjects in the selected class (never Form Teacher), with
@@ -2461,6 +2471,19 @@ export default function ResultsEntry() {
               The {currentExamLabel} for {selectedSubject} was recorded as <strong>not conducted</strong>. It counts as done on the
               monitor and report cards. {canOperate ? 'If it did take place, just enter the marks and save — they replace "not conducted" for those learners. Delete removes it for everyone.' : ''}
             </p>
+          </div>
+        )}
+
+        {/* Tests this class does not write this term */}
+        {selectedClass && notWrittenExams.length > 0 && (
+          <div role="note" className="flex items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+            <Ban size={16} className="mt-0.5 flex-shrink-0 text-gray-500" />
+            <span>
+              {selectedClassData?.name || 'This class'} does not write the{' '}
+              {notWrittenExams.map(e => e.label).join(' or ')} {notWrittenExams.length === 1 ? 'test' : 'tests'} this term
+              {notWrittenExams.some(e => e.reason) ? ` (${[...new Set(notWrittenExams.map(e => e.reason).filter(Boolean))].join('; ')})` : ''}
+              . No marks are needed for {notWrittenExams.length === 1 ? 'it' : 'them'}, and report cards use the other tests.
+            </span>
           </div>
         )}
 

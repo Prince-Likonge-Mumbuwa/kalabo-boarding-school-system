@@ -77,6 +77,27 @@ Results Entry: drafts are auto-saved for any unsaved change (also when marks
 are already saved) and can be loaded at any time from the drafts list; marks
 can be entered over an exam recorded as "not conducted".
 
+## Classes that do not write a test
+
+Some classes skip a test in a term — e.g. in Term 3 the Grade 12 classes sit
+the ECZ final examinations instead of the school's End of Term exam.
+Exam Management → New / Edit configuration → a test → **Classes that do not
+write this test**: tap "All Grade 12" (or single classes) and give the
+reason. Stored on the exam config as `notWrittenBy` (`{ endOfTerm: [classId…] }`)
+and `notWrittenReason`; not copied to another term.
+
+For those classes the test is left out of the class's grid
+(`activeExamsForClass` / `isExamWrittenBy` in `types/exam.ts`), so it is
+not required anywhere and every screen agrees:
+
+- Results Entry doesn't offer it and says why ("Grade 12A does not write the
+  End of Term test this term (ECZ final examinations)").
+- Never missing on the monitor, the HoD view or the teacher dashboard, and
+  no deadline countdown for it.
+- Report cards (screen, PDF, Parent Portal, SMS) average the other tests and
+  have no column for it; a card is not provisional because of it.
+- The mark schedule progress pages leave it out for that term.
+
 ## Mark schedule PDF (Results Entry → Download)
 
 1. **Mark schedule** (portrait): the selected test's marks, %, grade.

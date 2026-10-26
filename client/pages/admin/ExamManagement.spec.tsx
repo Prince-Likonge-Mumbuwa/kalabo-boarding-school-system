@@ -20,6 +20,16 @@ vi.mock('@/hooks/useExamConfig', () => ({
   }),
 }));
 
+vi.mock('@/hooks/useSchoolClasses', () => ({
+  useSchoolClasses: () => ({
+    classes: [
+      { id: '12A', name: 'Grade 12A', type: 'grade', level: 12, isActive: true },
+      { id: '12B', name: 'Grade 12B', type: 'grade', level: 12, isActive: true },
+      { id: '11A', name: 'Grade 11A', type: 'grade', level: 11, isActive: true },
+    ],
+  }),
+}));
+
 import ExamManagement from './ExamManagement';
 
 const YEAR = new Date().getFullYear();
@@ -94,5 +104,34 @@ describe('Exam Management — results deadlines', () => {
       configId: 'c1',
       updates: { week4Deadline: `${YEAR}-02-06`, week8Deadline: null, endOfTermDeadline: null },
     });
+  });
+
+  it('marks a test as not written by chosen classes (one tap for a whole level), with a reason', async () => {
+    render(<ExamManagement />);
+    fireEvent.click(screen.getByRole('button', { name: /New Configuration/ }));
+    const eotBox = screen.getByLabelText('End of Term Exam').closest('div.p-4') as HTMLElement;
+    fireEvent.click(within(eotBox).getByRole('button', { name: /Classes that do not write this test/ }));
+    fireEvent.click(within(eotBox).getByRole('button', { name: 'All Grade 12' }));
+    expect(within(eotBox).getByRole('button', { name: 'Grade 12A' }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(eotBox).getByRole('button', { name: 'Grade 11A' }).getAttribute('aria-pressed')).toBe('false');
+    expect(within(eotBox).getByText('2 classes')).toBeTruthy();
+    fireEvent.change(within(eotBox).getByPlaceholderText('e.g. ECZ final examinations'), { target: { value: 'ECZ final examinations' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Save Configuration/ }));
+    await waitFor(() => expect(hook.createConfig).toHaveBeenCalledTimes(1));
+    expect(hook.createConfig.mock.calls[0][0]).toMatchObject({
+      notWrittenBy: { endOfTerm: ['12A', '12B'] },
+      notWrittenReason: { endOfTerm: 'ECZ final examinations' },
+    });
+  });
+
+  it('the config card says which classes do not write a test', () => {
+    hook.configs = [{
+      id: 'c1', term: 'Term 3', year: YEAR, isActive: true, createdAt: new Date(),
+      examTypes: { week4: true, week8: true, endOfTerm: true }, week4TotalMarks: 50, week8TotalMarks: 50, endOfTermTotalMarks: 100,
+      notWrittenBy: { endOfTerm: ['12A', '12B'] }, notWrittenReason: { endOfTerm: 'ECZ final examinations' },
+    }];
+    render(<ExamManagement />);
+    expect(screen.getByText('EOT not written by:').parentElement!.textContent).toBe('EOT not written by: Grade 12A, Grade 12B (ECZ final examinations)');
   });
 });
