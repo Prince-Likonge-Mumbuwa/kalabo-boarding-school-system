@@ -2,7 +2,7 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useEmbedded } from '@/components/workspace/embedded';
 import { useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Activity,
   ChevronDown,
@@ -49,9 +49,13 @@ export default function ResultsEntryMonitor() {
   const [expandedTeacherId, setExpandedTeacherId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [examFilter, setExamFilter] = useState<ExamType | 'all'>('all');
-  const [statusFilter, setStatusFilter] = useState<
-    'all' | 'complete' | 'on-track' | 'behind' | 'critical' | 'overdue'
-  >('all');
+  // The dashboard links here pre-filtered, e.g. ?status=overdue.
+  const [params] = useSearchParams();
+  const STATUSES = ['all', 'complete', 'on-track', 'behind', 'critical', 'overdue'] as const;
+  const [statusFilter, setStatusFilter] = useState<(typeof STATUSES)[number]>(() => {
+    const s = params.get('status');
+    return (STATUSES as readonly string[]).includes(s ?? '') ? (s as (typeof STATUSES)[number]) : 'all';
+  });
 
   // The hook receives the selected term. The year stays at the auto-detected
   // value; changing term re-runs the query against Firestore for that term.
