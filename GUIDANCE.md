@@ -23,14 +23,33 @@ with its history (same as admissions officers).
 
 ## Sponsors
 
-Sponsors come from the **Sponsor** field on each learner (entered at
-admission or in the learner's details). Learners are grouped by sponsor:
+The school keeps **one sponsor list**: KGS, CAMFED, CDF, AP and WISE to
+start with (`system/sponsors`). A learner is sponsored only by a sponsor on
+the list; **anyone else is Self-sponsored** — a parent's or guardian's name,
+`Self`, `N/A`, blank…
 
-- Case, extra spaces and punctuation are ignored, so `CAMFED`, `Camfed` and
-  `Camfed.` are one sponsor, named by the spelling most learners have.
-- Self-sponsored learners (`Self`, `Parent`, `Guardian`, `N/A`, `None`, blank…)
-  are not listed.
-- Only active learners are counted.
+- Matching ignores case, spaces and punctuation: `Camfed`, `CAMFED.` and
+  `C.D.F` count as CAMFED and CDF.
+- Only active learners are counted. Every listed sponsor is shown, even with
+  no learners.
+
+**Sponsor list** tab (guidance officer or admin):
+
+- **Add sponsor** when a real one is missing (e.g. Plan International);
+  remove one (its learners become self-sponsored).
+- **Other names typed as sponsor** lists what was typed but is not on the
+  list, with how many learners — counted as self-sponsored. For each: **Add
+  as sponsor**, or **Same as…** a listed sponsor (that spelling then counts
+  as it, e.g. "Campaign for Female Education" → CAMFED).
+- **Tidy learner records** writes the result into the learners' Sponsor
+  field: a listed sponsor's spelling becomes its name, everything else
+  becomes `Self-sponsored`. Shown first, with counts; asks before changing;
+  past learners are not changed. Add any real sponsor first — the old text is
+  replaced.
+
+On the learner forms (add learner, edit learner, admissions) the Sponsor is
+a list: Self-sponsored or a listed sponsor. CSV imports are matched the same
+way (anything not on the list is imported as Self-sponsored).
 
 Choose a sponsor to see its learners under Form/Grade headings. **Show
 results** adds each learner's average, grade, position and pass/fail for the
@@ -88,6 +107,7 @@ used and the sponsor is told to try again later.
 | Collection | Content |
 |---|---|
 | `staff_roles/{teacherId}__guidance-officer` | `role: 'guidance-officer'`, `status`, `history` |
+| `system/sponsors` | `names` (the sponsor list), `aliases` (other spelling → name), `updatedBy`, `updatedByName`, `updatedAt` |
 | `sponsor_codes/{code}` | `sponsorName`, `sponsorKeys`, `learnerIds`, `learnerCount`, `term`, `year`, `status` (`active` / `used` / `revoked`), `createdBy`, `createdByName`, `createdAt`, `expiresAt`, `usedAt`, `revokedAt`, `revokedByName` |
 
 ## Security rules (`firestore.rules`)
@@ -100,6 +120,8 @@ used and the sponsor is told to try again later.
 - Officers and the admin create codes (as themselves, `active`, with at least
   one learner and a future expiry) and may cancel an active code.
 - Only the admin may delete a code.
+- `system/sponsors`: every signed-in user reads it (learner forms); the
+  admin or a guidance officer saves it (only its fields, in their own name).
 
 After changing the rules, deploy them (`deploy-firestore-rules.bat`).
 
@@ -107,7 +129,9 @@ After changing the rules, deploy them (`deploy-firestore-rules.bat`).
 
 | File | What |
 |---|---|
-| `client/services/guidancePlan.ts` | Sponsor matching, form order, code format and checks (tested in `guidancePlan.spec.ts`) |
+| `client/services/guidancePlan.ts` | The sponsor list and matching, form order, code format and checks (tested in `guidancePlan.spec.ts`) |
+| `client/services/sponsorListService.ts`, `client/hooks/useSponsorList.ts` | Loading/saving the sponsor list; tidying learner records |
+| `client/components/guidance/SponsorListTab.tsx`, `SponsorSelect.tsx` | The Sponsor list tab; the Sponsor field on learner forms |
 | `client/services/guidanceService.ts` | Role, codes (create, list, cancel, check, spend), building the report cards |
 | `client/services/pdf/sponsorReportsPDF.ts` | Cover page + report cards in one PDF |
 | `client/components/guidance/GuidanceWorkspace.tsx` | The officer/admin page |

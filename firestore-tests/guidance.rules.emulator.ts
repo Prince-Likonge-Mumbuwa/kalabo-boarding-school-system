@@ -89,3 +89,30 @@ describe('sponsor_codes rules', () => {
     await assertFails(setDoc(doc(as('G1'), 'sponsor_codes/SP-NEWW-E1GH'), code('G1')));
   });
 });
+
+describe('system/sponsors (the sponsor list)', () => {
+  const list = (by: string, extra: Record<string, unknown> = {}) => ({
+    names: ['KGS', 'CAMFED', 'CDF', 'AP', 'WISE', 'Plan International'], aliases: { worldvision: 'WISE' },
+    updatedBy: by, updatedByName: 'X', updatedAt: serverTimestamp(), ...extra,
+  });
+
+  it('a guidance officer and the admin may save it; other teachers and visitors may not', async () => {
+    await assertSucceeds(setDoc(doc(as('G1'), 'system/sponsors'), list('G1')));
+    await assertSucceeds(setDoc(doc(as('ADMIN'), 'system/sponsors'), list('ADMIN')));
+    await assertFails(setDoc(doc(as('T1'), 'system/sponsors'), list('T1')));
+    await assertFails(setDoc(doc(anon(), 'system/sponsors'), list('G1')));
+  });
+
+  it('an officer saves only the list, in their own name, and cannot touch other system documents', async () => {
+    await assertFails(setDoc(doc(as('G1'), 'system/sponsors'), list('ADMIN')));
+    await assertFails(setDoc(doc(as('G1'), 'system/sponsors'), list('G1', { secret: true })));
+    await assertFails(setDoc(doc(as('G1'), 'system/sponsors'), list('G1', { names: 'KGS' })));
+    await assertFails(setDoc(doc(as('G1'), 'system/departments'), { subjects: {} }));
+  });
+
+  it('every signed-in user can read it (learner forms use it)', async () => {
+    await env.withSecurityRulesDisabled(async ctx => { await setDoc(doc(ctx.firestore(), 'system/sponsors'), list('ADMIN')); });
+    await assertSucceeds(getDoc(doc(as('T1'), 'system/sponsors')));
+  });
+});
+

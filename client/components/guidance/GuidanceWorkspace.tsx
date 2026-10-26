@@ -31,7 +31,9 @@ import {
   revokeSponsorCode,
   type SponsorReports,
 } from '@/services/guidanceService';
-import { displayStatus, groupLearnersBySponsor, levelHeading, shareMessage, sortLearnersByForm } from '@/services/guidancePlan';
+import { displayStatus, groupLearnersBySponsor, levelHeading, selfSponsoredCount, shareMessage, sortLearnersByForm, unlistedSponsorNames } from '@/services/guidancePlan';
+import { useSponsorList } from '@/hooks/useSponsorList';
+import { SponsorListTab } from './SponsorListTab';
 import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import type { SponsorCode, SponsorGroup } from '@/types/guidance';
 import type { Learner } from '@/types/school';
@@ -57,13 +59,16 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 export function GuidanceWorkspace({ user }: { user: Actor }) {
-  const [tab, setTab] = useState<'sponsors' | 'codes'>('sponsors');
+  const [tab, setTab] = useState<'sponsors' | 'list' | 'codes'>('sponsors');
   const [term, setTerm] = useState<TermName>(() => getCurrentAcademicTerm().term);
   const [year, setYear] = useState<number>(() => getCurrentAcademicTerm().year);
 
   const learnersQ = useQuery({ queryKey: ['guidance', 'learners'], queryFn: () => learnerService.getAllLearners(), staleTime: 5 * 60_000 });
   const learners = learnersQ.data ?? [];
-  const groups = useMemo(() => groupLearnersBySponsor(learners), [learners]);
+  // Only sponsors on the school's list count; anyone else is self-sponsored.
+  const { list: sponsorList } = useSponsorList();
+  const groups = useMemo(() => groupLearnersBySponsor(learners, sponsorList), [learners, sponsorList]);
+  const queryClient = useQueryClient();
 
   const years = useMemo(() => {
     const now = new Date().getFullYear();
@@ -92,13 +97,13 @@ export function GuidanceWorkspace({ user }: { user: Actor }) {
       </div>
 
       <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
-        {(['sponsors', 'codes'] as const).map(t => (
+        {(['sponsors', 'list', 'codes'] as const).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-4 py-1.5 text-sm rounded-md font-medium ${tab === t ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'}`}
           >
-            {t === 'sponsors' ? 'Sponsors' : 'Sponsor codes'}
+            {t === 'sponsors' ? 'Sponsors' : t === 'list' ? 'Sponsor list' : 'Sponsor codes'}
           </button>
         ))}
       </div>
@@ -109,7 +114,18 @@ export function GuidanceWorkspace({ user }: { user: Actor }) {
         ) : learnersQ.isError ? (
           <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">Could not load learners. Please refresh.</div>
         ) : (
-          <SponsorsTab groups={groups} learners={learners} term={term} year={year} user={user} />
+          <SponsorsTab groups={groups} learners={learners} term={term} year={year} user={user} onOpenList={() => setTab('list')} />
+        )
+      ) : tab === 'list' ? (
+        learnersQ.isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-gray-600 p-4"><Loader2 size={16} className="animate-spin" /> Loading learners…</div>
+        ) : (
+          <SponsorListTab
+            list={sponsorList}
+            learners={learners}
+            user={user}
+            onLearnersChanged={() => queryClient.invalidateQueries({ queryKey: ['guidance', 'learners'] })}
+          />
         )
       ) : (
         <CodesTab user={user} />
@@ -120,8 +136,11 @@ export function GuidanceWorkspace({ user }: { user: Actor }) {
 
 // ==================== SPONSORS ====================
 
-function SponsorsTab(props: { groups: SponsorGroup[]; learners: Learner[]; term: TermName; year: number; user: Actor }) {
-  const { groups, learners, term, year, user } = props;
+function SponsorsTab(props: { groups: SponsorGroup[]; learners: Learner[]; term: TermName; year: number; user: Actor; onOpenList: () => void }) {
+  const { groups, learners, term, year, user, onOpenList } = props;
+  const { list } = useSponsorList();
+  const selfCount = useMemo(() => selfSponsoredCount(learners, list), [learners, list]);
+  const unlistedCount = useMemo(() => unlistedSponsorNames(learners, list).reduce((n, u) => n + u.count, 0), [learners, list]);
   const [search, setSearch] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const selected = groups.find(g => g.key === selectedKey) ?? null;
@@ -142,7 +161,12 @@ function SponsorsTab(props: { groups: SponsorGroup[]; learners: Learner[]; term:
           />
         </div>
         <p className="text-xs text-gray-500 px-1 mb-2">
-          {groups.length} sponsor{groups.length === 1 ? '' : 's'} · {totalSponsored} sponsored learner{totalSponsored === 1 ? '' : 's'} (self-sponsored not shown)
+          {groups.length} sponsor{groups.length === 1 ? '' : 's'} · {totalSponsored} sponsored learner{totalSponsored === 1 ? '' : 's'} · {selfCount} self-sponsored
+          {unlistedCount > 0 && (
+            <>
+              {' '}(<button type="button" onClick={onOpenList} className="text-blue-700 underline">{unlistedCount} with a name not on the sponsor list</button>)
+            </>
+          )}
         </p>
         {groups.length === 0 ? (
           <p className="text-sm text-gray-600 p-2">No learner has a sponsor recorded yet. Sponsors are entered on the learner's details.</p>
@@ -423,12 +447,12 @@ function CodeDialog(props: { open: boolean; onClose: () => void; group: SponsorG
               <input value={name} onChange={e => setName(e.target.value)} className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
             </label>
 
-            {others.length > 0 && (
+            {others.some(g => g.count > 0) && (
               <div>
-                <p className="text-sm font-medium text-gray-700">Same sponsor written differently?</p>
-                <p className="text-xs text-gray-500 mb-2">Tick other names that are this same organisation so their learners are included too.</p>
+                <p className="text-sm font-medium text-gray-700">Include another sponsor's learners too?</p>
+                <p className="text-xs text-gray-500 mb-2">Only if this sponsor also receives those learners' report cards (spellings of the same sponsor are already included).</p>
                 <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-                  {others.map(g => (
+                  {others.filter(g => g.count > 0).map(g => (
                     <label key={g.key} className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50">
                       <input
                         type="checkbox"

@@ -1,5 +1,8 @@
 // @/components/IndividualLearnerModal.tsx
 import { DateOfBirthSelect } from '@/components/DateOfBirthSelect';
+import { SponsorSelect } from '@/components/guidance/SponsorSelect';
+import { useSponsorList } from '@/hooks/useSponsorList';
+import { sponsorLabel } from '@/services/guidancePlan';
 import { useState, useEffect, useRef } from 'react';
 import {
   X,
@@ -133,6 +136,7 @@ export const IndividualLearnerModal = ({
   nextStudentIndex = 1,
   isLoading = false,
 }: IndividualLearnerModalProps) => {
+  const { list: sponsorList } = useSponsorList();
   const currentYear = new Date().getFullYear();
   const minDobYear = 1990;
 
@@ -329,7 +333,7 @@ export const IndividualLearnerModal = ({
         guardianPhone: formData.guardianPhone,
         alternativeGuardian: formData.alternativeGuardian.trim() || undefined,
         alternativeGuardianPhone: formData.alternativeGuardianPhone || undefined,
-        sponsor: formData.sponsor.trim(),
+        sponsor: sponsorLabel(formData.sponsor, sponsorList),
         dateOfBirth: formData.dateOfBirth,   // ✅ replaces birthYear
         previousSchool: formData.previousSchool.trim() || undefined,
         medicalNotes: formData.medicalNotes.trim() || undefined,
@@ -429,7 +433,8 @@ export const IndividualLearnerModal = ({
               dateOfFirstEntry: student.dateOfFirstEntry || '',
               gender: student.gender || 'male',
               guardian: student.guardian || '',
-              sponsor: student.sponsor || '',
+              // Only listed sponsors count; anything else is Self-sponsored.
+              sponsor: sponsorLabel(student.sponsor, sponsorList),
               guardianPhone: student.guardianPhone || '',
               dateOfBirth: student.dateOfBirth,   // ✅
             });
@@ -937,13 +942,9 @@ export const IndividualLearnerModal = ({
                         Sponsor
                       </div>
                     </label>
-                    <input
-                      type="text"
-                      placeholder="e.g., Govt. Bursary"
+                    <SponsorSelect
                       value={formData.sponsor}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, sponsor: e.target.value }))}
-                      className="w-full px-3 sm:px-4 py-2 sm:py-2.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      disabled={isLoading}
+                      onChange={(v) => setFormData((prev) => ({ ...prev, sponsor: v }))}
                     />
                   </div>
                 </div>
