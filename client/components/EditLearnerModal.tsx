@@ -17,6 +17,9 @@ import type { Enrollment } from '@/types/promotion';
 import { loadLearnerEnrollments } from '@/services/enrollmentService';
 import { LearnerFaceDialog, LearnerFaceRow } from '@/components/face/LearnerFace';
 import { DateOfBirthSelect, type DobParts } from '@/components/DateOfBirthSelect';
+import { SponsorSelect } from '@/components/guidance/SponsorSelect';
+import { useSponsorList } from '@/hooks/useSponsorList';
+import { sponsorLabel } from '@/services/guidancePlan';
 
 interface EditLearnerModalProps {
   isOpen: boolean;
@@ -35,6 +38,7 @@ export const EditLearnerModal = ({
   className,
   isLoading = false
 }: EditLearnerModalProps) => {
+  const { list: sponsorList } = useSponsorList();
   const currentYear = new Date().getFullYear();
 
   // Class history from closed years (written by the year transition).
@@ -113,8 +117,8 @@ export const EditLearnerModal = ({
       newErrors.guardian = 'Guardian name is required';
     }
 
-    if (!formData.sponsor.trim()) {
-      newErrors.sponsor = 'Sponsor name is required';
+    if (!sponsorLabel(formData.sponsor, sponsorList)) {
+      newErrors.sponsor = 'Choose the sponsor';
     }
 
     if (!formData.guardianPhone) {
@@ -158,7 +162,7 @@ export const EditLearnerModal = ({
         guardianPhone: formData.guardianPhone,
         alternativeGuardian: formData.alternativeGuardian.trim() || undefined,
         alternativeGuardianPhone: formData.alternativeGuardianPhone || undefined,
-        sponsor: formData.sponsor.trim(),
+        sponsor: sponsorLabel(formData.sponsor, sponsorList),
         birthYear: formData.birthYear as number,
         // The full date when known — otherwise only the year is changed.
         ...(formData.dateOfBirth ? { dateOfBirth: formData.dateOfBirth } : {}),
@@ -354,14 +358,10 @@ export const EditLearnerModal = ({
                       Sponsor *
                     </div>
                   </label>
-                  <input
-                    type="text"
+                  <SponsorSelect
                     value={formData.sponsor}
-                    onChange={(e) => setFormData(prev => ({ ...prev, sponsor: e.target.value }))}
-                    className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                      errors.sponsor ? 'border-red-300' : 'border-gray-300'
-                    }`}
-                    disabled={isLoading}
+                    invalid={!!errors.sponsor}
+                    onChange={(v) => setFormData(prev => ({ ...prev, sponsor: v }))}
                   />
                   {errors.sponsor && <p className="mt-1 text-sm text-red-600">{errors.sponsor}</p>}
                 </div>

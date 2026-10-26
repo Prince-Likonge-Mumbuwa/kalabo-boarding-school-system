@@ -6,6 +6,9 @@
 //   Admitted        this intake's admissions; reprint a slip; admin cancels
 //   Settings        admin only: open/close, levels, places per class, officers
 
+import { SponsorSelect } from '@/components/guidance/SponsorSelect';
+import { SELF_SPONSORED, sponsorLabel } from '@/services/guidancePlan';
+import { useSponsorList } from '@/hooks/useSponsorList';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -81,7 +84,7 @@ const emptyForm = (level: IntakeLevel, year: number): AdmissionInput => ({
   guardianRelationship: '',
   alternativeGuardian: '',
   alternativeGuardianPhone: '',
-  sponsor: 'Self',
+  sponsor: SELF_SPONSORED,
   dateOfFirstEntry: new Date().getFullYear() >= year ? todayYMD() : `${year}-01-01`,
   previousSchool: '',
   previousGrade: '',
@@ -234,6 +237,7 @@ function AdmitForm(props: {
   goToSettings: () => void;
 }) {
   const { user, year, settings, classes } = props;
+  const { list: sponsorList } = useSponsorList();
   const [form, setForm] = useState<AdmissionInput>(() => emptyForm(settings.levels[0], year));
   const [allergiesText, setAllergiesText] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -326,6 +330,8 @@ function AdmitForm(props: {
     setError('');
     const input: AdmissionInput = {
       ...form,
+      // Only listed sponsors count; anything else is Self-sponsored.
+      sponsor: sponsorLabel(form.sponsor, sponsorList),
       allergies: allergiesText.split(',').map(a => a.trim()).filter(Boolean),
     };
     const v = validateAdmission(input);
@@ -415,7 +421,9 @@ function AdmitForm(props: {
             {input('guardian', 'Guardian name', { required: true })}
             {input('guardianRelationship', 'Relationship', { placeholder: 'e.g. Mother, Uncle' })}
             {input('guardianPhone', 'Guardian phone', { required: true, type: 'tel', placeholder: '097…' })}
-            {input('sponsor', 'Sponsor', { required: true, placeholder: 'Self, Government Bursary, NGO…' })}
+            <Field label="Sponsor" required error={errors.sponsor}>
+              <SponsorSelect value={form.sponsor ?? ''} invalid={!!errors.sponsor} onChange={v => set('sponsor', v as any)} />
+            </Field>
             {input('alternativeGuardian', 'Second guardian')}
             {input('alternativeGuardianPhone', 'Second guardian phone', { type: 'tel' })}
           </div>

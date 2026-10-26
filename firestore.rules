@@ -506,6 +506,14 @@ service cloud.firestore {
       allow write: if isAdmin(request.auth.uid);
       // A HoD chooses their own department's subjects; nothing else changes.
       allow create, update: if docId == 'departments' && isHod() && hodSubjectsOnly();
+      // The sponsor list (KGS, CAMFED…): a guidance officer may add, remove
+      // or merge sponsors. Only these fields, in their own name.
+      allow create, update: if docId == 'sponsors' && isGuidanceOfficer()
+        && request.resource.data.keys().hasOnly(['names', 'aliases', 'updatedBy', 'updatedByName', 'updatedAt'])
+        && request.resource.data.names is list
+        && request.resource.data.names.size() <= 100
+        && request.resource.data.aliases is map
+        && request.resource.data.updatedBy == request.auth.uid;
     }
 
     // ==================== YEAR TRANSITION ====================

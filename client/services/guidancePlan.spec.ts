@@ -4,8 +4,20 @@ import {
   codeProblem,
   displayStatus,
   generateCodeString,
+  DEFAULT_SPONSORS,
+  SELF_SPONSORED,
+  addAlias,
+  addSponsor,
+  defaultSponsorList,
   groupLearnersBySponsor,
   isSponsored,
+  newSponsorProblem,
+  removeSponsor,
+  resolveSponsor,
+  selfSponsoredCount,
+  sponsorLabel,
+  sponsorRecordFixes,
+  unlistedSponsorNames,
   levelHeading,
   normalizeCodeInput,
   normalizeSponsor,
@@ -25,19 +37,87 @@ describe('sponsors', () => {
     for (const s of ['Government Bursary', 'CAMFED', 'World Vision']) expect(isSponsored(s)).toBe(true);
   });
 
-  it('groups active learners by sponsor, named by the most common spelling', () => {
-    const groups = groupLearnersBySponsor([
+  it('groups active learners by the sponsors on the list; anything else is self-sponsored', () => {
+    const learners = [
       { id: 'a', sponsor: 'CAMFED' },
       { id: 'b', sponsor: 'Camfed' },
       { id: 'c', sponsor: 'CAMFED', status: 'active' },
       { id: 'd', sponsor: 'Self' },
       { id: 'e', sponsor: 'World Vision' },
       { id: 'f', sponsor: 'CAMFED', status: 'graduated' },
-    ]);
-    expect(groups).toHaveLength(2);
-    expect(groups[0]).toMatchObject({ key: 'camfed', name: 'CAMFED', count: 3, spellings: ['CAMFED', 'Camfed'] });
+      { id: 'g', sponsor: 'C.D.F' },
+      { id: 'h', sponsor: 'Mrs Mwale' },
+    ];
+    const groups = groupLearnersBySponsor(learners, defaultSponsorList());
+    // Every listed sponsor appears, biggest first.
+    expect(groups.map(g => [g.name, g.count])).toEqual([['CAMFED', 3], ['CDF', 1], ['AP', 0], ['KGS', 0], ['WISE', 0]]);
+    expect(groups[0]).toMatchObject({ key: 'camfed', spellings: ['CAMFED', 'Camfed'] });
     expect(groups[0].learnerIds.sort()).toEqual(['a', 'b', 'c']);
-    expect(groups[1]).toMatchObject({ name: 'World Vision', count: 1 });
+    expect(selfSponsoredCount(learners, defaultSponsorList())).toBe(3); // Self, World Vision, Mrs Mwale
+  });
+});
+
+describe('the sponsor list', () => {
+  const list = defaultSponsorList();
+
+  it('starts with KGS, CAMFED, CDF, AP and WISE', () => {
+    expect(DEFAULT_SPONSORS).toEqual(['KGS', 'CAMFED', 'CDF', 'AP', 'WISE']);
+  });
+
+  it('a typed sponsor counts only when it matches the list; anything else is Self-sponsored', () => {
+    expect(resolveSponsor('camfed', list)).toBe('CAMFED');
+    expect(resolveSponsor(' C. D. F ', list)).toBe('CDF');
+    expect(resolveSponsor('Kgs', list)).toBe('KGS');
+    expect(resolveSponsor('Mr John Banda', list)).toBeNull();
+    expect(resolveSponsor('Parent', list)).toBeNull();
+    expect(sponsorLabel('Mr John Banda', list)).toBe(SELF_SPONSORED);
+    expect(sponsorLabel('', list)).toBe(SELF_SPONSORED);
+    expect(sponsorLabel('wise', list)).toBe('WISE');
+  });
+
+  it('adding a sponsor: refuses duplicates, self words and long names', () => {
+    expect(newSponsorProblem('cam fed', list)).toBe('CAMFED is already on the list.');
+    expect(newSponsorProblem('Self', list)).toMatch(/means self-sponsored/);
+    expect(newSponsorProblem('x'.repeat(41), list)).toMatch(/under 40/);
+    expect(newSponsorProblem('  ', list)).toMatch(/Type/);
+    const next = addSponsor(list, '  Plan  International ');
+    expect(next.names).toEqual([...DEFAULT_SPONSORS, 'Plan International']);
+    expect(resolveSponsor('plan international.', next)).toBe('Plan International');
+    expect(() => addSponsor(next, 'PLAN INTERNATIONAL')).toThrow(/already on the list/);
+    expect(list.names).toEqual(DEFAULT_SPONSORS); // never changed in place
+  });
+
+  it('another spelling can be marked as a listed sponsor; removing a sponsor removes its spellings', () => {
+    const next = addAlias(list, 'Campaign for Female Education', 'CAMFED');
+    expect(resolveSponsor('campaign for female education', next)).toBe('CAMFED');
+    expect(newSponsorProblem('Campaign for Female Education', next)).toBe('CAMFED is already on the list.');
+    expect(() => addAlias(list, 'x', 'Nobody')).toThrow(/not on the sponsor list/);
+    const removed = removeSponsor(next, 'CAMFED');
+    expect(removed.names).not.toContain('CAMFED');
+    expect(removed.aliases).toEqual({});
+    expect(resolveSponsor('Camfed', removed)).toBeNull();
+  });
+
+  it('lists the names typed that are not on the list (counted as self-sponsored)', () => {
+    const u = unlistedSponsorNames([
+      { id: 'a', sponsor: 'World Vision' }, { id: 'b', sponsor: 'world  vision' }, { id: 'c', sponsor: 'Mrs Mwale' },
+      { id: 'd', sponsor: 'Parent' }, { id: 'e', sponsor: 'CAMFED' }, { id: 'f', sponsor: 'Old Name', status: 'graduated' },
+    ], list);
+    expect(u.map(x => [x.name, x.count, x.spellings])).toEqual([['World Vision', 2, ['World Vision', 'world vision']], ['Mrs Mwale', 1, ['Mrs Mwale']]]);
+  });
+
+  it('tidying records: current learners get the listed name or Self-sponsored; past learners are left', () => {
+    const fixes = sponsorRecordFixes([
+      { id: 'a', sponsor: 'Camfed' }, { id: 'b', sponsor: 'CAMFED' }, { id: 'c', sponsor: 'Mr Phiri' },
+      { id: 'd', sponsor: '' }, { id: 'e', sponsor: 'Self-sponsored' }, { id: 'f', sponsor: 'Mr Old', status: 'graduated' },
+      { id: 'g' },
+    ], list);
+    expect(fixes).toEqual([
+      { id: 'a', from: 'Camfed', to: 'CAMFED' },
+      { id: 'c', from: 'Mr Phiri', to: SELF_SPONSORED },
+      { id: 'd', from: '', to: SELF_SPONSORED },
+      { id: 'g', from: '', to: SELF_SPONSORED },
+    ]);
   });
 });
 
