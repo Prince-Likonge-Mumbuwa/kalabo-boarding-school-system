@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { deadlineFor, deadlineProblems, deadlineStatus, parseDay } from './resultsDeadlines';
+import { countdownTo, deadlineEnd, deadlineFor, deadlineProblems, deadlineStatus, parseDay, two } from './resultsDeadlines';
 
-// Wednesday 12 November 2026, mid-morning.
+// Thursday 12 November 2026, mid-morning.
 const NOW = new Date(2026, 10, 12, 10, 30);
 
 describe('parseDay', () => {
@@ -74,5 +74,36 @@ describe('deadlineProblems', () => {
       dates: { week4: '2026-12-01' },
       deadlines: { week4: '2026-01-01', week8: '', endOfTerm: '2026-12-10' },
     })).toEqual({});
+  });
+});
+
+
+describe('countdownTo', () => {
+  it('counts down to the END of the deadline day, to the second', () => {
+    expect(deadlineEnd('2026-11-14')).toEqual(new Date(2026, 10, 15, 0, 0, 0));
+    // Thu 12 Nov 10:30:00 → end of Fri 14 Nov = 2 days 13 h 30 min
+    expect(countdownTo('2026-11-14', NOW)).toMatchObject({ overdue: false, days: 2, hours: 13, minutes: 30, seconds: 0, urgency: 'soon' });
+    const c = countdownTo('2026-11-14', new Date(2026, 10, 12, 10, 30, 1))!;
+    expect([c.days, c.hours, c.minutes, c.seconds]).toEqual([2, 13, 29, 59]);
+    expect(c.short).toBe('2d 13h 29m 59s');
+    expect(c.spoken).toBe('2 days 13 hours 29 minutes left');
+  });
+  it('urgency: calm over 3 days, soon within 3 days, urgent in the last 24 hours', () => {
+    expect(countdownTo('2026-11-20', NOW)!.urgency).toBe('calm');
+    expect(countdownTo('2026-11-13', NOW)!.urgency).toBe('soon'); // 1 day 13.5 h
+    const c = countdownTo('2026-11-12', NOW)!; // today: 13 h 30 m left
+    expect(c).toMatchObject({ urgency: 'urgent', days: 0, hours: 13, minutes: 30 });
+    expect(c.short).toBe('13h 30m 00s');
+  });
+  it('after the deadline it counts up and says overdue', () => {
+    const c = countdownTo('2026-11-10', NOW)!; // ended 11 Nov 00:00 → 1 day 10 h 30 min ago
+    expect(c).toMatchObject({ overdue: true, urgency: 'overdue', days: 1, hours: 10, minutes: 30, seconds: 0 });
+    expect(c.ms).toBeLessThan(0);
+    expect(c.spoken).toBe('1 day 10 hours 30 minutes overdue');
+  });
+  it('no deadline, no countdown; two() pads', () => {
+    expect(countdownTo(null, NOW)).toBeNull();
+    expect(countdownTo('nonsense', NOW)).toBeNull();
+    expect([two(0), two(7), two(42)]).toEqual(['00', '07', '42']);
   });
 });

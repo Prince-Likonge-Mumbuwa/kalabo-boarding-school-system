@@ -127,3 +127,61 @@ export function deadlineProblems(form: {
   }
   return out;
 }
+
+// ==================== LIVE COUNTDOWN ====================
+
+/** Two digits: 7 → "07". */
+export const two = (n: number) => String(Math.max(0, Math.floor(n))).padStart(2, '0');
+
+/** The moment a deadline passes: midnight at the END of the deadline day (local time). */
+export function deadlineEnd(ymd: string | null | undefined): Date | null {
+  const d = parseDay(ymd ?? null);
+  return d ? new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1) : null;
+}
+
+export type CountdownUrgency = 'calm' | 'soon' | 'urgent' | 'overdue';
+
+export interface Countdown {
+  overdue: boolean;
+  /** Time left (or, when overdue, time since the deadline), split up. */
+  days: number;
+  hours: number;
+  minutes: number;
+  seconds: number;
+  /** Milliseconds left; negative when overdue. */
+  ms: number;
+  /** calm: more than 3 days · soon: 3 days or less · urgent: under 24 hours · overdue */
+  urgency: CountdownUrgency;
+  /** For screen readers: "2 days 14 hours 37 minutes left". */
+  spoken: string;
+  /** Short text: "2d 14h 37m 09s". */
+  short: string;
+}
+
+/** Countdown to the end of a deadline day; counts up once it has passed. */
+export function countdownTo(ymd: string | null | undefined, now: Date = new Date()): Countdown | null {
+  const end = deadlineEnd(ymd);
+  if (!end) return null;
+  const ms = end.getTime() - now.getTime();
+  const abs = Math.abs(ms);
+  const totalSec = ms >= 0 ? Math.ceil(abs / 1000) : Math.floor(abs / 1000);
+  const days = Math.floor(totalSec / 86_400);
+  const hours = Math.floor((totalSec % 86_400) / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+  const overdue = ms <= 0;
+  const urgency: CountdownUrgency = overdue ? 'overdue' : ms < 86_400_000 ? 'urgent' : ms <= 3 * 86_400_000 ? 'soon' : 'calm';
+  const part = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const spokenParts = days > 0 ? [part(days, 'day'), part(hours, 'hour'), part(minutes, 'minute')] : [part(hours, 'hour'), part(minutes, 'minute')];
+  return {
+    overdue,
+    days,
+    hours,
+    minutes,
+    seconds,
+    ms,
+    urgency,
+    spoken: `${spokenParts.join(' ')} ${overdue ? 'overdue' : 'left'}`,
+    short: `${days > 0 ? `${days}d ` : ''}${two(hours)}h ${two(minutes)}m ${two(seconds)}s`,
+  };
+}

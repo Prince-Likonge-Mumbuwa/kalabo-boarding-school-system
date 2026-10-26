@@ -249,8 +249,12 @@ describe('Results Entry page', () => {
       renderPage();
       await screen.findByText('Alice');
       // Week 4 (selected): 2 of 3 entered, deadline 3 days ago.
-      const banner = await screen.findByRole('status');
-      expect(banner.textContent).toMatch(/Week 4 results were due by .+ — 3 days overdue\. 1 learner still needs marks/);
+      // Live countdown, counting up since the deadline passed.
+      const clock = await screen.findByRole('region', { name: 'Week 4 results: overdue countdown' });
+      expect(clock.textContent).toMatch(/Week 4 results overdue by/i);
+      expect(clock.textContent).toMatch(/1 learner still needs marks — please enter them now\./);
+      expect(within(clock).getByTestId('countdown-day').textContent).toBe('2'); // ended 2+ days ago
+      expect(within(clock).getByRole('timer').getAttribute('aria-label')).toMatch(/^2 days \d+ hours \d+ minutes overdue$/);
       // Each test button carries its deadline.
       expect(screen.getAllByText('3 days overdue').length).toBeGreaterThan(0);
       const eot = screen.getByText('EOT').closest('button')!;
@@ -264,7 +268,7 @@ describe('Results Entry page', () => {
   it('no deadline set: no deadline banner', async () => {
     renderPage();
     await screen.findByText('Alice');
-    expect(screen.queryByText(/results (are|were) due by/)).toBeNull();
+    expect(screen.queryByRole('timer')).toBeNull();
   });
 
   it('the downloaded mark schedule includes the year\'s progress for the subject', async () => {
