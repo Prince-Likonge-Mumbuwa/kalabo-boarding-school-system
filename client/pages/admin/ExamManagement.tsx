@@ -21,6 +21,8 @@ import {
 } from 'lucide-react';
 import { useExamConfig } from '@/hooks/useExamConfig';
 import type { ExamConfig, ExamConfigInput, TermName } from '@/types/exam';
+import { getTermByName } from '@/utils/academicTerm';
+import { deadlineProblems, deadlineStatus, formatDay, DEADLINE_BADGE } from '@/services/resultsDeadlines';
 
 // Exam types
 const EXAM_TYPES = [
@@ -46,6 +48,9 @@ interface ExamFormData {
   week4Date: string;
   week8Date: string;
   endOfTermDate: string;
+  week4Deadline: string;
+  week8Deadline: string;
+  endOfTermDeadline: string;
   week4TotalMarks: number;
   week8TotalMarks: number;
   endOfTermTotalMarks: number;
@@ -76,6 +81,9 @@ export default function ExamManagement() {
     week4Date: '',
     week8Date: '',
     endOfTermDate: '',
+    week4Deadline: '',
+    week8Deadline: '',
+    endOfTermDeadline: '',
     week4TotalMarks: 100,
     week8TotalMarks: 100,
     endOfTermTotalMarks: 100
@@ -137,6 +145,19 @@ export default function ExamManagement() {
     setFormData(prev => ({ ...prev, [examType]: !prev[examType] }));
   };
 
+  // Results deadlines must not be before the test date / term start, and
+  // must be in order (W4 ≤ W8 ≤ EOT).
+  const formDeadlineProblems = useMemo(
+    () =>
+      deadlineProblems({
+        examTypes: { week4: formData.week4, week8: formData.week8, endOfTerm: formData.endOfTerm },
+        dates: { week4: formData.week4Date, week8: formData.week8Date, endOfTerm: formData.endOfTermDate },
+        deadlines: { week4: formData.week4Deadline, week8: formData.week8Deadline, endOfTerm: formData.endOfTermDeadline },
+        termStart: getTermByName(formData.term, formData.year)?.startDate ?? null,
+      }),
+    [formData]
+  );
+
   // Reset form
   const resetForm = () => {
     setFormData({
@@ -148,6 +169,9 @@ export default function ExamManagement() {
       week4Date: '',
       week8Date: '',
       endOfTermDate: '',
+      week4Deadline: '',
+      week8Deadline: '',
+      endOfTermDeadline: '',
       week4TotalMarks: 100,
       week8TotalMarks: 100,
       endOfTermTotalMarks: 100
@@ -167,6 +191,9 @@ export default function ExamManagement() {
       week4Date: config.week4Date || '',
       week8Date: config.week8Date || '',
       endOfTermDate: config.endOfTermDate || '',
+      week4Deadline: config.week4Deadline || '',
+      week8Deadline: config.week8Deadline || '',
+      endOfTermDeadline: config.endOfTermDeadline || '',
       week4TotalMarks: config.week4TotalMarks || 100,
       week8TotalMarks: config.week8TotalMarks || 100,
       endOfTermTotalMarks: config.endOfTermTotalMarks || 100
@@ -178,6 +205,11 @@ export default function ExamManagement() {
   const handleSaveConfig = async () => {
     if (!isUserAdmin) {
       alert('Only administrators can manage exam configurations');
+      return;
+    }
+
+    if (Object.keys(formDeadlineProblems).length > 0) {
+      alert('Please fix the results deadlines first:\n' + Object.values(formDeadlineProblems).join('\n'));
       return;
     }
 
@@ -193,6 +225,9 @@ export default function ExamManagement() {
         week4Date: formData.week4Date || undefined,
         week8Date: formData.week8Date || undefined,
         endOfTermDate: formData.endOfTermDate || undefined,
+        week4Deadline: formData.week4 ? formData.week4Deadline || null : null,
+        week8Deadline: formData.week8 ? formData.week8Deadline || null : null,
+        endOfTermDeadline: formData.endOfTerm ? formData.endOfTermDeadline || null : null,
         week4TotalMarks: formData.week4 ? formData.week4TotalMarks : undefined,
         week8TotalMarks: formData.week8 ? formData.week8TotalMarks : undefined,
         endOfTermTotalMarks: formData.endOfTerm ? formData.endOfTermTotalMarks : undefined,
@@ -493,6 +528,22 @@ export default function ExamManagement() {
                               )}
                             </div>
 
+                            {/* Results deadlines */}
+                            {EXAM_TYPES.some(t => config.examTypes[t.id] && config[`${t.id}Deadline`]) && (
+                              <div className="flex flex-wrap gap-2 text-xs">
+                                <span className="text-gray-600 font-medium">Results due:</span>
+                                {EXAM_TYPES.filter(t => config.examTypes[t.id] && config[`${t.id}Deadline`]).map(t => {
+                                  const ymd = config[`${t.id}Deadline`] as string;
+                                  const st = deadlineStatus(ymd);
+                                  return (
+                                    <span key={t.id} className={`px-2 py-0.5 rounded-full border ${config.isCurrentTerm ? DEADLINE_BADGE[st.tone] : DEADLINE_BADGE.neutral}`}>
+                                      {t.shortLabel} {formatDay(ymd, { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+
                             {/* Term window from service-derived fields */}
                             {config.termStartDate && config.termEndDate && (
                               <div className="text-xs text-gray-500">
@@ -647,7 +698,7 @@ export default function ExamManagement() {
                         </div>
 
                         {formData[type.id as ExamType] && (
-                          <div className="mt-4 pl-7 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="mt-4 pl-7 grid grid-cols-1 sm:grid-cols-3 gap-4">
                             {/* Date */}
                             <div>
                               <label className="block text-xs font-medium text-gray-500 mb-1">
@@ -659,6 +710,27 @@ export default function ExamManagement() {
                                 onChange={(e) => handleFormChange(`${type.id}Date` as keyof ExamFormData, e.target.value as never)}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                               />
+                            </div>
+
+                            {/* Results deadline */}
+                            <div>
+                              <label htmlFor={`${type.id}-deadline`} className="block text-xs font-medium text-gray-500 mb-1">
+                                Results due by
+                              </label>
+                              <input
+                                id={`${type.id}-deadline`}
+                                type="date"
+                                aria-label={`${type.label} results deadline`}
+                                value={formData[`${type.id}Deadline` as keyof ExamFormData] as string}
+                                min={(formData[`${type.id}Date` as keyof ExamFormData] as string) || undefined}
+                                onChange={(e) => handleFormChange(`${type.id}Deadline` as keyof ExamFormData, e.target.value as never)}
+                                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${
+                                  formDeadlineProblems[type.id as ExamType] ? 'border-red-400' : 'border-gray-300'
+                                }`}
+                              />
+                              {formDeadlineProblems[type.id as ExamType] && (
+                                <p className="mt-1 text-xs text-red-600">{formDeadlineProblems[type.id as ExamType]}</p>
+                              )}
                             </div>
 
                             {/* Total Marks */}
@@ -691,6 +763,7 @@ export default function ExamManagement() {
                       week8: formData.week8,
                       endOfTerm: formData.endOfTerm
                     }).filter(Boolean).length} of 3 tests will be conducted.
+                    {' '}Teachers see the results deadlines on Results Entry and their dashboard; work still missing after a deadline is shown as overdue.
                     {!formData.week4 && !formData.week8 && !formData.endOfTerm && (
                       <span className="block mt-1 text-amber-600">
                         Warning: No tests selected. Teachers will see no exam windows.

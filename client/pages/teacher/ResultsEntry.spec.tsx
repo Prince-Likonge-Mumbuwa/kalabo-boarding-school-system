@@ -232,4 +232,32 @@ describe('Results Entry page', () => {
     const save = screen.getAllByRole('button', { name: /Save/ }).find(b => !/draft/i.test(b.textContent || ''))!;
     expect((save as HTMLButtonElement).disabled).toBe(false);
   });
+
+  it('shows the results deadline of each test and warns when the selected one is overdue', async () => {
+    const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const day = 86_400_000;
+    const cfg = stable.configs[0] as any;
+    cfg.week4Deadline = ymd(new Date(Date.now() - 3 * day));
+    cfg.endOfTermDeadline = ymd(new Date(Date.now() + 20 * day));
+    try {
+      renderPage();
+      await screen.findByText('Alice');
+      // Week 4 (selected): 2 of 3 entered, deadline 3 days ago.
+      const banner = await screen.findByRole('status');
+      expect(banner.textContent).toMatch(/Week 4 results were due by .+ — 3 days overdue\. 1 learner still needs marks/);
+      // Each test button carries its deadline.
+      expect(screen.getAllByText('3 days overdue').length).toBeGreaterThan(0);
+      const eot = screen.getByText('EOT').closest('button')!;
+      expect(within(eot).getByText(/^Due \d+ \w+$/)).toBeTruthy();
+    } finally {
+      delete cfg.week4Deadline;
+      delete cfg.endOfTermDeadline;
+    }
+  });
+
+  it('no deadline set: no deadline banner', async () => {
+    renderPage();
+    await screen.findByText('Alice');
+    expect(screen.queryByText(/results (are|were) due by/)).toBeNull();
+  });
 });

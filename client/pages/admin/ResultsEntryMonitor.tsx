@@ -24,6 +24,7 @@ import {
   isCurrentTerm,
 } from '@/utils/academicTerm';
 import type { TermName } from '@/types/exam';
+import { DEADLINE_BADGE, deadlineStatus, formatDay } from '@/services/resultsDeadlines';
 
 const EXAM_LABELS: Record<ExamType, string> = {
   week4: 'Week 4',
@@ -49,7 +50,7 @@ export default function ResultsEntryMonitor() {
   const [search, setSearch] = useState('');
   const [examFilter, setExamFilter] = useState<ExamType | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<
-    'all' | 'complete' | 'on-track' | 'behind' | 'critical'
+    'all' | 'complete' | 'on-track' | 'behind' | 'critical' | 'overdue'
   >('all');
 
   // The hook receives the selected term. The year stays at the auto-detected
@@ -58,6 +59,7 @@ export default function ResultsEntryMonitor() {
     teacherProgress,
     summary,
     activeExamTypes,
+    deadlines,
     isLoading,
     isFetching,
     isError,
@@ -77,7 +79,9 @@ export default function ResultsEntryMonitor() {
   const filtered = useMemo(() => {
     let rows = teacherProgress;
 
-    if (statusFilter !== 'all') {
+    if (statusFilter === 'overdue') {
+      rows = rows.filter(t => (t.overdueCount ?? 0) > 0);
+    } else if (statusFilter !== 'all') {
       rows = rows.filter(t => t.status === statusFilter);
     }
 
@@ -271,6 +275,40 @@ export default function ResultsEntryMonitor() {
           />
         </div>
 
+        {/* Results deadlines (set per term in Exam Management) */}
+        <section aria-label="Results deadlines" className="bg-white rounded-xl border border-gray-200 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+              <Clock size={15} className="text-gray-500" /> Results deadlines
+            </h3>
+            <Link to="/dashboard/admin/exams" className="text-xs text-blue-700 hover:underline">
+              Set deadlines in Exam Management
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {deadlines.map(d => (
+              <div key={d.examType} className="rounded-lg border border-gray-200 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-gray-900">{EXAM_LABELS[d.examType]}</span>
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full border ${DEADLINE_BADGE[d.status.tone]}`}>
+                    {d.status.label}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-600 mt-1">
+                  {d.deadline ? `Due by ${formatDay(d.deadline, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}` : 'No deadline set'}
+                  {' • '}
+                  {d.done}/{d.total} entered
+                </div>
+                {d.teachersOverdue > 0 && (
+                  <div className="text-xs text-red-700 mt-0.5">
+                    {d.teachersOverdue} teacher{d.teachersOverdue === 1 ? '' : 's'} overdue
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* Classes that failed to load — never shown as 0% or 100% */}
         {failedClasses.length > 0 && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-800">
@@ -349,7 +387,7 @@ export default function ResultsEntryMonitor() {
 
           <div className="flex items-center gap-2 ml-auto">
             <span className="text-xs font-medium text-gray-600">Status:</span>
-            {(['all', 'complete', 'on-track', 'behind', 'critical'] as const).map(
+            {(['all', 'complete', 'on-track', 'behind', 'critical', 'overdue'] as const).map(
               s => (
                 <FilterButton
                   key={s}
@@ -479,6 +517,11 @@ function TeacherRow({
             >
               {teacher.status}
             </span>
+            {(teacher.overdueCount ?? 0) > 0 && (
+              <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
+                {teacher.overdueCount} overdue
+              </span>
+            )}
             {teacher.teachingAssignments.some(a => a.isDelegate) && (
               <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
                 covering
@@ -540,10 +583,19 @@ function TeacherRow({
                       <div className="text-xs text-gray-500">
                         {m.examName}
                         {m.totalMarks != null && ` • ${m.totalMarks} marks`}
-                        {m.configuredDate &&
-                          ` • due ${new Date(
-                            m.configuredDate
-                          ).toLocaleDateString()}`}
+                        {m.deadline
+                          ? ` • results due ${formatDay(m.deadline, { day: 'numeric', month: 'short', year: 'numeric' })}`
+                          : m.configuredDate
+                          ? ` • test on ${new Date(m.configuredDate).toLocaleDateString()}`
+                          : ''}
+                        {m.deadline && (() => {
+                          const st = deadlineStatus(m.deadline);
+                          return (
+                            <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full border ${DEADLINE_BADGE[st.tone]}`}>
+                              {st.label}
+                            </span>
+                          );
+                        })()}
                       </div>
                       {m.missingStudentNames?.length > 0 && (
                         <div className="text-[11px] text-gray-500 mt-0.5">
@@ -579,4 +631,4 @@ function TeacherRow({
       )}
     </div>
   );
-}
+}

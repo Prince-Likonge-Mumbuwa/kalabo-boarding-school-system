@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp, Loader2, Search, Users } from 'lucide-react';
 import type { TeacherProgress } from '@/hooks/useResultsEntryMonitor';
 import type { useResultsEntryMonitor } from '@/hooks/useResultsEntryMonitor';
 import type { HodMember } from './types';
+import { DEADLINE_BADGE, deadlineStatus, formatDay } from '@/services/resultsDeadlines';
 
 const STATUS: Record<TeacherProgress['status'], [string, string]> = {
   complete: ['Complete', 'bg-green-100 text-green-800'],
@@ -54,6 +55,18 @@ export function HodResultsTab({ members, monitor, teachersLoading }: {
           ? <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">Current term</span>
           : <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">Past / upcoming term</span>}
       </p>
+      {(monitor.deadlines ?? []).some(d => d.deadline) && (
+        <ul className="flex flex-wrap gap-2 text-xs" aria-label="Results deadlines">
+          {(monitor.deadlines ?? []).filter(d => d.deadline).map(d => {
+            const st = deadlineStatus(d.deadline);
+            return (
+              <li key={d.examType} className={`rounded-full border px-2.5 py-1 ${DEADLINE_BADGE[st.tone]}`}>
+                {monitor.getExamName(d.examType)}: results due {formatDay(d.deadline, { weekday: 'short', day: 'numeric', month: 'short' })} · {st.label}
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           ['Teachers', String(members.length)],
@@ -106,6 +119,9 @@ export function HodResultsTab({ members, monitor, teachersLoading }: {
                           </span>
                           <span className="w-10 text-right text-xs font-semibold text-gray-700">{progress!.completionPercentage}%</span>
                           <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${cls}`}>{label}</span>
+                          {(progress!.overdueCount ?? 0) > 0 && (
+                            <span className="whitespace-nowrap rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">{progress!.overdueCount} overdue</span>
+                          )}
                         </>
                       ) : (
                         <span className="text-xs text-gray-500">No marks due in {monitor.termLabel}</span>

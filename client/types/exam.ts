@@ -33,6 +33,12 @@ export interface ExamConfig {
   week8Date?: string;
   endOfTermDate?: string;
 
+  // ── Results-entry deadlines ('YYYY-MM-DD', on time until the end of that
+  //    day). Set per term in Exam Management; see services/resultsDeadlines.
+  week4Deadline?: string | null;
+  week8Deadline?: string | null;
+  endOfTermDeadline?: string | null;
+
   // ── Total marks per exam type ──────────────────────────────────────────
   week4TotalMarks?: number;
   week8TotalMarks?: number;

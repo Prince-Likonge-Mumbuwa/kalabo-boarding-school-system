@@ -111,6 +111,9 @@ function enrichConfig(
     week4Date: data.week4Date,
     week8Date: data.week8Date,
     endOfTermDate: data.endOfTermDate,
+    week4Deadline: data.week4Deadline ?? null,
+    week8Deadline: data.week8Deadline ?? null,
+    endOfTermDeadline: data.endOfTermDeadline ?? null,
     week4TotalMarks: data.week4TotalMarks,
     week8TotalMarks: data.week8TotalMarks,
     endOfTermTotalMarks: data.endOfTermTotalMarks,
@@ -261,6 +264,9 @@ export const examConfigService = {
         week4Date: data.week4Date ?? null,
         week8Date: data.week8Date ?? null,
         endOfTermDate: data.endOfTermDate ?? null,
+        week4Deadline: data.week4Deadline ?? null,
+        week8Deadline: data.week8Deadline ?? null,
+        endOfTermDeadline: data.endOfTermDeadline ?? null,
         week4TotalMarks: data.week4TotalMarks ?? 100,
         week8TotalMarks: data.week8TotalMarks ?? 100,
         endOfTermTotalMarks: data.endOfTermTotalMarks ?? 100,
@@ -289,8 +295,13 @@ export const examConfigService = {
   ): Promise<void> => {
     try {
       const configRef = doc(db, 'examConfigs', configId);
+      // Firestore refuses `undefined`: a cleared field (date, deadline,
+      // marks of a switched-off test) is stored as null.
+      const clean = Object.fromEntries(
+        Object.entries(updates).map(([k, v]) => [k, v === undefined ? null : v])
+      );
       await updateDoc(configRef, {
-        ...updates,
+        ...clean,
         updatedAt: serverTimestamp(),
       });
     } catch (error) {
@@ -377,11 +388,18 @@ export const examConfigService = {
           id: _ignoreId,
           createdAt: _ignoreCreatedAt,
           updatedAt: _ignoreUpdatedAt,
+          // Deadlines are dates of the source term: never carry them over.
+          week4Deadline: _ignoreW4Deadline,
+          week8Deadline: _ignoreW8Deadline,
+          endOfTermDeadline: _ignoreEotDeadline,
           ...copyable
         } = data;
 
         batch.set(newConfigRef, {
           ...copyable,
+          week4Deadline: null,
+          week8Deadline: null,
+          endOfTermDeadline: null,
           term: toTerm,
           year: toYear,
           isActive: true,
