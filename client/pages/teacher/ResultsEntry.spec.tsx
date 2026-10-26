@@ -64,6 +64,12 @@ vi.mock('@/services/resultsGridLoader', () => ({
   ]),
 }));
 vi.mock('@/components/results/BulkResultsEntryModal', () => ({ BulkResultsEntryModal: () => null }));
+const pdf = vi.hoisted(() => ({
+  generate: vi.fn(async (_: any) => {}),
+  load: vi.fn(async (_: any) => ({ points: [{ key: 'k' }], rows: [], hasMarks: true }) as any),
+}));
+vi.mock('@/services/pdf/markSchedulePDF', () => ({ generateMarkSchedulePDF: pdf.generate }));
+vi.mock('@/services/markScheduleProgressLoader', () => ({ loadSubjectProgressReport: pdf.load }));
 
 import ResultsEntry from '@/pages/teacher/ResultsEntry';
 
@@ -259,5 +265,41 @@ describe('Results Entry page', () => {
     renderPage();
     await screen.findByText('Alice');
     expect(screen.queryByText(/results (are|were) due by/)).toBeNull();
+  });
+
+  it('the downloaded mark schedule includes the year\'s progress for the subject', async () => {
+    pdf.generate.mockClear();
+    pdf.load.mockClear();
+    renderPage();
+    await waitFor(() => expect(inputFor('Alice').value).toBe('40'));
+    const dl = screen.getAllByRole('button', { name: /^Download$/ })[0];
+    fireEvent.click(dl);
+    expect(await screen.findByText(/The PDF also has the progress pages/)).toBeTruthy();
+    const modalDl = await waitFor(() => {
+      const b = screen.getAllByRole('button', { name: /Download/ }).find(x => !(x as HTMLButtonElement).disabled && x !== dl);
+      if (!b) throw new Error('not ready');
+      return b;
+    });
+    fireEvent.click(modalDl);
+    await waitFor(() => expect(pdf.generate).toHaveBeenCalledTimes(1));
+    expect(pdf.load).toHaveBeenCalledWith(expect.objectContaining({ classId: 'C1', subject: 'Mathematics', term: 'Term 3', year: 2026 }));
+    expect(pdf.generate.mock.calls[0][0]).toMatchObject({ progress: { hasMarks: true }, progressError: undefined, subject: 'Mathematics', term: 'Term 3' });
+  });
+
+  it('if the year\'s marks cannot be loaded the schedule still downloads, with the reason', async () => {
+    pdf.generate.mockClear();
+    pdf.load.mockImplementationOnce(async () => { throw new Error('offline'); });
+    renderPage();
+    await waitFor(() => expect(inputFor('Alice').value).toBe('40'));
+    const dl = screen.getAllByRole('button', { name: /^Download$/ })[0];
+    fireEvent.click(dl);
+    const modalDl = await waitFor(() => {
+      const b = screen.getAllByRole('button', { name: /Download/ }).find(x => !(x as HTMLButtonElement).disabled && x !== dl);
+      if (!b) throw new Error('not ready');
+      return b;
+    });
+    fireEvent.click(modalDl);
+    await waitFor(() => expect(pdf.generate).toHaveBeenCalledTimes(1));
+    expect(pdf.generate.mock.calls[0][0]).toMatchObject({ progress: null, progressError: 'offline' });
   });
 });

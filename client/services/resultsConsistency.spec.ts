@@ -291,6 +291,31 @@ describe('every screen shows the same numbers', () => {
     expect(t1.missingCount).toBe(1);
   });
 
+  it('mark schedule progress pages == report card subject averages (loaded from the same data)', async () => {
+    const { loadSubjectProgressReport } = await import('./markScheduleProgressLoader');
+    const { store } = await import('../test/fakeFirestore');
+    // Term 1 of the same year also has a config and a Mathematics mark for Alice.
+    store.get('examConfigs')!.set('t1', {
+      term: 'Term 1', year: YEAR, isActive: true, createdAt: '2026-01-05',
+      examTypes: { week4: true, week8: false, endOfTerm: false }, week4TotalMarks: 20,
+    });
+    store.get('results')!.set('t1a', { classId: 'C1', subjectId: 'Mathematics', studentId: 'docA', examType: 'week4', term: 'Term 1', year: YEAR, marks: 15, totalMarks: 20, percentage: 75 });
+    resultsService.invalidateGrid();
+
+    const report = await loadSubjectProgressReport({ classId: 'C1', subject: 'Mathematics', term: TERM, year: YEAR });
+    // Term 1 (W4 only) + Term 2 (no config: no tests) + Term 3 (W4, EOT)
+    expect(report.points.map(p => p.short)).toEqual(['T1 W4', 'T3 W4', 'T3 EOT']);
+    expect(report.problems).toEqual([]);
+    const t3 = report.terms.find(t => t.term === TERM)!.key;
+    for (const r of report.rows) {
+      const card = (await resultsService.generateReportCard(r.learnerId, TERM, YEAR, { includeIncomplete: true })) as any;
+      const maths = card.subjects.find((x: any) => x.name === 'Mathematics' || x.subjectId === 'Mathematics' || x.subjectName === 'Mathematics');
+      expect(r.termAverages[t3] ?? -1).toBe(maths.average);
+    }
+    const alice = report.rows.find(r => r.name === 'Alice Banda')!;
+    expect(alice.cells[report.points[0].key]).toMatchObject({ status: 'entered', percentage: 75 });
+  });
+
   it('Report Cards list == report card == SMS', async () => {
     const list = await resultsService.getStudentProgress('C1', TERM, YEAR);
     expect(list.map(s => s.studentName)).toEqual(['Alice Banda', 'Ben Chola', 'Chipo Daka', 'Dalitso Mwale']);
