@@ -23,6 +23,8 @@ import { useExamConfig } from '@/hooks/useExamConfig';
 import type { ExamConfig, ExamConfigInput, TermName } from '@/types/exam';
 import { getTermByName } from '@/utils/academicTerm';
 import { deadlineProblems, deadlineStatus, formatDay, DEADLINE_BADGE } from '@/services/resultsDeadlines';
+import { useSchoolClasses } from '@/hooks/useSchoolClasses';
+import { NotWrittenByPicker } from '@/components/exams/NotWrittenByPicker';
 
 // Exam types
 const EXAM_TYPES = [
@@ -51,9 +53,27 @@ interface ExamFormData {
   week4Deadline: string;
   week8Deadline: string;
   endOfTermDeadline: string;
+  /** Classes that do not write each test this term, and why. */
+  notWrittenBy: Record<ExamType, string[]>;
+  notWrittenReason: Record<ExamType, string>;
   week4TotalMarks: number;
   week8TotalMarks: number;
   endOfTermTotalMarks: number;
+}
+
+/** The "not written by" lists to save: only tests that are on, only non-empty; null when none. */
+function notWrittenFields(f: ExamFormData) {
+  const by: Partial<Record<ExamType, string[]>> = {};
+  const why: Partial<Record<ExamType, string>> = {};
+  for (const t of ['week4', 'week8', 'endOfTerm'] as ExamType[]) {
+    if (!f[t] || !f.notWrittenBy[t].length) continue;
+    by[t] = [...f.notWrittenBy[t]];
+    if (f.notWrittenReason[t].trim()) why[t] = f.notWrittenReason[t].trim();
+  }
+  return {
+    notWrittenBy: Object.keys(by).length ? by : null,
+    notWrittenReason: Object.keys(why).length ? why : null,
+  };
 }
 
 export default function ExamManagement() {
@@ -84,10 +104,15 @@ export default function ExamManagement() {
     week4Deadline: '',
     week8Deadline: '',
     endOfTermDeadline: '',
+    notWrittenBy: { week4: [], week8: [], endOfTerm: [] },
+    notWrittenReason: { week4: '', week8: '', endOfTerm: '' },
     week4TotalMarks: 100,
     week8TotalMarks: 100,
     endOfTermTotalMarks: 100
   });
+
+  const { classes: schoolClasses } = useSchoolClasses();
+  const classNameById = useMemo(() => new Map((schoolClasses ?? []).map(c => [c.id, c.name])), [schoolClasses]);
 
   const {
     configs,
@@ -172,6 +197,8 @@ export default function ExamManagement() {
       week4Deadline: '',
       week8Deadline: '',
       endOfTermDeadline: '',
+      notWrittenBy: { week4: [], week8: [], endOfTerm: [] },
+      notWrittenReason: { week4: '', week8: '', endOfTerm: '' },
       week4TotalMarks: 100,
       week8TotalMarks: 100,
       endOfTermTotalMarks: 100
@@ -194,6 +221,16 @@ export default function ExamManagement() {
       week4Deadline: config.week4Deadline || '',
       week8Deadline: config.week8Deadline || '',
       endOfTermDeadline: config.endOfTermDeadline || '',
+      notWrittenBy: {
+        week4: [...(config.notWrittenBy?.week4 ?? [])],
+        week8: [...(config.notWrittenBy?.week8 ?? [])],
+        endOfTerm: [...(config.notWrittenBy?.endOfTerm ?? [])],
+      },
+      notWrittenReason: {
+        week4: config.notWrittenReason?.week4 ?? '',
+        week8: config.notWrittenReason?.week8 ?? '',
+        endOfTerm: config.notWrittenReason?.endOfTerm ?? '',
+      },
       week4TotalMarks: config.week4TotalMarks || 100,
       week8TotalMarks: config.week8TotalMarks || 100,
       endOfTermTotalMarks: config.endOfTermTotalMarks || 100
@@ -228,6 +265,7 @@ export default function ExamManagement() {
         week4Deadline: formData.week4 ? formData.week4Deadline || null : null,
         week8Deadline: formData.week8 ? formData.week8Deadline || null : null,
         endOfTermDeadline: formData.endOfTerm ? formData.endOfTermDeadline || null : null,
+        ...notWrittenFields(formData),
         week4TotalMarks: formData.week4 ? formData.week4TotalMarks : undefined,
         week8TotalMarks: formData.week8 ? formData.week8TotalMarks : undefined,
         endOfTermTotalMarks: formData.endOfTerm ? formData.endOfTermTotalMarks : undefined,
@@ -544,6 +582,15 @@ export default function ExamManagement() {
                               </div>
                             )}
 
+                            {/* Classes that do not write a test */}
+                            {EXAM_TYPES.filter(t => config.examTypes[t.id] && (config.notWrittenBy?.[t.id as ExamType]?.length ?? 0) > 0).map(t => (
+                              <div key={t.id} className="text-xs text-amber-800">
+                                <span className="font-medium">{t.shortLabel} not written by:</span>{' '}
+                                {config.notWrittenBy![t.id as ExamType]!.map(id => classNameById.get(id) ?? id).join(', ')}
+                                {config.notWrittenReason?.[t.id as ExamType] ? ` (${config.notWrittenReason[t.id as ExamType]})` : ''}
+                              </div>
+                            ))}
+
                             {/* Term window from service-derived fields */}
                             {config.termStartDate && config.termEndDate && (
                               <div className="text-xs text-gray-500">
@@ -747,6 +794,16 @@ export default function ExamManagement() {
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                               />
                             </div>
+
+                            {/* Classes that do not write this test (e.g. Grade 12 at EOT) */}
+                            <NotWrittenByPicker
+                              testLabel={type.label}
+                              classes={(schoolClasses ?? []) as any}
+                              value={formData.notWrittenBy[type.id as ExamType]}
+                              reason={formData.notWrittenReason[type.id as ExamType]}
+                              onChange={ids => setFormData(prev => ({ ...prev, notWrittenBy: { ...prev.notWrittenBy, [type.id]: ids } }))}
+                              onReasonChange={r => setFormData(prev => ({ ...prev, notWrittenReason: { ...prev.notWrittenReason, [type.id]: r } }))}
+                            />
                           </div>
                         )}
                       </div>

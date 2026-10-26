@@ -39,6 +39,14 @@ export interface ExamConfig {
   week8Deadline?: string | null;
   endOfTermDeadline?: string | null;
 
+  // ── Classes that do NOT write a test this term (e.g. Grade 12 sit the ECZ
+  //    final examinations instead of the End of Term exam). For those classes
+  //    the test does not count anywhere: not offered in Results Entry, never
+  //    "missing", no deadline, and report cards average the other tests.
+  notWrittenBy?: Partial<Record<ExamType, string[]>> | null;
+  /** Why, shown to teachers and on the config, e.g. "ECZ final examinations". */
+  notWrittenReason?: Partial<Record<ExamType, string>> | null;
+
   // ── Total marks per exam type ──────────────────────────────────────────
   week4TotalMarks?: number;
   week8TotalMarks?: number;
@@ -193,3 +201,25 @@ export function getActiveExamTypes(
   const all: ExamType[] = ['week4', 'week8', 'endOfTerm'];
   return all.filter(t => isExamActive(config, t));
 }
+
+/** Does this class write this test this term? (Not listed under `notWrittenBy`.) */
+export function isExamWrittenBy(
+  config: Pick<ExamConfig, 'notWrittenBy'> | undefined | null,
+  examType: ExamType,
+  classId: string | null | undefined
+): boolean {
+  if (!classId) return true;
+  return !(config?.notWrittenBy?.[examType] ?? []).includes(classId);
+}
+
+/**
+ * Active exams FOR ONE CLASS: active for the term (`isExamActive`) and
+ * written by the class. Every per-class results screen uses this.
+ */
+export function getActiveExamTypesForClass(
+  config: ExamConfig | undefined | null,
+  classId: string | null | undefined
+): ExamType[] {
+  return getActiveExamTypes(config).filter(t => isExamWrittenBy(config, t, classId));
+}
+

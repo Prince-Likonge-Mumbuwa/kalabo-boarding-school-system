@@ -16,7 +16,7 @@ import { examConfigService } from '@/services/examConfigService';
 import { normalizeSubjectName } from '@/services/resultsService';
 import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import { loadClosedClassEnrollments } from '@/services/enrollmentService';
-import type { ExamConfig } from '@/types/exam';
+import { isExamWrittenBy, type ExamConfig } from '@/types/exam';
 import {
   ALL_EXAM_TYPES,
   activeExamsFor,
@@ -328,7 +328,12 @@ export async function loadClassGrid(
     allSubjects = [...seen.values()].sort((a, b) => a.subjectName.localeCompare(b.subjectName));
   }
   const subjects = gridSubjects(allSubjects, results);
-  const grid = buildResultsGrid({ learners, subjects, activeExams: ctx.activeExams, results });
+  // Tests this class does not write this term (e.g. Grade 12 at End of Term)
+  // are left out of its grid: never required, never averaged.
+  // (Filtered from ctx.activeExams so the Parent Portal fallback — no config,
+  // all exams — still works.)
+  const activeExams = ctx.activeExams.filter(e => isExamWrittenBy(ctx.config, e, classId));
+  const grid = buildResultsGrid({ learners, subjects, activeExams, results });
   return { grid, classInfo, term: ctx.term, year: ctx.year, config: ctx.config, allSubjects, degraded };
 }
 

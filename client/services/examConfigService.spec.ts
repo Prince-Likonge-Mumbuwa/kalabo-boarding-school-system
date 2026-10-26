@@ -51,4 +51,19 @@ describe('examConfigService — results deadlines', () => {
     const copy = [...store.get('examConfigs')!.values()].find((c: any) => c.year === 2027) as any;
     expect(copy).toMatchObject({ term: 'Term 1', week4TotalMarks: 50, week4Deadline: null, week8Deadline: null, endOfTermDeadline: null });
   });
+
+  it('classes that do not write a test: read cleaned, saved, and never copied to another term', async () => {
+    resetStore({ examConfigs: { c1: { ...cfg, notWrittenBy: { endOfTerm: ['12A', '12B', 7], week4: [] }, notWrittenReason: { endOfTerm: 'ECZ final examinations' } } } });
+    const c = await examConfigService.getConfigById('c1');
+    expect(c!.notWrittenBy).toEqual({ endOfTerm: ['12A', '12B'] }); // bad ids and empty lists dropped
+    expect(c!.notWrittenReason).toEqual({ endOfTerm: 'ECZ final examinations' });
+
+    await examConfigService.updateConfig('c1', { notWrittenBy: null, notWrittenReason: null });
+    expect(store.get('examConfigs')!.get('c1')).toMatchObject({ notWrittenBy: null, notWrittenReason: null });
+
+    await examConfigService.updateConfig('c1', { notWrittenBy: { endOfTerm: ['12A'] } });
+    await examConfigService.copyConfigs(2026, 'Term 3', 2027, 'Term 1');
+    const copy = [...store.get('examConfigs')!.values()].find((x: any) => x.year === 2027) as any;
+    expect(copy).toMatchObject({ notWrittenBy: null, notWrittenReason: null });
+  });
 });

@@ -28,7 +28,7 @@
 //  Firestore loading lives in resultsGridLoader.ts.
 // ============================================================================
 
-import { isExamActive, type ExamConfig, type ExamType } from '@/types/exam';
+import { getActiveExamTypesForClass, isExamActive, type ExamConfig, type ExamType } from '@/types/exam';
 
 export type { ExamType } from '@/types/exam';
 
@@ -141,6 +141,10 @@ export function pickTermConfig<T extends Pick<ExamConfig, 'term' | 'year' | 'isA
 /** Active exams, in canonical order, by the app-wide `isExamActive()` rule. */
 export const activeExamsFor = (config: ExamConfig | undefined | null): ExamType[] =>
   ALL_EXAM_TYPES.filter(t => isExamActive(config, t));
+
+/** Active exams for one class: the term's active exams minus those the class does not write. */
+export const activeExamsForClass = (config: ExamConfig | undefined | null, classId: string | null | undefined): ExamType[] =>
+  getActiveExamTypesForClass(config, classId);
 
 /** Total marks configured for an exam, or null when not configured. */
 export const totalMarksFor = (

@@ -306,4 +306,20 @@ describe('Results Entry page', () => {
     await waitFor(() => expect(pdf.generate).toHaveBeenCalledTimes(1));
     expect(pdf.generate.mock.calls[0][0]).toMatchObject({ progress: null, progressError: 'offline' });
   });
+
+  it('a test this class does not write is not offered, and the page says why', async () => {
+    const cfg = stable.configs[0] as any;
+    cfg.notWrittenBy = { endOfTerm: ['C1'] };
+    cfg.notWrittenReason = { endOfTerm: 'ECZ final examinations' };
+    try {
+      renderPage();
+      await screen.findByText('Alice');
+      expect(screen.getByRole('note').textContent).toMatch(/Form 1A does not write the End of Term test this term \(ECZ final examinations\)\. No marks are needed for it/);
+      expect(screen.queryByText('EOT')).toBeNull();
+      expect(screen.getByText('W4')).toBeTruthy();
+    } finally {
+      delete cfg.notWrittenBy;
+      delete cfg.notWrittenReason;
+    }
+  });
 });
