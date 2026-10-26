@@ -25,6 +25,7 @@ import {
   totalMarksForExam,
   type TermContext,
 } from '@/services/resultsGridLoader';
+import { deadlineFor, deadlineStatus } from '@/services/resultsDeadlines';
 
 // ==================== TYPES (unchanged shape for existing screens) ====================
 
@@ -37,6 +38,10 @@ export interface MissingEntry {
   examName: string;
   totalMarks?: number;
   configuredDate?: string;
+  /** Results deadline set by the admin ('YYYY-MM-DD'), or null. */
+  deadline?: string | null;
+  /** The deadline has passed and marks are still missing. */
+  overdue?: boolean;
   missingStudentCount: number;
   totalStudentCount: number;
   /** Document ids of learners still without a mark. */
@@ -91,6 +96,8 @@ export interface TeacherProgress {
   completedCount: number;
   completionPercentage: number;
   status: MonitorStatus;
+  /** Missing entries (learner marks) whose results deadline has passed. */
+  overdueCount: number;
   missingEntries: MissingEntry[];
   classProgress: ClassProgress[];
   formTeacherClasses: string[];
@@ -180,7 +187,8 @@ export interface ClassGridInput {
 export function aggregateMonitor(
   ctx: TermContext,
   grids: ClassGridInput[],
-  teacherInfo: (id: string) => { name?: string; email?: string } = () => ({})
+  teacherInfo: (id: string) => { name?: string; email?: string } = () => ({}),
+  now: Date = new Date()
 ): { teachers: TeacherProgress[]; vacant: VacantSubject[] } {
   type Acc = {
     entries: Array<{ classId: string; className: string; subjectName: string; isDelegate: boolean; sp: GridSubjectProgress; names: Map<string, string> }>;
@@ -230,6 +238,7 @@ export function aggregateMonitor(
     const missingEntries: MissingEntry[] = [];
     let required = 0;
     let done = 0;
+    let overdue = 0;
 
     for (const e of a.entries) {
       if (!classMap.has(e.classId)) {
@@ -249,6 +258,9 @@ export function aggregateMonitor(
       for (const ex of e.sp.exams) {
         const missing = ex.totalCount - ex.doneCount;
         if (missing <= 0) continue;
+        const deadline = deadlineFor(ctx.config, ex.examType);
+        const isOverdue = deadlineStatus(deadline, { now }).state === 'overdue';
+        if (isOverdue) overdue += missing;
         missingEntries.push({
           classId: e.classId,
           className: e.className,
@@ -260,6 +272,8 @@ export function aggregateMonitor(
           configuredDate: ctx.config
             ? (ex.examType === 'week4' ? ctx.config.week4Date : ex.examType === 'week8' ? ctx.config.week8Date : ctx.config.endOfTermDate)
             : undefined,
+          deadline,
+          overdue: isOverdue,
           missingStudentCount: missing,
           totalStudentCount: ex.totalCount,
           missingStudentIds: ex.missingLearnerIds,
@@ -283,6 +297,7 @@ export function aggregateMonitor(
       completedCount: done,
       completionPercentage: pct,
       status: statusFor(required - done, pct),
+      overdueCount: overdue,
       missingEntries,
       classProgress: [...classMap.values()],
       formTeacherClasses: [...a.formClasses],

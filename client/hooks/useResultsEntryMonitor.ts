@@ -34,6 +34,17 @@ import {
   type TeacherProgress,
   type VacantSubject,
 } from '@/services/resultsMonitor';
+import { deadlineFor, deadlineStatus, type DeadlineStatus } from '@/services/resultsDeadlines';
+
+/** One active exam's results deadline and how far entry is. */
+export interface ExamDeadline {
+  examType: ExamType;
+  deadline: string | null;
+  total: number;
+  done: number;
+  status: DeadlineStatus;
+  teachersOverdue: number;
+}
 
 export type { ExamType } from '@/services/resultsGrid';
 export type {
@@ -113,6 +124,31 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions = 
     [teacherProgress, filterTeacherId]
   );
 
+  // Results deadlines of the term's active exams, with how far the school
+  // (or the filtered teacher) is: entries done / required per exam.
+  const deadlines = useMemo((): ExamDeadline[] => {
+    const cfg = monitorQuery.data?.ctx.config ?? null;
+    return activeExamTypes.map(examType => {
+      let total = 0;
+      let missing = 0;
+      for (const t of teacherProgress) {
+        for (const cp of t.classProgress) for (const sp of cp.subjects) for (const ep of sp.examProgress) {
+          if (ep.examType === examType) total += ep.totalCount;
+        }
+        for (const e of t.missingEntries) if (e.examType === examType) missing += e.missingStudentCount;
+      }
+      const deadline = deadlineFor(cfg, examType);
+      return {
+        examType,
+        deadline,
+        total,
+        done: total - missing,
+        status: deadlineStatus(deadline, { complete: total > 0 && missing === 0 }),
+        teachersOverdue: teacherProgress.filter(t => t.missingEntries.some(e => e.examType === examType && e.overdue)).length,
+      };
+    });
+  }, [monitorQuery.data, activeExamTypes, teacherProgress]);
+
   const summary = useMemo(() => {
     const totalTeachers = teacherProgress.length;
     const totalRequiredEntries = teacherProgress.reduce((s, t) => s + t.totalRequired, 0);
@@ -130,6 +166,8 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions = 
       teachersOnTrack: teacherProgress.filter(t => t.status === 'on-track').length,
       teachersBehind: teacherProgress.filter(t => t.status === 'behind').length,
       teachersCritical: teacherProgress.filter(t => t.status === 'critical').length,
+      teachersOverdue: teacherProgress.filter(t => (t.overdueCount ?? 0) > 0).length,
+      totalOverdueEntries: teacherProgress.reduce((s, t) => s + (t.overdueCount ?? 0), 0),
     };
   }, [teacherProgress]);
 
@@ -153,6 +191,7 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions = 
     teacherProgress,
     myProgress,
     activeExamTypes,
+    deadlines,
     summary,
     missingByExamType,
     vacantSubjects: (monitorQuery.data?.vacant ?? []) as VacantSubject[],

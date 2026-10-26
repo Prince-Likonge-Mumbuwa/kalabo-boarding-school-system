@@ -77,6 +77,34 @@ Results Entry: drafts are auto-saved for any unsaved change (also when marks
 are already saved) and can be loaded at any time from the drafts list; marks
 can be entered over an exam recorded as "not conducted".
 
+## Results deadlines
+
+The admin sets, per term, the last day for entering each test's marks:
+Exam Management → New / Edit configuration → **Results due by** next to each
+test (Week 4, Week 8, End of Term). Stored on the exam config as
+`week4Deadline`, `week8Deadline`, `endOfTermDeadline` (`YYYY-MM-DD`; marks
+are on time until the end of that day). Logic: `services/resultsDeadlines.ts`.
+
+- A deadline can't be before its test's date or the start of the term, and
+  the three must be in order (Week 4 ≤ Week 8 ≤ End of Term). A test that is
+  switched off has no deadline.
+- **Copy from Previous** never carries deadlines over to the new term.
+- **Teachers**: Results Entry shows each test's deadline on its button and,
+  for the selected test, how long is left (or how many days overdue) and how
+  many learners still need marks. The dashboard warning lists each test
+  still missing marks with its deadline, nearest first, and the compact
+  banner counts overdue entries.
+- **Admin**: the Results Entry Monitor shows the three deadlines with the
+  school's progress and how many teachers are overdue; a teacher with marks
+  missing after a deadline gets an "N overdue" badge, and **Status → overdue**
+  lists only them. **HoDs** see the deadlines and the same badge on My
+  Department → Results.
+- Status: *Due 20 Nov* → *Due in 3 days* (3 days or less) → *Due today* →
+  *N days overdue*; *Complete* once every learner has a mark (or the test
+  was recorded as not conducted).
+- Deadlines don't lock Results Entry: marks can still be entered late, and
+  they stay "overdue" until complete.
+
 ## Firestore rules (`firestore.rules`)
 
 Changes from the deployed version:

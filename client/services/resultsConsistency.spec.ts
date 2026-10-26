@@ -270,6 +270,27 @@ describe('every screen shows the same numbers', () => {
     expect(monitor.failedClasses).toEqual([]);
   });
 
+  it('monitor: missing marks past the results deadline are overdue; before it they are not', async () => {
+    const { store } = await import('../test/fakeFirestore');
+    const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const cfg = store.get('examConfigs')!.get('cfg') as any;
+    cfg.week4Deadline = ymd(new Date(now - 2 * day));
+    cfg.endOfTermDeadline = ymd(new Date(now + 30 * day));
+    let monitor = await loadMonitorData(TERM, YEAR, [{ id: 'C1', name: 'Form 1A', formTeacherId: 'T1' }]);
+    let t1 = monitor.teachers.find(t => t.teacherId === 'T1')!;
+    expect(t1.missingEntries[0]).toMatchObject({ examType: 'week4', deadline: cfg.week4Deadline, overdue: true, missingStudentCount: 1 });
+    expect(t1.overdueCount).toBe(1);
+
+    // Deadline moved to next week: still missing, no longer overdue.
+    cfg.week4Deadline = ymd(new Date(now + 7 * day));
+    resultsService.invalidateGrid();
+    monitor = await loadMonitorData(TERM, YEAR, [{ id: 'C1', name: 'Form 1A', formTeacherId: 'T1' }]);
+    t1 = monitor.teachers.find(t => t.teacherId === 'T1')!;
+    expect(t1.missingEntries[0].overdue).toBe(false);
+    expect(t1.overdueCount).toBe(0);
+    expect(t1.missingCount).toBe(1);
+  });
+
   it('Report Cards list == report card == SMS', async () => {
     const list = await resultsService.getStudentProgress('C1', TERM, YEAR);
     expect(list.map(s => s.studentName)).toEqual(['Alice Banda', 'Ben Chola', 'Chipo Daka', 'Dalitso Mwale']);

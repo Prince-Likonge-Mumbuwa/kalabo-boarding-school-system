@@ -41,7 +41,8 @@ import {
   RefreshCw,
   Upload,
   Lock,
-  Ban
+  Ban,
+  Clock
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useResults, useSubjectCompletion } from '@/hooks/useResults';
@@ -62,6 +63,8 @@ import { getCurrentAcademicTerm } from '@/utils/academicTerm';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { calculateGrade, normalizeSubjectName } from '@/services/resultsService';
 import { BulkResultsEntryModal } from '@/components/results/BulkResultsEntryModal';
+import { DEADLINE_BADGE, deadlineFor, deadlineStatus, formatDay } from '@/services/resultsDeadlines';
+import type { ExamType as ExamTypeId } from '@/types/exam';
 
 // ==================== INTERFACES ====================
 interface StudentResultInput {
@@ -428,8 +431,11 @@ const SubjectProgress = ({
     
     // Consider exam "complete" if ALL students have marks (100%)
     const isComplete = enteredCount === totalStudents && totalStudents > 0;
+    // Results deadline set by the admin for this test (Exam Management).
+    const deadline = deadlineStatus(deadlineFor(examConfig, type.id as ExamTypeId), { complete: isComplete });
     
     return {
+      deadline,
       id: type.id,
       label: type.shortLabel,
       fullLabel: type.label,
@@ -531,11 +537,51 @@ const SubjectProgress = ({
               <span className={`text-[8px] mt-0.5 ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>
                 {exam.totalMarks} marks • {examProgressPercentage}%
               </span>
+              {exam.deadline.state !== 'none' && exam.deadline.state !== 'done' && (
+                <span
+                  className={`mt-0.5 text-[9px] font-semibold px-1.5 rounded-full ${
+                    isSelected
+                      ? 'bg-white/20 text-white'
+                      : exam.deadline.tone === 'danger'
+                      ? 'bg-red-100 text-red-700'
+                      : exam.deadline.tone === 'warn'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'text-gray-500'
+                  }`}
+                >
+                  {exam.deadline.label}
+                </span>
+              )}
               {isSelected && <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-6 h-1 bg-white rounded-full opacity-60" />}
             </button>
           );
         })}
       </div>
+
+      {/* Results deadline of the selected test */}
+      {(() => {
+        const sel = examTypes.find(e => e.id === selectedExamType);
+        if (!sel || sel.deadline.state === 'none') return null;
+        const left = Math.max(0, sel.totalStudents - sel.count);
+        const when = formatDay(sel.deadline.deadline, { weekday: 'long', day: 'numeric', month: 'long' });
+        return (
+          <div
+            role="status"
+            className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${DEADLINE_BADGE[sel.deadline.tone]}`}
+          >
+            <Clock size={14} className="mt-0.5 flex-shrink-0" />
+            <span>
+              {sel.deadline.state === 'done' ? (
+                <>{sel.fullLabel} results are complete. The deadline was {when}.</>
+              ) : sel.deadline.state === 'overdue' ? (
+                <><strong>{sel.fullLabel} results were due by {when}</strong> — {sel.deadline.label}. {left} {left === 1 ? 'learner still needs' : 'learners still need'} marks; please enter them now.</>
+              ) : (
+                <><strong>{sel.fullLabel} results are due by {when}</strong> ({sel.deadline.label.toLowerCase()}). {left} {left === 1 ? 'learner still needs' : 'learners still need'} marks.</>
+              )}
+            </span>
+          </div>
+        );
+      })()}
     </div>
   );
 };

@@ -18,6 +18,7 @@ import {
   type TermName,
   type AcademicTermInfo,
 } from '@/utils/academicTerm';
+import { DEADLINE_BADGE, deadlineStatus, formatDay } from '@/services/resultsDeadlines';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Props
@@ -110,21 +111,8 @@ const MissingEntryCard = ({
 
   const examStyles = getExamTypeStyles(entry.examType);
 
-  const getDueStatus = (dueDate?: string) => {
-    if (!dueDate) return null;
-    const due = new Date(dueDate);
-    const today = new Date();
-    const daysDiff = Math.ceil(
-      (due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-    );
-    if (daysDiff < 0)
-      return { text: 'Overdue', color: 'text-red-600', icon: <AlertCircle size={10} /> };
-    if (daysDiff <= 3)
-      return { text: `Due in ${daysDiff} days`, color: 'text-orange-600', icon: <Clock size={10} /> };
-    return null;
-  };
-
-  const dueStatus = getDueStatus(entry.configuredDate);
+  // The admin's results deadline for this test (Exam Management).
+  const due = entry.deadline ? deadlineStatus(entry.deadline) : null;
 
   return (
     <div className={`bg-white rounded-lg p-3 border-l-4 hover:shadow-md transition-all ${examStyles.border} border-gray-200`}>
@@ -145,10 +133,10 @@ const MissingEntryCard = ({
                 {entry.totalMarks} marks
               </span>
             )}
-            {dueStatus && (
-              <span className={`text-xs flex items-center gap-1 ${dueStatus.color}`}>
-                {dueStatus.icon}
-                {dueStatus.text}
+            {due && (
+              <span className={`text-xs flex items-center gap-1 px-2 py-0.5 rounded-full border ${DEADLINE_BADGE[due.tone]}`}>
+                {due.state === 'overdue' || due.state === 'due-today' ? <AlertCircle size={10} /> : <Clock size={10} />}
+                {due.label}
               </span>
             )}
           </div>
@@ -156,12 +144,17 @@ const MissingEntryCard = ({
             <span className="font-medium truncate">{entry.className}</span>
             <span className="hidden sm:inline text-gray-300">→</span>
             <span className="truncate">{entry.subjectName}</span>
-            {entry.configuredDate && !dueStatus && (
-              <span className="flex items-center gap-1 text-gray-400">
+            {entry.deadline ? (
+              <span className="flex items-center gap-1 text-gray-500">
                 <Clock size={10} />
-                Due: {new Date(entry.configuredDate).toLocaleDateString()}
+                Results due by {formatDay(entry.deadline, { weekday: 'short', day: 'numeric', month: 'short' })}
               </span>
-            )}
+            ) : entry.configuredDate ? (
+              <span className="flex items-center gap-1 text-gray-400">
+                <Calendar size={10} />
+                Test on {new Date(entry.configuredDate).toLocaleDateString()}
+              </span>
+            ) : null}
           </div>
         </div>
 
@@ -207,6 +200,12 @@ const CompactMissingEntry = ({
             {entry.examType === 'week4' ? 'W4' : entry.examType === 'week8' ? 'W8' : 'EOT'}
           </span>
           <span className="text-xs text-gray-500 truncate">{entry.className}</span>
+          {entry.deadline && (() => {
+            const st = deadlineStatus(entry.deadline);
+            return st.state === 'upcoming' ? null : (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${DEADLINE_BADGE[st.tone]}`}>{st.label}</span>
+            );
+          })()}
         </div>
       </div>
       <button
@@ -441,6 +440,44 @@ const ClassProgressSection = ({
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DEADLINES — one line per test still missing marks, nearest first:
+// "Week 8 results due Fri 14 Nov — Due in 3 days (12 entries left)".
+// ─────────────────────────────────────────────────────────────────────────────
+
+const EXAM_NAME: Record<string, string> = { week4: 'Week 4', week8: 'Week 8', endOfTerm: 'End of Term' };
+
+const DeadlineLines = ({ entries }: { entries: any[] }) => {
+  const byExam = new Map<string, { deadline: string; left: number }>();
+  for (const e of entries) {
+    if (!e.deadline) continue;
+    const cur = byExam.get(e.examType) ?? { deadline: e.deadline, left: 0 };
+    cur.left += e.missingStudentCount ?? 0;
+    byExam.set(e.examType, cur);
+  }
+  const rows = [...byExam.entries()]
+    .map(([exam, v]) => ({ exam, ...v, status: deadlineStatus(v.deadline) }))
+    .sort((a, b) => (a.status.daysLeft ?? 0) - (b.status.daysLeft ?? 0));
+  if (!rows.length) return null;
+  return (
+    <ul className="mt-1.5 space-y-1" aria-label="Results deadlines">
+      {rows.map(r => (
+        <li key={r.exam} className="flex flex-wrap items-center gap-1.5 text-xs text-gray-700">
+          <Clock size={11} className="text-gray-500" />
+          <span>
+            <span className="font-semibold">{EXAM_NAME[r.exam] ?? r.exam}</span> results due{' '}
+            {formatDay(r.deadline, { weekday: 'short', day: 'numeric', month: 'short' })}
+          </span>
+          <span className={`px-1.5 py-0.5 rounded-full border text-[10px] font-medium ${DEADLINE_BADGE[r.status.tone]}`}>
+            {r.status.label}
+          </span>
+          <span className="text-gray-500">({r.left} {r.left === 1 ? 'entry' : 'entries'} left)</span>
+        </li>
+      ))}
+    </ul>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SINGLE-TERM PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 // Renders the summary + class breakdown for ONE term's progress object.
@@ -541,6 +578,7 @@ const TermPanel = ({
               <p className="text-sm text-gray-700">
                 {progress.completedCount} of {progress.totalRequired} entries entered
               </p>
+              <DeadlineLines entries={progress.missingEntries ?? []} />
             </div>
           </div>
 
@@ -820,6 +858,7 @@ export const TeacherResultsWarning = ({
     0
   );
   const totalCompleted = totalRequired - totalMissing;
+  const totalOverdue = sortedTerms.reduce((sum, r) => sum + (r.progress.overdueCount ?? 0), 0);
   const overallCompletion =
     totalRequired > 0
       ? Math.round((totalCompleted / totalRequired) * 100)
@@ -849,6 +888,11 @@ export const TeacherResultsWarning = ({
               {totalMissing} pending across {sortedTerms.length}{' '}
               {sortedTerms.length === 1 ? 'term' : 'terms'}
             </span>
+            {totalOverdue > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">
+                {totalOverdue} overdue
+              </span>
+            )}
             {pastTermsWithMissing.length > 0 && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">
                 {pastTermsWithMissing.length} past
