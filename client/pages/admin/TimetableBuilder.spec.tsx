@@ -130,4 +130,45 @@ describe('Timetable generator (admin)', () => {
     expect(saved.levels['form-1'].subjects.find((s: any) => s.normalizedSubject === 'history')).toMatchObject({ min: 3, max: 4 });
     expect(saved.updatedBy).toBe('ADMIN');
   });
+
+  it('curriculum: bulk import of the class allocation, checked first, then saved', async () => {
+    renderAt('?tt=curriculum');
+    await screen.findByRole('tab', { name: /Form 1/ });
+    fireEvent.click(screen.getByRole('button', { name: /Bulk import class allocation/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Paste rows' }), {
+      target: {
+        value: [
+          'Class / Level\tSubject\tPeriods\tDoubles\tTime of day\tRoom\tTaken',
+          'Form 1\tEnglish\t5\t1\t\t\t',
+          'Form 1\tMathematics\t6\t2\tMornings only\t\t',
+          'Form 1B\tMathematics\t\t\t\t\tNo',
+          'Form 1A\tHistory\t3\t\t\tLibrary\t',
+          'Form 7\tEnglish\t5\t\t\t\t',
+        ].join('\n'),
+      },
+    });
+    expect((screen.getByRole('button', { name: 'Apply to curriculum' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /Check rows/ }));
+    expect(await screen.findByText(/4 of 5 rows can be imported — 1 with problems will be skipped/)).toBeTruthy();
+    expect(within(screen.getByRole('list', { name: 'Rows with problems' })).getByText(/Line 6: "Form 7" is not an active class or a level/)).toBeTruthy();
+    expect(screen.getByText('New special rooms: Library.')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to curriculum' }));
+    expect(await screen.findByText(/Imported 4 rows for Form 1\. Review, then Save curriculum\./)).toBeTruthy();
+    expect((screen.getByRole('spinbutton', { name: 'Mathematics min' }) as HTMLInputElement).value).toBe('6');
+    fireEvent.click(screen.getByRole('button', { name: /Save curriculum/ }));
+    await screen.findByText('Curriculum saved.');
+
+    const saved = store.get('timetable_config')!.get('school')! as any;
+    const subj = Object.fromEntries(saved.levels['form-1'].subjects.map((s: any) => [s.normalizedSubject, s]));
+    expect(subj.english).toMatchObject({ min: 5, max: 5, doubles: 1 });
+    expect(subj.mathematics).toMatchObject({ min: 6, doubles: 2, time: 'morning-only' });
+    const library = saved.rooms.find((r: any) => r.name === 'Library');
+    expect(subj.History).toMatchObject({ min: 3, roomId: library.id });
+    expect(saved.exceptions).toEqual(expect.arrayContaining([
+      { classId: '1B', normalizedSubject: 'mathematics', excluded: true },
+      { classId: '1B', normalizedSubject: 'History', excluded: true },
+    ]));
+    expect(saved.exceptions).toHaveLength(2);
+  });
 });
