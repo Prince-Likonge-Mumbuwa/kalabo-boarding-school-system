@@ -114,11 +114,16 @@ are on time until the end of that day). Logic: `services/resultsDeadlines.ts`.
   the three must be in order (Week 4 ≤ Week 8 ≤ End of Term). A test that is
   switched off has no deadline.
 - **Copy from Previous** never carries deadlines over to the new term.
-- **Teachers**: Results Entry shows each test's deadline on its button and,
-  for the selected test, how long is left (or how many days overdue) and how
-  many learners still need marks. The dashboard warning lists each test
-  still missing marks with its deadline, nearest first, and the compact
-  banner counts overdue entries.
+- **Teachers** see a **live countdown** to the second (days : hours :
+  minutes : seconds) to the end of the deadline day — blue with more than 3
+  days left, amber within 3 days, red in the last 24 hours, and after the
+  deadline it counts up as "overdue by" (`components/results/DeadlineCountdown.tsx`).
+  - Dashboard → **Results to enter**: the nearest deadline as a big clock
+    with "Enter now", other deadlines as one line each, then one short list
+    per test (class · subject · how many still to enter · Enter), deadline
+    order first; earlier terms with gaps are one collapsed line each.
+  - Results Entry: each test button shows its deadline, and the selected
+    test shows the countdown and how many learners still need marks.
 - **Admin**: the Results Entry Monitor shows the three deadlines with the
   school's progress and how many teachers are overdue; a teacher with marks
   missing after a deadline gets an "N overdue" badge, and **Status → overdue**

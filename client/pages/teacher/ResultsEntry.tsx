@@ -64,6 +64,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { calculateGrade, normalizeSubjectName } from '@/services/resultsService';
 import { BulkResultsEntryModal } from '@/components/results/BulkResultsEntryModal';
 import { DEADLINE_BADGE, deadlineFor, deadlineStatus, formatDay } from '@/services/resultsDeadlines';
+import { DeadlineCountdown } from '@/components/results/DeadlineCountdown';
 import type { ExamType as ExamTypeId } from '@/types/exam';
 
 // ==================== INTERFACES ====================
@@ -564,22 +565,28 @@ const SubjectProgress = ({
         if (!sel || sel.deadline.state === 'none') return null;
         const left = Math.max(0, sel.totalStudents - sel.count);
         const when = formatDay(sel.deadline.deadline, { weekday: 'long', day: 'numeric', month: 'long' });
+        if (sel.deadline.state === 'done') {
+          return (
+            <div role="status" className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${DEADLINE_BADGE.ok}`}>
+              <Clock size={14} className="mt-0.5 flex-shrink-0" />
+              <span>{sel.fullLabel} results are complete. The deadline was {when}.</span>
+            </div>
+          );
+        }
+        // Live countdown to the end of the deadline day (counts up once overdue).
         return (
-          <div
-            role="status"
-            className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${DEADLINE_BADGE[sel.deadline.tone]}`}
-          >
-            <Clock size={14} className="mt-0.5 flex-shrink-0" />
-            <span>
-              {sel.deadline.state === 'done' ? (
-                <>{sel.fullLabel} results are complete. The deadline was {when}.</>
-              ) : sel.deadline.state === 'overdue' ? (
-                <><strong>{sel.fullLabel} results were due by {when}</strong> — {sel.deadline.label}. {left} {left === 1 ? 'learner still needs' : 'learners still need'} marks; please enter them now.</>
-              ) : (
-                <><strong>{sel.fullLabel} results are due by {when}</strong> ({sel.deadline.label.toLowerCase()}). {left} {left === 1 ? 'learner still needs' : 'learners still need'} marks.</>
-              )}
-            </span>
-          </div>
+          <DeadlineCountdown
+            className="mt-3"
+            size="compact"
+            deadline={sel.deadline.deadline!}
+            title={`${sel.fullLabel} results`}
+            detail={
+              <>
+                {left} {left === 1 ? 'learner still needs' : 'learners still need'} marks
+                {sel.deadline.state === 'overdue' ? ' — please enter them now.' : '.'}
+              </>
+            }
+          />
         );
       })()}
     </div>
