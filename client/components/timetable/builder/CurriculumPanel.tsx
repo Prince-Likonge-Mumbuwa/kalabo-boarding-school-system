@@ -3,7 +3,8 @@
 // of day and room; class exceptions; special rooms; fixed school events;
 // a teacher's daily limit.
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Save, Trash2, Undo2 } from 'lucide-react';
+import { FileSpreadsheet, Plus, Save, Trash2, Undo2 } from 'lucide-react';
+import { CurriculumImportCard } from './CurriculumImportCard';
 import { useInvalidateBuilder } from '@/hooks/useTimetableBuilder';
 import {
   activeClasses,
@@ -37,6 +38,7 @@ export function CurriculumPanel() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [importing, setImporting] = useState(false);
   useEffect(() => {
     if (!dirty) setCfg(inputs.config);
   }, [inputs.config, dirty]);
@@ -120,6 +122,26 @@ export function CurriculumPanel() {
 
   return (
     <div className="space-y-4 pb-20">
+      {importing ? (
+        <CurriculumImportCard
+          cfg={cfg}
+          onClose={() => setImporting(false)}
+          onApply={(next, r) => {
+            update(() => next);
+            if (r.levels[0]) setLevel(r.levels[0].key);
+            setImporting(false);
+            setMsg({
+              ok: true,
+              text: `Imported ${r.rowsUsed} row${r.rowsUsed === 1 ? '' : 's'} for ${r.levels.map(l => l.label).join(', ')}. Review, then Save curriculum.`,
+            });
+          }}
+        />
+      ) : (
+        <div className="flex justify-end">
+          <Btn onClick={() => setImporting(true)}><FileSpreadsheet size={14} /> Bulk import class allocation</Btn>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Level">
         {levels.map(k => (
           <button

@@ -41,6 +41,24 @@ and the periods as columns**.
    school events** (periods kept free every week, e.g. Monday P1 assembly,
    for the whole school or some levels), and the most periods a teacher
    should teach in a day.
+
+   **Bulk import class allocation** (top of the Curriculum tab): load the
+   whole curriculum from a CSV file or rows pasted from Excel — one row per
+   class or level and subject: `Class / Level, Subject, Periods, Most,
+   Doubles, Triples, Time of day, Not P8, Room, Taken` (only the first three
+   are needed). *Download template* gives the current classes and subjects
+   to fill in.
+   - A level row (*Form 1*) is taken by every class of the level; a class
+     row (*Form 1B*) with other numbers or *Taken = No* becomes a class
+     exception.
+   - A subject listed only for some classes is taken only by those classes;
+     the level gets the setting most of them have.
+   - *Replace* (default) replaces the subjects and exceptions of the levels
+     in the file; *Only add or update* keeps their other subjects. Levels not
+     in the file are never touched. A new room name adds a special room.
+   - **Check rows** lists every row with a problem (line number and why);
+     those rows are skipped. **Apply** puts the result in the tab as unsaved
+     changes: review it, then **Save curriculum** (or Undo).
 3. **Generate** — first a plain-language check that the set-up can work at
    all (a class, teacher or room needing more periods than the week has,
    too many mornings-only periods, too many triples …). Then the generator
@@ -109,12 +127,13 @@ by the admin or a Timetabler; a Timetabler may only create, edit and delete
 ## Files
 
 - `client/services/timetableGenerator/` — `types.ts`, `problem.ts`
-  (curriculum → problem, the arithmetic check, readiness), `solver.ts`
+  (curriculum → problem, the arithmetic check, readiness),
+  `curriculumImport.ts` (bulk import / template of the class allocation), `solver.ts`
   (+ `solver.worker.ts`, `runSolver.ts`), `editor.ts` (hand moves/swaps),
   `documents.ts` (PDF pages), `service.ts` (Firestore, publishing)
 - `client/services/pdf/timetablePDF.ts` — branded PDF (A4 landscape)
 - `client/pages/admin/TimetableBuilder.tsx`,
-  `client/components/timetable/builder/*`,
+  `client/components/timetable/builder/*` (incl. `CurriculumImportCard.tsx`),
   `client/pages/teacher/TimetableBuilderPage.tsx`
 - `client/components/timetable/DayRowsGrid.tsx` — days × periods grid
 - `client/pages/teacher/MyTimetable.tsx` — read-only, PDFs
