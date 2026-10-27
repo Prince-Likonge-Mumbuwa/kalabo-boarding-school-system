@@ -5,8 +5,10 @@ vi.mock('@/lib/firebase', () => ({ db: {}, auth: {} }));
 vi.mock('firebase/auth', () => ({ getAuth: () => ({}), onAuthStateChanged: () => () => {} }));
 
 import {
+  assignmentRows,
   curriculumTemplateRows,
   importCurriculum,
+  loadCurriculumFromAssignments,
   mapHeader,
   parseTable,
   parseTime,
@@ -28,6 +30,7 @@ const subjectNames = { Mathematics: 'Mathematics', English: 'English', Chemistry
 const cfg = (over: Partial<TimetableConfig> = {}): TimetableConfig => ({ ...structuredClone(EMPTY_CONFIG), ...over });
 const ctx = (config = cfg()): ImportContext => ({ config, classes, subjectNames });
 const csv = (s: string) => parseTable(s.trim());
+const english6 = { normalizedSubject: 'English', subject: 'English', min: 6, max: 6, doubles: 1, triples: 0, time: 'any' as const, notLast: false, roomId: null };
 
 describe('parseTable', () => {
   it('reads CSV with quotes, CRLF and a BOM', () => {
@@ -121,10 +124,11 @@ Form 1,English,6,,,maybe,
 Form 1,English,6,,,,perhaps
 Form 1,English,6,1,,,
 `), ctx());
-    expect(r.errors.map(e => e.line)).toEqual([2, 3, 4, 5, 6, 7, 8, 9]);
+    // Line 4 (no Periods) is fine: the subject gets the default setting.
+    expect(r.errors.map(e => e.line)).toEqual([2, 3, 5, 6, 7, 8, 9]);
     expect(r.errors[0].message).toMatch(/"Form 9" is not an active class or a level/);
-    expect(r.errors[4].message).toMatch(/doubles and triples need more periods/);
-    expect(r.rowsUsed).toBe(1);
+    expect(r.errors[3].message).toMatch(/doubles and triples need more periods/);
+    expect(r.rowsUsed).toBe(1); // line 10 replaces line 4 (same subject)
     expect(r.config.levels['form-1'].subjects).toHaveLength(1);
   });
 
@@ -135,7 +139,7 @@ Form 1,English,6,1,,,
 
   it('refuses a file without the needed headings', () => {
     const r = importCurriculum(csv('Name,Lessons\nForm 1,English'), ctx());
-    expect(r.errors[0]).toEqual({ line: 1, message: 'The first row must be the column headings. Missing: Class / Level, Subject.' });
+    expect(r.errors[0]).toEqual({ line: 1, message: 'The first row must be the column headings. Missing: Class, Subject.' });
     expect(r.config).toEqual(ctx().config);
   });
 
@@ -190,6 +194,64 @@ Grade 10,ICT,4,Computer Room
   });
 });
 
+describe('only Class and Subject', () => {
+  it('needs only the two columns; new subjects start at the default setting', () => {
+    const r = importCurriculum(csv('Class,Subject\nForm 1A,English\nForm 1B,English\nForm 1C,English\nForm 1A,French'), ctx());
+    expect(r.errors).toEqual([]);
+    expect(r.config.levels['form-1'].subjects).toEqual([
+      { normalizedSubject: 'English', subject: 'English', min: 4, max: 4, doubles: 0, triples: 0, time: 'any', notLast: false, roomId: null },
+      { normalizedSubject: 'French', subject: 'French', min: 4, max: 4, doubles: 0, triples: 0, time: 'any', notLast: false, roomId: null },
+    ]);
+    expect(requirementsForClass(r.config, '1B', 'form-1').map(x => x.subject)).toEqual(['English']);
+  });
+
+  it('keeps the periods a subject already has, for the level and for a class exception', () => {
+    const base = cfg({
+      levels: { 'form-1': { key: 'form-1', label: 'Form 1', subjects: [english6] } },
+      exceptions: [{ classId: '1B', normalizedSubject: 'English', min: 5, max: 5 }],
+    });
+    const r = importCurriculum(csv('Class,Subject\nForm 1A,English\nForm 1B,English\nForm 1C,English'), ctx(base));
+    expect(r.config.levels['form-1'].subjects).toEqual([english6]);
+    expect(r.config.exceptions).toEqual([{ classId: '1B', normalizedSubject: 'English', min: 5, max: 5, doubles: 1, triples: 0 }]);
+  });
+});
+
+describe('loadCurriculumFromAssignments', () => {
+  const a = (classId: string, subject: string, teacher = 't1') => ({ classId, normalizedSubject: subject, subject, teacherIds: teacher ? [teacher] : [] });
+
+  it('rows for active classes with a teacher; vacant assignments are counted', () => {
+    const { rows, vacant } = assignmentRows(classes, [a('1A', 'English'), a('1A', 'Mathematics'), a('1B', 'English', ''), a('OLD', 'English')]);
+    expect(rows).toEqual([['Class', 'Subject'], ['Form 1A', 'English'], ['Form 1A', 'Mathematics']]);
+    expect(vacant).toBe(1);
+  });
+
+  it('each class takes the subjects it has teachers for; levels without assignments are untouched', () => {
+    const base = cfg({
+      levels: {
+        'form-1': { key: 'form-1', label: 'Form 1', subjects: [english6] },
+        'grade-10': { key: 'grade-10', label: 'Grade 10', subjects: [{ ...english6, min: 7, max: 7 }] },
+      },
+    });
+    const r = loadCurriculumFromAssignments(ctx(base), [
+      a('1A', 'English'), a('1B', 'English'), a('1C', 'English'),
+      a('1A', 'French'), a('1C', 'Mathematics', ''),
+    ]);
+    expect(r.errors).toEqual([]);
+    expect(r.vacant).toBe(1);
+    expect(r.config.levels['form-1'].subjects.map(s => [s.subject, s.min])).toEqual([['English', 6], ['French', 4]]);
+    expect(requirementsForClass(r.config, '1A', 'form-1').map(x => x.subject)).toEqual(['English', 'French']);
+    expect(requirementsForClass(r.config, '1C', 'form-1').map(x => x.subject)).toEqual(['English']);
+    expect(r.config.levels['grade-10']).toEqual(base.levels['grade-10']);
+    expect(r.warnings.some(w => w.includes('1 class assignment has no teacher'))).toBe(true);
+  });
+
+  it('says so when there are no assignments', () => {
+    const r = loadCurriculumFromAssignments(ctx(), []);
+    expect(r.rowsUsed).toBe(0);
+    expect(r.config).toEqual(ctx().config);
+  });
+});
+
 describe('curriculumTemplateRows', () => {
   it('exports the class allocation, and re-importing it gives the same curriculum', () => {
     const first = importCurriculum(csv(`
@@ -200,12 +262,12 @@ Form 1B,English,5,,1,,,,
 Form 1C,Mathematics,,,,,,,No
 `), ctx());
     const rows = curriculumTemplateRows({ ...ctx(first.config), slots: [{ classId: '10A', normalizedSubject: 'Chemistry', subject: 'Chemistry' }] });
-    expect(rows[0][0]).toBe('Class / Level');
-    expect(rows).toContainEqual(['Form 1C', 'Mathematics', '', '', '', '', '', '', '', 'No']);
-    expect(rows).toContainEqual(['Form 1A', 'Mathematics', '5', '', '1', '', 'Mornings only', 'Yes', 'Maths Room', '']);
-    expect(rows).toContainEqual(['Grade 10A', 'Chemistry', '', '', '', '', '', '', '', '']);
+    expect(rows[0]).toEqual(['Class', 'Subject']);
+    expect(rows).toContainEqual(['Form 1A', 'Mathematics']);
+    expect(rows).not.toContainEqual(['Form 1C', 'Mathematics']);
+    expect(rows).toContainEqual(['Grade 10A', 'Chemistry']);
 
-    // Re-import Form 1 only (Grade 10 rows have no periods yet).
+    // Re-import Form 1 only.
     const form1 = rows.filter((r, i) => i === 0 || r[0].startsWith('Form'));
     const again = importCurriculum(parseTable(toCsv(form1)), ctx(first.config));
     expect(again.errors).toEqual([]);

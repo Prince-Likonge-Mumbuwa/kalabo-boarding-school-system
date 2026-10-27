@@ -42,23 +42,30 @@ and the periods as columns**.
    for the whole school or some levels), and the most periods a teacher
    should teach in a day.
 
-   **Bulk import class allocation** (top of the Curriculum tab): load the
-   whole curriculum from a CSV file or rows pasted from Excel — one row per
-   class or level and subject: `Class / Level, Subject, Periods, Most,
-   Doubles, Triples, Time of day, Not P8, Room, Taken` (only the first three
-   are needed). *Download template* gives the current classes and subjects
-   to fill in.
-   - A level row (*Form 1*) is taken by every class of the level; a class
-     row (*Form 1B*) with other numbers or *Taken = No* becomes a class
-     exception.
-   - A subject listed only for some classes is taken only by those classes;
-     the level gets the setting most of them have.
+   **Load curriculum** (top of the Curriculum tab): builds the class
+   allocation from the class assignments active this term — every class
+   takes exactly the subjects it has a teacher for (owner, or live cover /
+   TP). Assignments with no teacher are left out (a note says how many).
+   Levels with assignments are replaced; levels without any are untouched.
+
+   **Bulk import class allocation**: a CSV file or rows pasted from Excel
+   with just two columns, `Class, Subject` — one row per class and subject
+   it takes. *Download template* gives the current allocation.
+   - A class takes the subjects listed for it; a class missing from a
+     subject is marked *Not taken*. A whole level (*Form 1*) may be named
+     instead of a class.
+   - Periods a week, doubles, time of day and room are set in the tab:
+     a subject keeps the setting it has now (the class's exception, else
+     the level's); a new subject starts at 4 periods a week. (Older files
+     with Periods, Doubles … columns still import; a blank cell keeps the
+     current value.)
    - *Replace* (default) replaces the subjects and exceptions of the levels
      in the file; *Only add or update* keeps their other subjects. Levels not
-     in the file are never touched. A new room name adds a special room.
+     in the file are never touched.
    - **Check rows** lists every row with a problem (line number and why);
      those rows are skipped. **Apply** puts the result in the tab as unsaved
-     changes: review it, then **Save curriculum** (or Undo).
+     changes: review it, then **Save curriculum** (or Undo). Load
+     curriculum works the same way.
 3. **Generate** — first a plain-language check that the set-up can work at
    all (a class, teacher or room needing more periods than the week has,
    too many mornings-only periods, too many triples …). Then the generator

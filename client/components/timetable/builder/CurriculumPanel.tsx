@@ -3,8 +3,9 @@
 // of day and room; class exceptions; special rooms; fixed school events;
 // a teacher's daily limit.
 import { useEffect, useMemo, useState } from 'react';
-import { FileSpreadsheet, Plus, Save, Trash2, Undo2 } from 'lucide-react';
+import { FileSpreadsheet, Plus, Save, Trash2, Undo2, Users, X } from 'lucide-react';
 import { CurriculumImportCard } from './CurriculumImportCard';
+import { loadCurriculumFromAssignments } from '@/services/timetableGenerator/curriculumImport';
 import { useInvalidateBuilder } from '@/hooks/useTimetableBuilder';
 import {
   activeClasses,
@@ -39,6 +40,7 @@ export function CurriculumPanel() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [importing, setImporting] = useState(false);
+  const [loadNotes, setLoadNotes] = useState<string[]>([]);
   useEffect(() => {
     if (!dirty) setCfg(inputs.config);
   }, [inputs.config, dirty]);
@@ -105,12 +107,34 @@ export function CurriculumPanel() {
   const free = CELLS - eventCells;
   const invalid = Object.values(cfg.levels).some(l => l.subjects.some(s => requirementProblems(s).length));
 
+  // Class assignments with a teacher this term (owner, or live cover / TP).
+  const activeAssignments = useMemo(() => inputs.slotInputs.filter(s => s.teacherIds.length > 0).length, [inputs.slotInputs]);
+
+  /** Load curriculum: each class takes exactly the subjects it has a teacher for. */
+  const loadFromAssignments = () => {
+    const r = loadCurriculumFromAssignments({ config: cfg, classes: inputs.classes, subjectNames: inputs.subjectNames }, inputs.slotInputs);
+    if (!r.rowsUsed) {
+      setLoadNotes(r.warnings);
+      setMsg({ ok: false, text: 'No class assignments with a teacher were found for the active classes this term.' });
+      return;
+    }
+    update(() => r.config);
+    if (r.levels[0]) setLevel(r.levels[0].key);
+    setImporting(false);
+    setLoadNotes([...r.errors.map(e => e.message), ...r.warnings]);
+    setMsg({
+      ok: true,
+      text: `Loaded ${r.rowsUsed} class subject${r.rowsUsed === 1 ? '' : 's'} from the class assignments for ${r.levels.map(l => l.label).join(', ')}. Subjects keep their periods; new ones start at 4 a week. Review, then Save curriculum.`,
+    });
+  };
+
   const save = async () => {
     setSaving(true);
     setMsg(null);
     try {
       await saveTimetableConfig(cfg, actor);
       setDirty(false);
+      setLoadNotes([]);
       invalidate();
       setMsg({ ok: true, text: 'Curriculum saved.' });
     } catch (e) {
@@ -137,8 +161,30 @@ export function CurriculumPanel() {
           }}
         />
       ) : (
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-2">
+          <Btn
+            onClick={loadFromAssignments}
+            disabled={!activeAssignments}
+            title={
+              activeAssignments
+                ? `Each class takes the subjects it has a teacher for (${activeAssignments} active class assignment${activeAssignments === 1 ? '' : 's'})`
+                : 'No class assignments with a teacher yet'
+            }
+          >
+            <Users size={14} /> Load curriculum
+          </Btn>
           <Btn onClick={() => setImporting(true)}><FileSpreadsheet size={14} /> Bulk import class allocation</Btn>
+        </div>
+      )}
+
+      {loadNotes.length > 0 && (
+        <div className="relative rounded-lg border border-amber-200 bg-amber-50 p-2 pr-8 text-xs text-amber-900">
+          <button type="button" aria-label="Close notes" onClick={() => setLoadNotes([])} className="absolute right-1 top-1 rounded p-1 hover:bg-amber-100">
+            <X size={14} />
+          </button>
+          <ul className="max-h-40 space-y-0.5 overflow-y-auto" aria-label="Load curriculum notes">
+            {loadNotes.map((n, i) => <li key={i}>{n}</li>)}
+          </ul>
         </div>
       )}
 
@@ -276,7 +322,7 @@ export function CurriculumPanel() {
       <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200 bg-white/95 p-3 shadow-sm backdrop-blur">
         <div className="min-w-0 flex-1">{msg ? <Notice tone={msg.ok ? 'ok' : 'error'}>{msg.text}</Notice> : <span className="text-sm text-gray-600">{dirty ? 'Unsaved changes.' : 'All changes saved.'}</span>}</div>
         <div className="flex gap-2">
-          {dirty && <Btn variant="ghost" onClick={() => { setCfg(inputs.config); setDirty(false); }}><Undo2 size={14} /> Undo</Btn>}
+          {dirty && <Btn variant="ghost" onClick={() => { setCfg(inputs.config); setDirty(false); setLoadNotes([]); }}><Undo2 size={14} /> Undo</Btn>}
           <Btn variant="primary" busy={saving} disabled={!dirty || invalid} onClick={save} title={invalid ? 'Fix the rows marked in red first' : undefined}><Save size={14} /> Save curriculum</Btn>
         </div>
       </div>
