@@ -1,12 +1,12 @@
 // Timetable builder → Curriculum → Bulk import: the class allocation (which
-// subjects each class or level takes, periods a week, doubles, triples, time
-// of day, room) from a CSV file or rows pasted from Excel. The result is
-// shown first; applying it puts it in the Curriculum tab as unsaved changes
-// to review and save.
+// subjects each class takes) from a CSV file or rows pasted from Excel —
+// just two columns, Class and Subject. Periods and other settings are set in
+// the Curriculum tab. The result is shown first; applying it puts it in the
+// tab as unsaved changes to review and save.
 import { useRef, useState } from 'react';
 import { Download, FileUp, Upload, X } from 'lucide-react';
 import {
-  TEMPLATE_HEADER,
+  DEFAULT_REQUIREMENT,
   curriculumTemplateRows,
   importCurriculum,
   parseTable,
@@ -83,14 +83,15 @@ export function CurriculumImportCard({
     >
       <div className="space-y-3 text-sm">
         <p className="text-gray-700">
-          One row per class (or whole level) and subject. Columns: <span className="font-medium">{TEMPLATE_HEADER.join(' · ')}</span>.
-          Only <span className="font-medium">Class / Level</span>, <span className="font-medium">Subject</span> and{' '}
-          <span className="font-medium">Periods</span> are needed.
+          One row per class and subject, with two columns: <span className="font-medium">Class</span> and{' '}
+          <span className="font-medium">Subject</span>.
         </p>
         <ul className="list-disc space-y-0.5 pl-5 text-xs text-gray-600">
-          <li>A level row (<em>Form 1</em>, <em>Grade 10</em>) is taken by every class of the level; a class row (<em>Form 1A</em>) with other numbers or <em>Taken = No</em> makes an exception.</li>
-          <li>A subject listed only for some classes is taken only by those classes.</li>
-          <li>Time of day: <em>Any time</em>, <em>Prefer mornings</em> or <em>Mornings only</em>. Not P8: <em>Yes</em> or blank. A new room name adds a special room.</li>
+          <li>A class takes the subjects listed for it. A whole level (<em>Form 1</em>, <em>Grade 10</em>) can be named instead of a class.</li>
+          <li>
+            Periods a week, doubles, time of day and room are set in the table below after applying: a subject keeps the setting it has
+            now; a new subject starts at {DEFAULT_REQUIREMENT.min} periods a week.
+          </li>
         </ul>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -123,7 +124,7 @@ export function CurriculumImportCard({
             }}
             rows={6}
             spellCheck={false}
-            placeholder={'Class / Level\tSubject\tPeriods\tDoubles\nForm 1\tEnglish\t6\t1\nForm 1B\tFrench\t4'}
+            placeholder={'Class\tSubject\nForm 1A\tEnglish\nForm 1A\tMathematics\nForm 1B\tFrench'}
             className="w-full rounded-lg border border-gray-300 px-2 py-1.5 font-mono text-xs"
           />
         </label>

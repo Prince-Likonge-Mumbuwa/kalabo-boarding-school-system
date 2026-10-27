@@ -3,14 +3,22 @@
 // Bulk import of the curriculum (class allocation) from a spreadsheet:
 // a CSV file, or rows pasted from Excel / Google Sheets.
 //
-// One row per class (or level) and subject:
+// One row per class and subject — only two columns are expected:
 //
-//   Class / Level | Subject | Periods | Most | Doubles | Triples | Time of day | Not P8 | Room | Taken
-//   Form 1A       | English | 6       |      | 1       |         |             |        |      |
-//   Grade 10      | Chemistry | 5     | 6    | 1       |         | Prefer mornings | Yes | Science Lab |
+//   Class     | Subject
+//   Form 1A   | English
+//   Grade 10B | Chemistry
 //
-// Only Class / Level, Subject and Periods are required. A row may name a
-// class ("Form 1A", "10B") or a whole level ("Form 1", "Grade 10").
+// A row may name a class ("Form 1A", "10B") or a whole level ("Form 1",
+// "Grade 10"). Periods a week, doubles, time of day and room are set in the
+// Curriculum tab: a subject keeps the setting it already has (for that class,
+// else for its level); a new subject starts at DEFAULT_REQUIREMENT. Optional
+// extra columns (Periods, Most, Doubles, Triples, Time of day, Not P8, Room,
+// Taken) are still read when a file has them; a blank cell keeps the current
+// value.
+//
+// loadCurriculumFromAssignments() builds the same rows from the class
+// assignments (class_slots with a teacher) and imports them.
 //
 // How rows become the curriculum (levels' subjects + class exceptions):
 // - A level row sets the subject for the whole level. Every class of the
@@ -102,7 +110,12 @@ export function toCsv(rows: Array<Array<string | number>>): string {
 
 export type Column = 'target' | 'subject' | 'min' | 'max' | 'doubles' | 'triples' | 'time' | 'notLast' | 'room' | 'taken';
 
-export const TEMPLATE_HEADER = ['Class / Level', 'Subject', 'Periods', 'Most', 'Doubles', 'Triples', 'Time of day', 'Not P8', 'Room', 'Taken'];
+export const TEMPLATE_HEADER = ['Class', 'Subject'];
+
+/** The setting a subject new to the curriculum starts with. */
+export const DEFAULT_REQUIREMENT: Omit<SubjectRequirement, 'normalizedSubject' | 'subject'> = {
+  min: 4, max: 4, doubles: 0, triples: 0, time: 'any', notLast: false, roomId: null,
+};
 
 const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
 
@@ -132,8 +145,8 @@ export function mapHeader(header: string[]): Array<Column | null> {
 
 // ==================== VALUES ====================
 
-const intCell = (v: string, label: string): number | string => {
-  if (v === '') return 0;
+const intCell = (v: string, label: string, blank: number): number | string => {
+  if (v === '') return blank;
   const n = Number(v);
   if (!Number.isInteger(n) || n < 0 || n > 12) return `${label} must be a whole number from 0 to 12 (got "${v}")`;
   return n;
@@ -165,6 +178,8 @@ function parseTaken(v: string): boolean | null {
 // ==================== IMPORT ====================
 
 export type ImportMode = 'replace' | 'merge';
+/** Where the rows came from (only changes the wording of notes). */
+export type ImportSource = 'file' | 'assignments';
 
 export interface ImportContext {
   config: TimetableConfig;
@@ -219,7 +234,7 @@ function levelKeyFromText(v: string): string | null {
 }
 
 /** Turn the rows of a spreadsheet into a new curriculum. */
-export function importCurriculum(table: string[][], ctx: ImportContext, mode: ImportMode = 'replace'): ImportResult {
+export function importCurriculum(table: string[][], ctx: ImportContext, mode: ImportMode = 'replace', source: ImportSource = 'file'): ImportResult {
   const errors: RowMessage[] = [];
   const warnings: string[] = [];
   const cfg = structuredClone(ctx.config);
@@ -231,9 +246,9 @@ export function importCurriculum(table: string[][], ctx: ImportContext, mode: Im
   }
   const cols = mapHeader(table[0]);
   const at = (c: Column) => cols.indexOf(c);
-  const missing = (['target', 'subject', 'min'] as Column[]).filter(c => at(c) < 0);
+  const missing = (['target', 'subject'] as Column[]).filter(c => at(c) < 0);
   if (missing.length) {
-    const names = { target: 'Class / Level', subject: 'Subject', min: 'Periods' } as Record<string, string>;
+    const names = { target: 'Class', subject: 'Subject' } as Record<string, string>;
     errors.push({ line: 1, message: `The first row must be the column headings. Missing: ${missing.map(c => names[c]).join(', ')}.` });
     return empty();
   }
@@ -274,7 +289,7 @@ export function importCurriculum(table: string[][], ctx: ImportContext, mode: Im
 
     const targetText = cell('target');
     const subjectText = cell('subject');
-    if (!targetText) { fail('Class / Level is empty.'); continue; }
+    if (!targetText) { fail('Class is empty.'); continue; }
     if (!subjectText) { fail('Subject is empty.'); continue; }
 
     // Class first (exact name), then level.
@@ -310,26 +325,30 @@ export function importCurriculum(table: string[][], ctx: ImportContext, mode: Im
     const taken = parseTaken(cell('taken'));
     if (taken === null) { fail(`Taken must be Yes or No (got "${cell('taken')}").`); continue; }
 
-    // Numbers
+    // Settings: a blank (or missing) column keeps what the subject has now —
+    // for this class, else for its level — else the default for a new subject.
+    const prev: Omit<SubjectRequirement, 'normalizedSubject' | 'subject'> =
+      (classId ? requirementsForClass(ctx.config, classId, levelKey).find(r => r.normalizedSubject === normalizedSubject) : undefined) ??
+      ctx.config.levels[levelKey]?.subjects.find(r => r.normalizedSubject === normalizedSubject) ??
+      DEFAULT_REQUIREMENT;
     const minRaw = cell('min');
-    if (taken && minRaw === '') { fail(`Periods is empty for ${subject}.`); continue; }
     const nums = {
-      min: intCell(minRaw, 'Periods'),
-      max: intCell(cell('max'), 'Most'),
-      doubles: intCell(cell('doubles'), 'Doubles'),
-      triples: intCell(cell('triples'), 'Triples'),
+      min: intCell(minRaw, 'Periods', prev.min),
+      max: intCell(cell('max'), 'Most', minRaw === '' ? prev.max : 0),
+      doubles: intCell(cell('doubles'), 'Doubles', prev.doubles),
+      triples: intCell(cell('triples'), 'Triples', prev.triples),
     };
     const bad = Object.values(nums).find(v => typeof v === 'string') as string | undefined;
     if (bad) { fail(bad); continue; }
     const min = nums.min as number;
-    const max = cell('max') === '' ? min : (nums.max as number);
+    const max = cell('max') === '' && minRaw !== '' ? min : Math.max(nums.max as number, min);
 
-    const time = parseTime(cell('time'));
+    const time = cell('time') === '' ? prev.time : parseTime(cell('time'));
     if (!time) { fail(`Time of day must be ${Object.values(TIME_LABEL).join(', ')} (got "${cell('time')}").`); continue; }
-    const notLast = parseYesNo(cell('notLast'));
+    const notLast = cell('notLast') === '' ? !!prev.notLast : parseYesNo(cell('notLast'));
     if (notLast === null) { fail(`Not P8 must be Yes or No (got "${cell('notLast')}").`); continue; }
 
-    let roomId: string | null = null;
+    let roomId: string | null = cell('room') === '' ? prev.roomId ?? null : null;
     const roomText = cell('room');
     if (roomText && !/^(own|own classroom|none|-)$/i.test(roomText)) {
       let room = roomByKey.get(squash(roomText));
@@ -450,7 +469,12 @@ export function importCurriculum(table: string[][], ctx: ImportContext, mode: Im
     const classOnly = [...fileSubjects.values()].filter(v => !v.fromLevel);
     if (classOnly.length) {
       const left = levelClasses.filter(c => !listedClasses.has(c.id)).map(c => c.name);
-      if (left.length) warnings.push(`${left.join(', ')} ${left.length === 1 ? 'is' : 'are'} not in the file, so ${left.length === 1 ? 'it takes' : 'they take'} none of the ${levelLabel(lk)} subjects listed class by class.`);
+      if (left.length) {
+        const why = source === 'assignments'
+          ? `${left.length === 1 ? 'has' : 'have'} no class assignments with a teacher`
+          : `${left.length === 1 ? 'is' : 'are'} not in the file`;
+        warnings.push(`${left.join(', ')} ${why}, so ${left.length === 1 ? 'it takes' : 'they take'} none of the ${levelLabel(lk)} subjects listed class by class.`);
+      }
     }
 
     summaries.push({ key: lk, label: cfg.levels[lk].label, subjects: subjects.length, classes: levelClasses.length, exceptions: exCount });
@@ -470,47 +494,72 @@ export function importCurriculum(table: string[][], ctx: ImportContext, mode: Im
 // ==================== TEMPLATE ====================
 
 /**
- * The current curriculum as rows, one per class and subject (class
- * allocation). Classes whose level has no curriculum yet list the subjects
- * they have teachers for, with Periods left blank to fill in.
+ * The current class allocation as rows (Class, Subject), one per class and
+ * subject it takes. A class also lists the subjects it has teachers for that
+ * are not in the curriculum yet. Importing the rows back gives the same
+ * curriculum (periods and other settings are kept).
  */
 export function curriculumTemplateRows(ctx: ImportContext & { slots: Array<{ classId: string; normalizedSubject: string; subject: string }> }): string[][] {
   const rows: string[][] = [TEMPLATE_HEADER];
-  const roomName = (id: string | null | undefined) => (id ? ctx.config.rooms.find(r => r.id === id)?.name ?? '' : '');
-  const timeText = (t: TimePreference) => (t === 'any' ? '' : t === 'morning-only' ? 'Mornings only' : 'Prefer mornings');
   const classes = activeClasses(ctx.classes).sort((a, b) => compareLevels(levelKeyOf(a), levelKeyOf(b)) || a.name.localeCompare(b.name, undefined, { numeric: true }));
   for (const c of classes) {
     const lk = levelKeyOf(c);
     const level = ctx.config.levels[lk];
-    if (level?.subjects.length) {
-      const reqs = new Map(requirementsForClass(ctx.config, c.id, lk).map(r => [r.normalizedSubject, r]));
-      for (const s of level.subjects) {
-        const r = reqs.get(s.normalizedSubject);
-        if (!r) {
-          rows.push([c.name, s.subject, '', '', '', '', '', '', '', 'No']);
-          continue;
-        }
-        rows.push([
-          c.name,
-          r.subject,
-          String(r.min),
-          r.max !== r.min ? String(r.max) : '',
-          r.doubles ? String(r.doubles) : '',
-          r.triples ? String(r.triples) : '',
-          timeText(r.time),
-          r.notLast ? 'Yes' : '',
-          roomName(r.roomId),
-          '',
-        ]);
-      }
-      // Subjects the class has teachers for that are not in the curriculum yet.
-      for (const sl of ctx.slots.filter(x => x.classId === c.id && !level.subjects.some(s => s.normalizedSubject === x.normalizedSubject))) {
-        rows.push([c.name, sl.subject, '', '', '', '', '', '', '', '']);
-      }
-    } else {
-      const taught = ctx.slots.filter(x => x.classId === c.id).sort((a, b) => a.subject.localeCompare(b.subject));
-      for (const sl of taught) rows.push([c.name, sl.subject, '', '', '', '', '', '', '', '']);
+    const subjects = new Map<string, string>();
+    for (const r of requirementsForClass(ctx.config, c.id, lk)) subjects.set(r.normalizedSubject, r.subject);
+    for (const sl of ctx.slots) {
+      if (sl.classId !== c.id || subjects.has(sl.normalizedSubject)) continue;
+      // A subject of the level this class is marked "Not taken" for stays out.
+      if (level?.subjects.some(s => s.normalizedSubject === sl.normalizedSubject)) continue;
+      subjects.set(sl.normalizedSubject, sl.subject);
     }
+    for (const name of [...subjects.values()].sort((a, b) => a.localeCompare(b))) rows.push([c.name, name]);
   }
   return rows;
+}
+
+// ==================== FROM CLASS ASSIGNMENTS ====================
+
+export interface AssignmentLike {
+  classId: string;
+  normalizedSubject: string;
+  subject: string;
+  /** Teachers of the assignment now (owner, live cover / TP). */
+  teacherIds: string[];
+}
+
+/**
+ * Rows (Class, Subject) from the class assignments that have a teacher, for
+ * the active classes. `vacant` counts assignments without a teacher.
+ */
+export function assignmentRows(classes: ClassLike[], assignments: AssignmentLike[]): { rows: string[][]; vacant: number } {
+  const active = activeClasses(classes).sort((a, b) => compareLevels(levelKeyOf(a), levelKeyOf(b)) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const rows: string[][] = [TEMPLATE_HEADER];
+  let vacant = 0;
+  for (const c of active) {
+    const mine = new Map<string, string>();
+    for (const a of assignments) {
+      if (a.classId !== c.id) continue;
+      if (!a.teacherIds.length) { vacant++; continue; }
+      if (!mine.has(a.normalizedSubject)) mine.set(a.normalizedSubject, a.subject);
+    }
+    for (const name of [...mine.values()].sort((a, b) => a.localeCompare(b))) rows.push([c.name, name]);
+  }
+  return { rows, vacant };
+}
+
+/**
+ * The curriculum from the class assignments active this term: every class
+ * takes exactly the subjects it has a teacher for. Levels with assignments
+ * are replaced (subjects keep their periods and settings; new ones start at
+ * DEFAULT_REQUIREMENT); levels without any are untouched.
+ */
+export function loadCurriculumFromAssignments(ctx: ImportContext, assignments: AssignmentLike[]): ImportResult & { vacant: number } {
+  const { rows, vacant } = assignmentRows(ctx.classes, assignments);
+  if (rows.length < 2) {
+    return { config: ctx.config, rowsRead: 0, rowsUsed: 0, errors: [], warnings: [], levels: [], newRooms: [], vacant };
+  }
+  const r = importCurriculum(rows, ctx, 'replace', 'assignments');
+  if (vacant) r.warnings.push(`${vacant} class assignment${vacant === 1 ? ' has' : 's have'} no teacher and ${vacant === 1 ? 'was' : 'were'} left out.`);
+  return { ...r, vacant };
 }
