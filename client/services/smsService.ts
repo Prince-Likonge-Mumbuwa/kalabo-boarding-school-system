@@ -741,6 +741,9 @@ export const smsService = {
     target: AnnouncementTarget;
     senderName: string;
     senderUid: string;
+    /** 'summons' = a parent summoned to the office (one SMS, one parent). */
+    category?: 'general' | 'summons';
+    summons?: { date: string; time: string; place: string; signer: string };
   }): Promise<AnnouncementSendResponse> => {
     try {
       const trimmed = (params.message || '').trim();
@@ -763,6 +766,8 @@ export const smsService = {
           target: params.target,
           senderName: params.senderName,
           senderUid: params.senderUid,
+          category: params.category ?? 'general',
+          summons: params.summons ?? null,
           meta: {
             source: 'client-announcement-v1',
             segments: segments.segments,
