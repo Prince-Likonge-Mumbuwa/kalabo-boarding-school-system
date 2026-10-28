@@ -1,10 +1,22 @@
 // @/components/AnnouncementModal.tsx
-// Send a free-form SMS to all parents or one specific parent.
+// Send a free-form SMS to all parents or one specific parent, or summon one
+// parent to the office with a ready-made one-SMS template.
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { X, Loader2, Users, User, Search, Send, AlertTriangle, CheckCircle } from 'lucide-react';
+import { X, Loader2, Users, User, Search, Send, AlertTriangle, CheckCircle, MessageSquare, Building2 } from 'lucide-react';
 import { smsService } from '@/services/smsService';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
+import {
+  ONE_SMS,
+  PLACE_LABEL,
+  SIGNER_LABEL,
+  buildSummonsMessage,
+  nextSchoolDay,
+  smsLength,
+  toGsm7,
+  type SummonsPlace,
+  type SummonsSigner,
+} from '@/services/smsTemplates';
 
 interface AnnouncementModalProps {
   isOpen: boolean;
@@ -15,6 +27,15 @@ interface AnnouncementModalProps {
 }
 
 type TargetMode = 'all' | 'student';
+type MessageKind = 'free' | 'summons';
+
+const PHONE_KEY = 'summons.callbackPhone';
+const readPhone = () => {
+  try { return localStorage.getItem(PHONE_KEY) ?? ''; } catch { return ''; }
+};
+const savePhone = (v: string) => {
+  try { localStorage.setItem(PHONE_KEY, v); } catch { /* private window */ }
+};
 
 const MAX_LENGTH = 480;
 const WARN_LENGTH = 160;
@@ -29,7 +50,11 @@ export const AnnouncementModal = ({
   const [mode, setMode] = useState<TargetMode>('all');
   const [message, setMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedStudent, setSelectedStudent] = useState<{ id: string; name: string; studentId: string } | null>(null);
+  const [selectedStudent, setSelectedStudent] = useState<{ id: string; name: string; studentId: string; className?: string } | null>(null);
+  const [kind, setKind] = useState<MessageKind>('free');
+  const [summons, setSummons] = useState<{ date: string; time: string; place: SummonsPlace; signer: SummonsSigner; phone: string }>(() => ({
+    date: nextSchoolDay(), time: '09:00', place: 'head', signer: 'Head', phone: '',
+  }));
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ sent: number; failed: number; total: number } | null>(null);
@@ -41,6 +66,8 @@ export const AnnouncementModal = ({
   useEffect(() => {
     if (isOpen) {
       setMode('all');
+      setKind('free');
+      setSummons({ date: nextSchoolDay(), time: '09:00', place: 'head', signer: 'Head', phone: readPhone() });
       setMessage('');
       setSearchTerm('');
       setSelectedStudent(null);
@@ -62,12 +89,30 @@ export const AnnouncementModal = ({
       .slice(0, 8);
   }, [learners, searchTerm]);
 
+  const isSummons = mode === 'student' && kind === 'summons';
+
+  // The summons text is rebuilt whenever its details change (edits to the
+  // text itself are kept until then).
+  useEffect(() => {
+    if (!isSummons || !selectedStudent) return;
+    setMessage(buildSummonsMessage({
+      learnerName: selectedStudent.name,
+      className: selectedStudent.className,
+      ...summons,
+    }));
+  }, [isSummons, selectedStudent, summons]);
+
+  const setSummonsField = <K extends keyof typeof summons>(k: K, v: (typeof summons)[K]) =>
+    setSummons(prev => ({ ...prev, [k]: v }));
+
   const charCount = message.length;
-  const smsSegments = Math.max(1, Math.ceil(charCount / 160));
-  const overLimit = charCount > MAX_LENGTH;
+  const len = smsLength(message);
+  const smsSegments = Math.max(1, len.sms);
+  const overLimit = isSummons ? len.sms > 1 : charCount > MAX_LENGTH;
   const canSend = message.trim().length > 0
     && !overLimit
     && (mode === 'all' || !!selectedStudent)
+    && (!isSummons || (!!summons.date && !!summons.time))
     && !isSending;
 
   const handleSend = async () => {
@@ -80,11 +125,16 @@ export const AnnouncementModal = ({
         ? { type: 'all' as const }
         : { type: 'student' as const, studentId: selectedStudent!.studentId };
 
+      if (isSummons) savePhone(summons.phone);
       const response = await smsService.sendAnnouncement({
         message: message.trim(),
         target,
         senderName,
         senderUid,
+        ...(isSummons && {
+          category: 'summons' as const,
+          summons: { date: summons.date, time: summons.time, place: PLACE_LABEL[summons.place], signer: SIGNER_LABEL[summons.signer] },
+        }),
       });
 
       setResult({
@@ -117,7 +167,7 @@ export const AnnouncementModal = ({
             <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
               <CheckCircle size={32} className="text-green-600" />
             </div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Announcement Sent</h2>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">{isSummons ? 'Summons Sent' : 'Announcement Sent'}</h2>
             <p className="text-sm text-gray-600 mb-4">
               Delivered to <strong>{result.sent}</strong> of <strong>{result.total}</strong> parents.
               {result.failed > 0 && (
@@ -164,7 +214,7 @@ export const AnnouncementModal = ({
               <label className="block text-sm font-semibold text-gray-900 mb-2">Recipients</label>
               <div className="grid grid-cols-2 gap-2">
                 <button
-                  onClick={() => setMode('all')}
+                  onClick={() => { setMode('all'); if (kind === 'summons') { setKind('free'); setMessage(''); } }}
                   disabled={isSending}
                   className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${
                     mode === 'all'
@@ -241,6 +291,7 @@ export const AnnouncementModal = ({
                                 id: learner.id,
                                 name: learner.fullName || learner.name || 'Unknown',
                                 studentId: learner.studentId,
+                                className: learner.className,
                               });
                               setSearchTerm('');
                             }}
@@ -264,29 +315,150 @@ export const AnnouncementModal = ({
               </div>
             )}
 
+            {/* Message type (one parent only) */}
+            {mode === 'student' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">Message type</label>
+                <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Message type">
+                  {([
+                    ['free', MessageSquare, 'Free message', 'Type your own text'],
+                    ['summons', Building2, 'Summon to office', 'Ready-made, 1 SMS'],
+                  ] as const).map(([k, Icon, title, sub]) => (
+                    <button
+                      key={k}
+                      role="radio"
+                      aria-checked={kind === k}
+                      onClick={() => { if (kind !== k) { setKind(k); setMessage(''); } }}
+                      disabled={isSending}
+                      className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${
+                        kind === k ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300 bg-white'
+                      }`}
+                    >
+                      <div className={`p-2 rounded-lg ${kind === k ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'}`}>
+                        <Icon size={18} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-sm text-gray-900">{title}</p>
+                        <p className="text-xs text-gray-500 truncate">{sub}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Summons details */}
+            {isSummons && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-gray-700">Date</span>
+                  <input
+                    type="date"
+                    aria-label="Summons date"
+                    value={summons.date}
+                    onChange={e => setSummonsField('date', e.target.value)}
+                    disabled={isSending}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-gray-700">Time</span>
+                  <input
+                    type="time"
+                    aria-label="Summons time"
+                    value={summons.time}
+                    onChange={e => setSummonsField('time', e.target.value)}
+                    disabled={isSending}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-gray-700">Report to</span>
+                  <select
+                    aria-label="Report to"
+                    value={summons.place}
+                    onChange={e => setSummonsField('place', e.target.value as SummonsPlace)}
+                    disabled={isSending}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                  >
+                    {(Object.keys(PLACE_LABEL) as SummonsPlace[]).map(k => (
+                      <option key={k} value={k}>{PLACE_LABEL[k].replace(/^the /, '').replace(/^./, c => c.toUpperCase())}</option>
+                    ))}
+                  </select>
+                </label>
+                <fieldset>
+                  <legend className="mb-1 block text-xs font-medium text-gray-700">Sign as</legend>
+                  <div className="flex gap-2">
+                    {(Object.keys(SIGNER_LABEL) as SummonsSigner[]).map(k => (
+                      <label
+                        key={k}
+                        className={`flex-1 cursor-pointer rounded-lg border px-3 py-2 text-center text-sm ${
+                          summons.signer === k ? 'border-blue-500 bg-blue-50 font-medium text-blue-800' : 'border-gray-300 text-gray-700'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="summons-signer"
+                          className="sr-only"
+                          checked={summons.signer === k}
+                          onChange={() => setSummonsField('signer', k)}
+                          disabled={isSending}
+                        />
+                        {k}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <label className="block sm:col-span-2">
+                  <span className="mb-1 block text-xs font-medium text-gray-700">Call-back number (optional)</span>
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    aria-label="Call-back number"
+                    value={summons.phone}
+                    onChange={e => setSummonsField('phone', e.target.value)}
+                    placeholder="e.g. 0977 123 456"
+                    disabled={isSending}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <span className="mt-1 block text-[11px] text-gray-500">Left out automatically if the message would not fit in one SMS.</span>
+                </label>
+                {!selectedStudent && (
+                  <p className="sm:col-span-2 text-xs text-gray-500">Choose the learner above to see the message.</p>
+                )}
+              </div>
+            )}
+
             {/* Message */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-semibold text-gray-900">Message</label>
-                <span className={`text-xs ${overLimit ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
-                  {charCount} / {MAX_LENGTH} • {smsSegments} SMS{smsSegments > 1 ? 'es' : ''}
+                <label className="block text-sm font-semibold text-gray-900">{isSummons ? 'Message preview' : 'Message'}</label>
+                <span className={`text-xs ${overLimit ? 'text-red-600 font-semibold' : 'text-gray-500'}`} aria-label="Message length">
+                  {isSummons ? `${len.chars} / ${ONE_SMS}` : `${charCount} / ${MAX_LENGTH}`} • {smsSegments} SMS{smsSegments > 1 ? 'es' : ''}
                 </span>
               </div>
               <textarea
                 value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Type your announcement here... e.g. School closes for mid-term on Friday 3rd Oct at 12:00. Buses depart at 13:00."
-                rows={6}
-                disabled={isSending}
+                onChange={(e) => setMessage(isSummons ? toGsm7(e.target.value) : e.target.value)}
+                aria-label="Message"
+                placeholder={isSummons ? 'The message appears here once you choose the learner.' : 'Type your announcement here... e.g. School closes for mid-term on Friday 3rd Oct at 12:00. Buses depart at 13:00.'}
+                rows={isSummons ? 4 : 6}
+                disabled={isSending || (isSummons && !selectedStudent)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
               />
-              {charCount > WARN_LENGTH && !overLimit && (
+              {isSummons && overLimit && (
+                <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
+                  <AlertTriangle size={12} />
+                  A summons must fit in one SMS ({ONE_SMS} characters). Shorten the text.
+                </p>
+              )}
+              {!isSummons && charCount > WARN_LENGTH && !overLimit && (
                 <p className="mt-1 text-xs text-amber-700 flex items-center gap-1">
                   <AlertTriangle size={12} />
                   This will be sent as {smsSegments} separate SMS messages per recipient.
                 </p>
               )}
-              {overLimit && (
+              {!isSummons && overLimit && (
                 <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
                   <AlertTriangle size={12} />
                   Message exceeds {MAX_LENGTH} characters. Shorten it.
@@ -308,7 +480,7 @@ export const AnnouncementModal = ({
               {mode === 'all'
                 ? 'Sending to all active parents'
                 : selectedStudent
-                ? `Sending to ${selectedStudent.name}'s guardian`
+                ? `${isSummons ? 'Summoning' : 'Sending to'} ${selectedStudent.name}'s guardian`
                 : 'Select a student to continue'}
             </p>
             <div className="flex items-center gap-2">
@@ -342,4 +514,4 @@ export const AnnouncementModal = ({
       </div>
     </div>
   );
-};
+};

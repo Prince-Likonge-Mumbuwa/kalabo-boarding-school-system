@@ -17,6 +17,21 @@ school are doing. Every number opens the page behind it.
    Buttons: new class, announce, **copy the daily brief** or **send it on
    WhatsApp**, the **Head teacher / Operations** focus (which column comes
    first; remembered in the browser), when the data was updated, Refresh.
+
+   **Announce → One Parent → Summon to office** sends a parent a ready-made
+   summons that always fits in **one SMS** (160 characters):
+   `Kalabo Boarding Sec: Parent of John Mwale (Grade 10A), please report to
+   the Head's office on Thu 29 Oct at 09:00. Tel 0977123456. -The Head`.
+   The admin picks the learner, date (default next school day), time,
+   *Report to* (Head's office, Deputy Head's office, Guidance office, form
+   teacher), *Sign as* (Head / Deputy Head) and an optional call-back number
+   (remembered in the browser). Long names are shortened automatically
+   (middle names to initials, "Grade 10A" to "10A", the number left out);
+   the preview can be edited but Send is blocked past one SMS, and smart
+   quotes, dashes and emoji are made plain so the SMS stays at 160
+   characters. A summons cannot go to all parents. The `announcements` and
+   `messages` docs record `category: 'summons'` (template:
+   `client/services/smsTemplates.ts`).
 2. **Needs attention** — only what is wrong, worst first (Urgent / Soon /
    Note, each with an icon and words), each linking to where it is fixed.
    "All clear" when nothing is wrong. The first 8 show; *Show all* for more.

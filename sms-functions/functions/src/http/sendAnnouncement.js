@@ -3,7 +3,9 @@
 //   message: string,
 //   target: { type: 'all' } | { type: 'student', studentId: string },
 //   senderName: string,
-//   senderUid: string
+//   senderUid: string,
+//   category?: 'general' | 'summons',
+//   summons?: { date, time, place, signer }   (category = summons)
 // }
 // Sends a free-form SMS to guardians of active learners.
 // Bulk: all learners. Personal: one learner.
@@ -34,6 +36,13 @@ exports.sendAnnouncement = onRequest(
   async (req, res) => {
     try {
       const { message, target, senderName, senderUid } = req.body;
+      const category = req.body.category === 'summons' ? 'summons' : 'general';
+      const summons = category === 'summons' && req.body.summons ? {
+        date: String(req.body.summons.date || ''),
+        time: String(req.body.summons.time || ''),
+        place: String(req.body.summons.place || ''),
+        signer: String(req.body.summons.signer || ''),
+      } : null;
 
       // Validate message
       if (!message || typeof message !== 'string' || message.trim().length === 0) {
@@ -50,6 +59,9 @@ exports.sendAnnouncement = onRequest(
       // Validate target
       if (!target || !target.type) {
         return res.status(400).json({ success: false, error: 'Target is required' });
+      }
+      if (category === 'summons' && target.type !== 'student') {
+        return res.status(400).json({ success: false, error: 'A summons goes to one parent only' });
       }
 
       // -------- Collect learners --------
@@ -100,6 +112,8 @@ exports.sendAnnouncement = onRequest(
       // -------- Create announcement doc --------
       const announcementRef = await db.collection('announcements').add({
         message: trimmedMessage,
+        category,
+        summons,
         target: {
           type: target.type,
           studentId: target.studentId || null,
@@ -158,6 +172,7 @@ exports.sendAnnouncement = onRequest(
             guardianPhone: validated.number,
             carrier: validated.carrier,
             type: 'announcement',
+            category,
             announcementId: announcementRef.id,
             campaignId: null,
             term: null,
@@ -214,4 +229,4 @@ exports.sendAnnouncement = onRequest(
       return res.status(500).json({ success: false, error: err.message });
     }
   }
-);
+);
