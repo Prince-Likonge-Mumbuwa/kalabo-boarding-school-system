@@ -32,6 +32,8 @@ import {
   where,
   writeBatch,
   setDoc,
+  Timestamp,
+  serverTimestamp,
 } from '@/lib/auditedFirestore';
 import { loadClosedMembership } from '@/services/enrollmentService';
 import { db } from '@/lib/firebase';
@@ -313,7 +315,7 @@ export interface DuplicateSlotGroup {
   classId: string;
   className: string;
   subject: string;
-  slots: Array<{ id: string; subject: string; teacher: string | null }>;
+  slots: Array<{ id: string; subject: string; teacher: string | null; ownerTeacherId?: string | null; delegateTeacherId?: string | null }>;
 }
 
 export interface SpellingReport {
@@ -360,7 +362,13 @@ export async function findSubjectSpellings(): Promise<SpellingReport> {
     const subject = normalizeSubjectName(x.normalizedSubject || x.subject || '');
     const key = `${x.classId}|${subject}`;
     const g = slotsBy.get(key) ?? { classId: x.classId, className: classNames.get(x.classId) ?? x.classId, subject, slots: [] };
-    g.slots.push({ id: d.id, subject: x.subject || x.normalizedSubject || '', teacher: x.ownerTeacherName || x.delegateTeacherName || null });
+    g.slots.push({
+      id: d.id,
+      subject: x.subject || x.normalizedSubject || '',
+      teacher: x.ownerTeacherName || x.delegateTeacherName || null,
+      ownerTeacherId: x.ownerTeacherId ?? null,
+      delegateTeacherId: x.delegateTeacherId ?? null,
+    });
     slotsBy.set(key, g);
   }
   const duplicateSlots = [...slotsBy.values()]
@@ -449,4 +457,101 @@ export async function fixSubjectSpellings(
     onProgress?.(Math.min(i + BATCH, ops.length), ops.length);
   }
   return { moved, droppedOlder, skipped };
+}
+
+// ==================== ONE ASSIGNMENT PER SUBJECT ====================
+
+export type SlotMergePlan =
+  | { kind: 'merge'; group: DuplicateSlotGroup; keep: string; remove: string[] }
+  | { kind: 'decide'; group: DuplicateSlotGroup; reason: string };
+
+const slotTeachers = (s: DuplicateSlotGroup['slots'][number]) =>
+  [s.ownerTeacherId, s.delegateTeacherId].filter((x): x is string => !!x).sort().join('+');
+
+/**
+ * Which assignment of a class's subject to keep. Keeps the one with a teacher
+ * (if two have the SAME teacher, the correctly spelt one); a subject assigned
+ * to two DIFFERENT teachers is left for the admin to decide.
+ */
+export function planSlotMerge(g: DuplicateSlotGroup): SlotMergePlan {
+  const staffed = g.slots.filter(s => slotTeachers(s));
+  const people = new Set(staffed.map(slotTeachers));
+  if (people.size > 1) {
+    const names = [...new Set(staffed.map(s => s.teacher || 'a teacher'))];
+    return { kind: 'decide', group: g, reason: `assigned to ${names.join(' and ')} — choose who teaches it` };
+  }
+  const candidates = staffed.length ? staffed : g.slots;
+  const canonical = `${g.classId}__${slotKeyFor(g.classId, g.subject)}`;
+  const keep = (candidates.find(s => s.id === canonical) ?? candidates[0]).id;
+  return { kind: 'merge', group: g, keep, remove: g.slots.map(s => s.id).filter(id => id !== keep) };
+}
+
+export interface SlotMergeResult {
+  classesFixed: number;
+  assignmentsRemoved: number;
+  marksMoved: number;
+  registersMoved: number;
+  timetableMoved: number;
+  teacherRowsClosed: number;
+  /** Left for the admin. */
+  toDecide: Array<{ className: string; subject: string; reason: string }>;
+}
+
+/**
+ * For each class with two assignments for one subject: move the marks
+ * (their rules key), attendance registers and live timetable periods of the
+ * extra assignment(s) to the one kept, close the extra assignment's teacher
+ * rows ("removed"), then delete the extra assignment.
+ */
+export async function mergeDuplicateSlots(
+  groups: DuplicateSlotGroup[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<SlotMergeResult> {
+  const out: SlotMergeResult = { classesFixed: 0, assignmentsRemoved: 0, marksMoved: 0, registersMoved: 0, timetableMoved: 0, teacherRowsClosed: 0, toDecide: [] };
+  const plans = groups.map(planSlotMerge);
+  const merges = plans.filter((p): p is Extract<SlotMergePlan, { kind: 'merge' }> => p.kind === 'merge');
+  for (const p of plans) if (p.kind === 'decide') out.toDecide.push({ className: p.group.className, subject: p.group.subject, reason: p.reason });
+
+  let done = 0;
+  onProgress?.(0, merges.length);
+  for (const { group, keep, remove } of merges) {
+    const keyOf = (slotId: string) => slotId.slice(group.classId.length + 2);
+    const keepKey = keyOf(keep);
+    const ops: Array<(b: ReturnType<typeof writeBatch>) => void> = [];
+
+    const classResults = await getDocs(query(collection(db, 'results'), where('classId', '==', group.classId)));
+    for (const slotId of remove) {
+      const removedKey = keyOf(slotId);
+      for (const d of classResults.docs) {
+        if ((d.data() as any).normalizedSubject !== removedKey) continue;
+        ops.push(b => b.update(doc(db, 'results', d.id), { normalizedSubject: keepKey }));
+        out.marksMoved++;
+      }
+      const [sessions, entries, rows] = await Promise.all([
+        getDocs(query(collection(db, 'attendance_sessions'), where('slotId', '==', slotId))),
+        getDocs(query(collection(db, 'timetable_entries'), where('slotId', '==', slotId))),
+        getDocs(query(collection(db, 'teacher_assignments'), where('slotId', '==', slotId))),
+      ]);
+      for (const d of sessions.docs) {
+        ops.push(b => b.update(doc(db, 'attendance_sessions', d.id), { slotId: keep, normalizedSubject: keepKey }));
+        out.registersMoved++;
+      }
+      for (const d of entries.docs) {
+        ops.push(b => b.update(doc(db, 'timetable_entries', d.id), { slotId: keep }));
+        out.timetableMoved++;
+      }
+      for (const d of rows.docs) {
+        if ((d.data() as any).status === 'ended') continue; // history stays as it is
+        ops.push(b => b.update(doc(db, 'teacher_assignments', d.id), { status: 'ended', endReason: 'removed', endDate: Timestamp.now(), updatedAt: serverTimestamp() }));
+        out.teacherRowsClosed++;
+      }
+      ops.push(b => b.delete(doc(db, 'class_slots', slotId)));
+      out.assignmentsRemoved++;
+    }
+    // Links first, the extra assignment last (deletes are in the last batch).
+    await commitInBatches(ops);
+    out.classesFixed++;
+    onProgress?.(++done, merges.length);
+  }
+  return out;
 }
