@@ -211,16 +211,38 @@ export async function fixMissingStudentIndex(items: Array<{ id: string; classId:
   return items.length;
 }
 
-/** Add `normalizedSubject` (the slot key) to results rows missing it. */
+/**
+ * Add `normalizedSubject` (the slot key) to results rows missing it — the key
+ * of the class's REAL subject assignment, whatever spelling it was created
+ * under (an assignment made as "PRINCIPLES OF ACCOUNTS" keeps that key), so
+ * the teacher can still edit the marks once the rules check it. Reads the
+ * rows and the assignments once.
+ */
 export async function fixMissingNormalizedSubject(resultIds: string[]): Promise<number> {
+  const wanted = new Set(resultIds);
+  const [resultSnap, slotSnap] = await Promise.all([getDocs(collection(db, 'results')), getDocs(collection(db, 'class_slots'))]);
+
+  // classId → subject (one spelling) → slot key; an assignment with a teacher wins.
+  const slotKeys = new Map<string, Map<string, { key: string; staffed: boolean }>>();
+  for (const d of slotSnap.docs) {
+    const x = d.data() as any;
+    if (!x.classId || x.isFormTeacherSlot || !d.id.startsWith(`${x.classId}__`)) continue;
+    const subject = normalizeSubjectName(x.normalizedSubject || x.subject || '');
+    const staffed = !!(x.ownerTeacherId || x.delegateTeacherId);
+    const m = slotKeys.get(x.classId) ?? new Map();
+    const prev = m.get(subject);
+    if (!prev || (!prev.staffed && staffed)) m.set(subject, { key: d.id.slice(x.classId.length + 2), staffed });
+    slotKeys.set(x.classId, m);
+  }
+
   const ops: Array<(b: ReturnType<typeof writeBatch>) => void> = [];
-  for (const id of resultIds) {
-    const snap = await getDoc(doc(db, 'results', id));
-    if (!snap.exists()) continue;
-    const r = snap.data() as any;
+  for (const d of resultSnap.docs) {
+    if (!wanted.has(d.id)) continue;
+    const r = d.data() as any;
     if (r.normalizedSubject || !r.classId || !r.subjectId) continue;
-    const key = slotKeyFor(r.classId, r.subjectId);
-    ops.push(b => b.update(doc(db, 'results', id), { normalizedSubject: key }));
+    const subject = normalizeSubjectName(r.subjectId);
+    const key = slotKeys.get(r.classId)?.get(subject)?.key ?? slotKeyFor(r.classId, subject);
+    ops.push(b => b.update(doc(db, 'results', d.id), { normalizedSubject: key }));
   }
   await commitInBatches(ops);
   return ops.length;
