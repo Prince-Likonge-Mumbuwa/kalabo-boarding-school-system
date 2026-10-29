@@ -351,32 +351,56 @@ export async function findSubjectSpellings(): Promise<SpellingReport> {
 const updatedMs = (v: any): number =>
   v?.toMillis ? v.toMillis() : v?.toDate ? v.toDate().getTime() : v ? new Date(v).getTime() || 0 : 0;
 
+export interface JoinSpellingsResult {
+  /** Marks now saved under the one spelling. */
+  moved: number;
+  /** Older marks for the same learner and test that were removed. */
+  droppedOlder: number;
+  /** Marks that could not be moved, with why. */
+  skipped: Array<{ id: string; reason: string }>;
+}
+
 /**
- * Save the rows of these groups under the one spelling (new document id,
- * subjectId, subjectName). When the learner already has a mark for that
- * subject and test under the right spelling, the NEWER of the two is kept.
- * The row keeps its normalizedSubject (the assignment the rules check).
- * Returns how many rows were moved and how many older duplicates were dropped.
+ * Save the marks of these groups under the one spelling (new document id,
+ * subjectId, subjectName). When a learner has a mark for the same subject and
+ * test under more than one spelling, the NEWEST is kept. The row keeps its
+ * normalizedSubject (the assignment the rules check).
+ *
+ * Reads the results ONCE (not mark by mark — that took minutes with every
+ * term's marks) and reports progress as batches are saved.
  */
-export async function fixSubjectSpellings(groups: SpellingGroup[]): Promise<{ moved: number; droppedOlder: number }> {
+export async function fixSubjectSpellings(
+  groups: SpellingGroup[],
+  onProgress?: (saved: number, total: number) => void,
+): Promise<JoinSpellingsResult> {
+  const wanted = new Set(groups.flatMap(g => g.resultIds));
+  const snap = await getDocs(collection(db, 'results'));
+  const all = new Map(snap.docs.map(d => [d.id, d.data() as any]));
+  const skipped: JoinSpellingsResult['skipped'] = [];
+
   // Every mark that should end up under one document id, with the one
   // already saved there (if any). The newest of them wins.
   const targets = new Map<string, Array<{ id: string; data: any; ms: number; atTarget: boolean }>>();
-  for (const g of groups) {
-    for (const id of g.resultIds) {
-      const snap = await getDoc(doc(db, 'results', id));
-      if (!snap.exists()) continue;
-      const r = snap.data() as any;
-      const to = normalizeSubjectName(r.subjectId || '');
-      if (!to || to === r.subjectId) continue;
-      const newId = resultId(r.studentId, to, r.examType, r.term, Number(r.year));
-      if (!targets.has(newId)) {
-        const there = newId === id ? null : await getDoc(doc(db, 'results', newId));
-        targets.set(newId, there?.exists() ? [{ id: newId, data: there.data(), ms: updatedMs(there.data().updatedAt ?? there.data().createdAt), atTarget: true }] : []);
-      }
-      const fixed = { ...r, id: newId, subjectId: to, subjectName: isKnownSubject(to) ? to : r.subjectName || to, spellingFixedFrom: r.subjectId };
-      targets.get(newId)!.push({ id, data: fixed, ms: updatedMs(r.updatedAt ?? r.createdAt), atTarget: false });
+  for (const id of wanted) {
+    const r = all.get(id);
+    if (!r) continue; // already gone
+    const to = normalizeSubjectName(r.subjectId || '');
+    if (!to || to === r.subjectId) continue; // already fixed
+    if (!r.studentId || !r.examType || !r.term || !r.year) {
+      skipped.push({ id, reason: 'missing learner, test, term or year' });
+      continue;
     }
+    const newId = resultId(r.studentId, to, r.examType, String(r.term), Number(r.year));
+    if (newId.includes('/') || newId.length > 1400) {
+      skipped.push({ id, reason: `the subject name "${to}" cannot be used in a record name` });
+      continue;
+    }
+    if (!targets.has(newId)) {
+      const there = all.get(newId);
+      targets.set(newId, there ? [{ id: newId, data: there, ms: updatedMs(there.updatedAt ?? there.createdAt), atTarget: true }] : []);
+    }
+    const fixed = { ...r, id: newId, subjectId: to, subjectName: isKnownSubject(to) ? to : r.subjectName || to, spellingFixedFrom: r.subjectId };
+    targets.get(newId)!.push({ id, data: fixed, ms: updatedMs(r.updatedAt ?? r.createdAt), atTarget: false });
   }
 
   const ops: Array<(b: ReturnType<typeof writeBatch>) => void> = [];
@@ -395,6 +419,12 @@ export async function fixSubjectSpellings(groups: SpellingGroup[]): Promise<{ mo
     }
     droppedOlder += rows.length - 1;
   }
-  await commitInBatches(ops);
-  return { moved, droppedOlder };
+  onProgress?.(0, ops.length);
+  for (let i = 0; i < ops.length; i += BATCH) {
+    const b = writeBatch(db);
+    ops.slice(i, i + BATCH).forEach(op => op(b));
+    await b.commit();
+    onProgress?.(Math.min(i + BATCH, ops.length), ops.length);
+  }
+  return { moved, droppedOlder, skipped };
 }

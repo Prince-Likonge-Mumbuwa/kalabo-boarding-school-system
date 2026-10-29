@@ -70,7 +70,7 @@ describe('Results Data Check', () => {
     expect(r.duplicateSlots.map(d => [d.className, d.subject, d.slots.length])).toEqual([['Form 1A', 'Principles of Accounts', 2]]);
 
     const fixed = await fixSubjectSpellings(r.groups);
-    expect(fixed).toEqual({ moved: 2, droppedOlder: 1 });
+    expect(fixed).toEqual({ moved: 2, droppedOlder: 1, skipped: [] });
 
     const rows = [...store.get('results')!.entries()];
     const poa = rows.filter(([, x]: any) => /acc/i.test(x.subjectId));
@@ -90,5 +90,20 @@ describe('Results Data Check', () => {
     });
     await fixSubjectSpellings((await findSubjectSpellings()).groups);
     expect(getDocData('results', 'docB_Principles of Accounts_endOfTerm_Term3_2026')).toMatchObject({ marks: 88 });
+  });
+});
+
+describe('Results Data Check — marks that cannot be moved', () => {
+  it('reports them instead of failing everything', async () => {
+    store.get('results')!.set('odd1', { studentId: 'docA', classId: 'C1', subjectId: 'PRINCIPLES OF ACCOUNTS', examType: 'week4', marks: 3 }); // no term/year
+    const r = await fixSubjectSpellings((await findSubjectSpellings()).groups);
+    expect(r.skipped).toEqual([{ id: 'odd1', reason: 'missing learner, test, term or year' }]);
+    expect(r.moved).toBe(2);
+  });
+  it('reports progress', async () => {
+    const seen: Array<[number, number]> = [];
+    await fixSubjectSpellings((await findSubjectSpellings()).groups, (a, b) => seen.push([a, b]));
+    expect(seen[0]).toEqual([0, 5]);          // 2 marks moved (save + delete each) + docB's older mark removed
+    expect(seen[seen.length - 1]).toEqual([5, 5]);
   });
 });

@@ -21,6 +21,7 @@ import {
   findSubjectSpellings,
   fixSubjectSpellings,
   type SpellingReport,
+  type JoinSpellingsResult,
   type DataCheckReport,
   type WrongTermGroup,
 } from '@/services/resultsDataCheck';
@@ -81,8 +82,7 @@ export default function ResultsDataCheck() {
       resultsService.invalidateGrid();
       setNotice(msg);
       setPending(null);
-      if (report) await check();
-      if (spellings) await checkSpellings();
+      await check();
     } catch (e: any) {
       setError(e?.message || 'The fix failed.');
       setPending(null);
@@ -128,23 +128,7 @@ export default function ResultsDataCheck() {
         {error && <div className="bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg p-3">{error}</div>}
         {notice && <div className="bg-green-50 border border-green-200 text-green-800 text-sm rounded-lg p-3">{notice}</div>}
 
-        <SpellingsCard
-          report={spellings}
-          checking={checkingSpellings}
-          onCheck={checkSpellings}
-          onFix={() => spellings && setPending({
-            title: 'Join the spellings of each subject?',
-            message:
-              `${spellings.groups.reduce((n, g) => n + g.resultIds.length, 0)} mark(s) saved under another spelling will be saved under the subject's ` +
-              `one spelling (e.g. "${spellings.groups[0]?.from}" → "${spellings.groups[0]?.to}"). Marks are not changed. ` +
-              `If a learner has a mark for the same test under both spellings, the newer mark is kept.`,
-            run: async () => {
-              const r = await fixSubjectSpellings(spellings.groups);
-              return `${r.moved} mark(s) now under the right subject name` +
-                (r.droppedOlder ? `; ${r.droppedOlder} older duplicate mark(s) removed.` : '.');
-            },
-          })}
-        />
+        <SpellingsCard report={spellings} checking={checkingSpellings} onCheck={checkSpellings} />
 
         {report && (
           <>
@@ -323,9 +307,41 @@ function Section({
 }
 
 /** Same subject saved under different spellings — all terms, separate from the term check. */
-function SpellingsCard({ report, checking, onCheck, onFix }: { report: SpellingReport | null; checking: boolean; onCheck: () => void; onFix: () => void }) {
+export function SpellingsCard({ report, checking, onCheck }: { report: SpellingReport | null; checking: boolean; onCheck: () => Promise<void> | void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [joining, setJoining] = useState(false);
+  const [progress, setProgress] = useState<[number, number] | null>(null);
+  const [outcome, setOutcome] = useState<JoinSpellingsResult | null>(null);
+  const [joinError, setJoinError] = useState('');
+
   const rows = report?.groups.reduce((n, g) => n + g.resultIds.length, 0) ?? 0;
   const ok = !!report && report.groups.length === 0 && report.duplicateSlots.length === 0;
+
+  const join = async () => {
+    if (!report) return;
+    setConfirming(false);
+    setJoining(true);
+    setJoinError('');
+    setOutcome(null);
+    setProgress([0, 0]);
+    try {
+      const r = await fixSubjectSpellings(report.groups, (done, total) => setProgress([done, total]));
+      resultsService.invalidateGrid();
+      setOutcome(r);
+      await onCheck();
+    } catch (e: any) {
+      console.error('Join spellings failed', e);
+      setJoinError(
+        e?.code === 'permission-denied'
+          ? 'The database refused the change. Only an administrator can join spellings — sign in again as an administrator and retry.'
+          : `Joining failed: ${e?.message || e}. Nothing after the last saved batch was changed; you can run it again.`,
+      );
+    } finally {
+      setJoining(false);
+      setProgress(null);
+    }
+  };
+
   return (
     <div className={`rounded-xl border p-4 ${!report ? 'bg-white border-gray-200' : ok ? 'bg-green-50/40 border-green-200' : 'bg-amber-50/40 border-amber-200'}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -340,41 +356,78 @@ function SpellingsCard({ report, checking, onCheck, onFix }: { report: SpellingR
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={onCheck} disabled={checking} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-xs disabled:opacity-50">
+          <button onClick={() => onCheck()} disabled={checking || joining} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-xs disabled:opacity-50">
             {checking ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />} {report ? 'Check again' : 'Check spellings'}
           </button>
           {report && report.groups.length > 0 && (
-            <button onClick={onFix} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs">Join spellings ({rows} marks)</button>
+            <button onClick={() => setConfirming(true)} disabled={joining || checking} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-50">
+              {joining && <Loader2 size={12} className="animate-spin" />} Join spellings ({rows} marks)
+            </button>
           )}
         </div>
       </div>
-      {report && (
-        <div className="mt-2 space-y-2 text-xs text-gray-700" aria-live="polite">
-          <p>{report.totalRows} mark rows checked.{ok && ' Every subject is saved under one spelling.'}</p>
-          {report.groups.length > 0 && (
-            <ul className="ml-5 list-disc" aria-label="Spellings to join">
-              {report.groups.slice(0, 30).map(g => (
-                <li key={`${g.from}|${g.to}`}>
-                  &ldquo;{g.from}&rdquo; → <strong>{g.to}</strong>: {g.resultIds.length} mark(s), {g.classIds.length} class(es), {g.terms.join(', ')}
-                </li>
-              ))}
-              {report.groups.length > 30 && <li>…and {report.groups.length - 30} more</li>}
-            </ul>
-          )}
-          {report.duplicateSlots.length > 0 && (
-            <div>
-              <p className="font-medium text-gray-900">Classes with two assignments for one subject (fix by hand in Teacher Management — remove the extra one):</p>
-              <ul className="ml-5 list-disc" aria-label="Duplicate subject assignments">
-                {report.duplicateSlots.map(g => (
-                  <li key={`${g.classId}|${g.subject}`}>
-                    {g.className} • {g.subject}: {g.slots.map(s => `"${s.subject}"${s.teacher ? ` (${s.teacher})` : ' (no teacher)'}`).join(' and ')}
+
+      <div className="mt-2 space-y-2 text-xs text-gray-700" aria-live="polite">
+        {joining && (
+          <p className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-blue-900">
+            <Loader2 size={14} className="animate-spin" />
+            {progress && progress[1] > 0 ? `Saving… ${progress[0]} of ${progress[1]} changes` : 'Reading the marks…'}
+          </p>
+        )}
+        {joinError && <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-red-800" role="alert">{joinError}</p>}
+        {outcome && !joining && (
+          <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-green-900" role="status">
+            {outcome.moved} mark(s) now under the right subject name
+            {outcome.droppedOlder > 0 && `; ${outcome.droppedOlder} older duplicate mark(s) removed`}.
+            {outcome.skipped.length > 0 && (
+              <span className="block text-amber-800">
+                {outcome.skipped.length} mark(s) could not be moved: {[...new Set(outcome.skipped.map(x => x.reason))].join('; ')}.
+              </span>
+            )}
+          </div>
+        )}
+        {report && (
+          <>
+            <p>{report.totalRows} mark rows checked.{ok && ' Every subject is saved under one spelling.'}</p>
+            {report.groups.length > 0 && (
+              <ul className="ml-5 list-disc" aria-label="Spellings to join">
+                {report.groups.slice(0, 30).map(g => (
+                  <li key={`${g.from}|${g.to}`}>
+                    &ldquo;{g.from}&rdquo; → <strong>{g.to}</strong>: {g.resultIds.length} mark(s), {g.classIds.length} class(es), {g.terms.join(', ')}
                   </li>
                 ))}
+                {report.groups.length > 30 && <li>…and {report.groups.length - 30} more</li>}
               </ul>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+            {report.duplicateSlots.length > 0 && (
+              <div>
+                <p className="font-medium text-gray-900">Classes with two assignments for one subject (fix by hand in Teacher Management — remove the extra one):</p>
+                <ul className="ml-5 list-disc" aria-label="Duplicate subject assignments">
+                  {report.duplicateSlots.map(g => (
+                    <li key={`${g.classId}|${g.subject}`}>
+                      {g.className} • {g.subject}: {g.slots.map(s => `"${s.subject}"${s.teacher ? ` (${s.teacher})` : ' (no teacher)'}`).join(' and ')}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <ConfirmationModal
+        isOpen={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={join}
+        title="Join the spellings of each subject?"
+        message={
+          `${rows} mark(s) saved under another spelling will be saved under the subject's one spelling` +
+          (report?.groups[0] ? ` (e.g. "${report.groups[0].from}" → "${report.groups[0].to}")` : '') +
+          '. Mark values are not changed. If a learner has a mark for the same test under two spellings, the newer mark is kept.'
+        }
+        type="transfer"
+        confirmText="Yes, join them"
+      />
     </div>
   );
 }
