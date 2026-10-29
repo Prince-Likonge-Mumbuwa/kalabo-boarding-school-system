@@ -9,7 +9,7 @@ vi.mock('firebase/auth', () => ({ getAuth: () => ({ currentUser: { uid: 'ADMIN' 
 
 import { resetStore, store, getDocData } from '../test/fakeFirestore';
 import { resultsService } from './resultsService';
-import { findSubjectSpellings, fixSubjectSpellings } from './resultsDataCheck';
+import { findSubjectSpellings, fixSubjectSpellings, fixMissingNormalizedSubject } from './resultsDataCheck';
 
 const TERM = 'Term 3';
 const YEAR = 2026;
@@ -105,5 +105,23 @@ describe('Results Data Check — marks that cannot be moved', () => {
     await fixSubjectSpellings((await findSubjectSpellings()).groups, (a, b) => seen.push([a, b]));
     expect(seen[0]).toEqual([0, 5]);          // 2 marks moved (save + delete each) + docB's older mark removed
     expect(seen[seen.length - 1]).toEqual([5, 5]);
+  });
+});
+
+describe('Results Data Check — adding the missing subject key', () => {
+  it('uses the class\'s real assignment, even one created under an older spelling', async () => {
+    const slots = store.get('class_slots')!;
+    slots.delete('C1__Principles of Accounts');
+    slots.set('C1__PRINCIPLES OF ACCOUNTS', { classId: 'C1', subject: 'PRINCIPLES OF ACCOUNTS', normalizedSubject: 'PRINCIPLES OF ACCOUNTS', ownerTeacherId: 'T1' });
+    const res = store.get('results')!;
+    for (const [id, r] of res) delete (r as any).normalizedSubject;
+    const ids = [...res.keys()];
+    expect(await fixMissingNormalizedSubject(ids)).toBe(ids.length);
+    const key = (id: string) => (getDocData('results', id) as any).normalizedSubject;
+    expect(key('docA_PRINCIPLES OF ACCOUNTS_endOfTerm_Term3_2026')).toBe('PRINCIPLES OF ACCOUNTS'); // the staffed assignment
+    expect(key('docC_Priciples of Accounts_endOfTerm_Term3_2026')).toBe('PRINCIPLES OF ACCOUNTS');
+    expect(key('docA_English_endOfTerm_Term3_2026')).toBe('English');
+    // Rows that already have a key are left alone.
+    expect(await fixMissingNormalizedSubject(ids)).toBe(0);
   });
 });
