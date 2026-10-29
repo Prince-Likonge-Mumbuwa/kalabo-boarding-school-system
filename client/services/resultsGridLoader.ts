@@ -13,7 +13,7 @@ import { collection, doc, getDoc, getDocs, query, where, type DocumentData } fro
 import { db } from '@/lib/firebase';
 import * as engine from '@/services/assignmentEngine';
 import { examConfigService } from '@/services/examConfigService';
-import { normalizeSubjectName } from '@/services/resultsService';
+import { isKnownSubject, normalizeSubjectName } from '@/services/resultsService';
 import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import { loadClosedClassEnrollments } from '@/services/enrollmentService';
 import { isExamWrittenBy, type ExamConfig } from '@/types/exam';
@@ -136,7 +136,8 @@ const subjectFromSlot = (slot: engine.ClassSlot, now: Date): LoadedSubject => {
   const normalized = normalizeSubjectName(slot.normalizedSubject || slot.subject);
   return {
     subjectId: normalized,
-    subjectName: slot.subject || normalized,
+    // A known subject shows its proper name, however the slot was typed.
+    subjectName: isKnownSubject(normalized) ? normalized : slot.subject || normalized,
     ownerTeacherId: slot.ownerTeacherId,
     ownerTeacherName: slot.ownerTeacherName,
     operatorTeacherId: auth.operatorTeacherId,
@@ -203,9 +204,23 @@ export async function loadClassSubjects(classId: string, now = new Date()): Prom
   const slotSnap = await getDocs(query(collection(db, 'class_slots'), where('classId', '==', classId)));
   const slots = slotSnap.docs.map(d => engine.mapSlot(d.id, d.data())).filter(s => !s.isFormTeacherSlot);
   const subjects = slots.length > 0
-    ? slots.map(s => subjectFromSlot(s, now))
+    ? mergeSameSubject(slots.map(s => subjectFromSlot(s, now)))
     : await subjectsFromAssignments(classId, now);
   return subjects.sort((a, b) => a.subjectName.localeCompare(b.subjectName));
+}
+
+/**
+ * Two slots of one class whose subjects are the same under different
+ * spellings ("PRINCIPLES OF ACCOUNTS" and "Priciples of Accounts") are ONE
+ * subject: keep the one with a teacher (else the first).
+ */
+export function mergeSameSubject(subjects: LoadedSubject[]): LoadedSubject[] {
+  const by = new Map<string, LoadedSubject>();
+  for (const s of subjects) {
+    const prev = by.get(s.subjectId);
+    if (!prev || (prev.isVacant && !s.isVacant)) by.set(s.subjectId, s);
+  }
+  return [...by.values()];
 }
 
 /**
@@ -223,7 +238,10 @@ export function gridSubjects(subjects: LoadedSubject[], results: RawResult[]): L
 
 export const resultFromDoc = (d: DocumentData): RawResult & { classId: string; teacherId?: string } => ({
   studentId: d.studentId,
-  subjectId: d.subjectId,
+  // Marks saved under another spelling of the subject belong to the same
+  // subject (Results Data Check → "Same subject, different spellings" fixes
+  // the stored rows).
+  subjectId: normalizeSubjectName(d.subjectId || ''),
   examType: d.examType,
   marks: typeof d.marks === 'number' ? d.marks : Number(d.marks),
   totalMarks: d.totalMarks,

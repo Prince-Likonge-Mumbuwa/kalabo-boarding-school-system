@@ -11,6 +11,7 @@
 //   - MUST stay in sync with src/services/resultsService.ts (v7.0.0)
 
 const { getFirestore } = require('firebase-admin/firestore');
+const { makeSubjectNormalizer } = require('./subjectMatch');
 const db = getFirestore();
 
 // ==================== SMS SUBJECT ABBREVIATIONS ====================
@@ -127,16 +128,8 @@ const SUBJECT_NORMALIZATION_MAP = {
   'Music': 'Music', 'MUS': 'Music',
 };
 
-function normalizeSubjectName(subjectName) {
-  if (!subjectName) return '';
-  const trimmed = subjectName.trim();
-  if (SUBJECT_NORMALIZATION_MAP[trimmed]) return SUBJECT_NORMALIZATION_MAP[trimmed];
-  const lower = trimmed.toLowerCase();
-  for (const [k, v] of Object.entries(SUBJECT_NORMALIZATION_MAP)) {
-    if (k.toLowerCase() === lower) return v;
-  }
-  return trimmed;
-}
+// Same forgiving rules as the app (case, spaces, punctuation, small typos).
+const normalizeSubjectName = makeSubjectNormalizer(SUBJECT_NORMALIZATION_MAP);
 
 function getSubjectSmsCode(subjectName) {
   if (!subjectName) return '???';
@@ -328,4 +321,4 @@ module.exports = {
   grade,
   SUBJECT_SMS_ABBREVIATIONS,
   SUBJECT_NORMALIZATION_MAP,
-};
+};

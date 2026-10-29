@@ -19,6 +19,9 @@
 //   6. Results for learners who are no longer active in that class
 //      (moved / archived) — report only; the grid ignores them.
 //   7. Whether system/assignmentEngine.enforceAuthority is on.
+//   8. The same subject saved under different spellings ("PRINCIPLES OF
+//      ACCOUNTS" / "Priciples of Accounts"), in ALL terms, and classes with
+//      two assignments for one subject (findSubjectSpellings).
 
 import {
   collection,
@@ -33,6 +36,7 @@ import {
 import { loadClosedMembership } from '@/services/enrollmentService';
 import { db } from '@/lib/firebase';
 import { slotKeyFor } from '@/services/resultsGridLoader';
+import { isKnownSubject, normalizeSubjectName } from '@/services/resultsService';
 import { isCountedLearner } from '@/services/resultsGrid';
 import { getCurrentAcademicTerm, getTermByName, type TermName } from '@/utils/academicTerm';
 
@@ -269,4 +273,128 @@ export async function enableAuthorityEnforcement(): Promise<void> {
     );
   }
   await setDoc(doc(db, 'system', 'assignmentEngine'), { enforceAuthority: true }, { merge: true });
+}
+
+// ==================== SAME SUBJECT, DIFFERENT SPELLINGS ====================
+
+export interface SpellingGroup {
+  /** As saved, e.g. "PRINCIPLES OF ACCOUNTS". */
+  from: string;
+  /** The one spelling, e.g. "Principles of Accounts". */
+  to: string;
+  resultIds: string[];
+  classIds: string[];
+  terms: string[];
+}
+
+export interface DuplicateSlotGroup {
+  classId: string;
+  className: string;
+  subject: string;
+  slots: Array<{ id: string; subject: string; teacher: string | null }>;
+}
+
+export interface SpellingReport {
+  groups: SpellingGroup[];
+  /** Marks rows in all terms. */
+  totalRows: number;
+  duplicateSlots: DuplicateSlotGroup[];
+}
+
+/**
+ * READ ONLY. Every results row (all terms) whose subject is not saved under
+ * its one spelling, grouped by spelling; and classes that have two subject
+ * assignments for the same subject under different spellings.
+ */
+export async function findSubjectSpellings(): Promise<SpellingReport> {
+  const [resultSnap, slotSnap, classSnap] = await Promise.all([
+    getDocs(collection(db, 'results')),
+    getDocs(collection(db, 'class_slots')),
+    getDocs(collection(db, 'classes')),
+  ]);
+  const by = new Map<string, SpellingGroup & { _c: Set<string>; _t: Set<string> }>();
+  for (const d of resultSnap.docs) {
+    const r = d.data() as any;
+    const from = String(r.subjectId ?? '');
+    if (!from) continue;
+    const to = normalizeSubjectName(from);
+    if (to === from) continue;
+    const key = `${from}\u0000${to}`;
+    const g = by.get(key) ?? { from, to, resultIds: [], classIds: [], terms: [], _c: new Set(), _t: new Set() };
+    g.resultIds.push(d.id);
+    if (r.classId) g._c.add(r.classId);
+    if (r.term) g._t.add(`${r.term} ${r.year}`);
+    by.set(key, g);
+  }
+  const groups = [...by.values()]
+    .map(({ _c, _t, ...g }) => ({ ...g, classIds: [..._c].sort(), terms: [..._t].sort() }))
+    .sort((a, b) => a.to.localeCompare(b.to) || b.resultIds.length - a.resultIds.length);
+
+  const classNames = new Map(classSnap.docs.map(d => [d.id, (d.data().name as string) || d.id]));
+  const slotsBy = new Map<string, DuplicateSlotGroup>();
+  for (const d of slotSnap.docs) {
+    const x = d.data() as any;
+    if (x.isFormTeacherSlot || !x.classId) continue;
+    const subject = normalizeSubjectName(x.normalizedSubject || x.subject || '');
+    const key = `${x.classId}|${subject}`;
+    const g = slotsBy.get(key) ?? { classId: x.classId, className: classNames.get(x.classId) ?? x.classId, subject, slots: [] };
+    g.slots.push({ id: d.id, subject: x.subject || x.normalizedSubject || '', teacher: x.ownerTeacherName || x.delegateTeacherName || null });
+    slotsBy.set(key, g);
+  }
+  const duplicateSlots = [...slotsBy.values()]
+    .filter(g => g.slots.length > 1)
+    .sort((a, b) => a.className.localeCompare(b.className, undefined, { numeric: true }) || a.subject.localeCompare(b.subject));
+
+  return { groups, totalRows: resultSnap.size, duplicateSlots };
+}
+
+const updatedMs = (v: any): number =>
+  v?.toMillis ? v.toMillis() : v?.toDate ? v.toDate().getTime() : v ? new Date(v).getTime() || 0 : 0;
+
+/**
+ * Save the rows of these groups under the one spelling (new document id,
+ * subjectId, subjectName). When the learner already has a mark for that
+ * subject and test under the right spelling, the NEWER of the two is kept.
+ * The row keeps its normalizedSubject (the assignment the rules check).
+ * Returns how many rows were moved and how many older duplicates were dropped.
+ */
+export async function fixSubjectSpellings(groups: SpellingGroup[]): Promise<{ moved: number; droppedOlder: number }> {
+  // Every mark that should end up under one document id, with the one
+  // already saved there (if any). The newest of them wins.
+  const targets = new Map<string, Array<{ id: string; data: any; ms: number; atTarget: boolean }>>();
+  for (const g of groups) {
+    for (const id of g.resultIds) {
+      const snap = await getDoc(doc(db, 'results', id));
+      if (!snap.exists()) continue;
+      const r = snap.data() as any;
+      const to = normalizeSubjectName(r.subjectId || '');
+      if (!to || to === r.subjectId) continue;
+      const newId = resultId(r.studentId, to, r.examType, r.term, Number(r.year));
+      if (!targets.has(newId)) {
+        const there = newId === id ? null : await getDoc(doc(db, 'results', newId));
+        targets.set(newId, there?.exists() ? [{ id: newId, data: there.data(), ms: updatedMs(there.data().updatedAt ?? there.data().createdAt), atTarget: true }] : []);
+      }
+      const fixed = { ...r, id: newId, subjectId: to, subjectName: isKnownSubject(to) ? to : r.subjectName || to, spellingFixedFrom: r.subjectId };
+      targets.get(newId)!.push({ id, data: fixed, ms: updatedMs(r.updatedAt ?? r.createdAt), atTarget: false });
+    }
+  }
+
+  const ops: Array<(b: ReturnType<typeof writeBatch>) => void> = [];
+  let moved = 0;
+  let droppedOlder = 0;
+  for (const [newId, rows] of targets) {
+    // Newest first; on a tie the mark already under the right spelling stays.
+    const winner = [...rows].sort((a, b) => b.ms - a.ms || Number(b.atTarget) - Number(a.atTarget))[0];
+    if (!winner.atTarget) {
+      ops.push(b => b.set(doc(db, 'results', newId), winner.data));
+      moved++;
+    }
+    for (const r of rows) {
+      if (r.atTarget || r.id === newId) continue;
+      ops.push(b => b.delete(doc(db, 'results', r.id)));
+    }
+    droppedOlder += rows.length - 1;
+  }
+  await commitInBatches(ops);
+  return { moved, droppedOlder };
 }

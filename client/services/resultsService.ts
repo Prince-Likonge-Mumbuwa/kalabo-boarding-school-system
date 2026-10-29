@@ -21,6 +21,7 @@ import {
   runTransaction,
   limit,
 } from '@/lib/auditedFirestore';
+import { makeSubjectNormalizer } from '@/services/subjectMatch';
 import { db } from '@/lib/firebase';
 import { getAuth } from 'firebase/auth';
 import type { DocumentData } from '@/lib/auditedFirestore';
@@ -405,20 +406,29 @@ export const GRADE_SYSTEM = {
 
 // ==================== UTILITY FUNCTIONS ====================
 
-export const normalizeSubjectName = (subjectName: string): string => {
-  if (!subjectName) return '';
+/**
+ * One spelling per subject, whatever was typed: case, spaces, punctuation,
+ * "&"/"and" and small typos are forgiven ("PRINCIPLES OF ACCOUNTS",
+ * "Priciples of Accounts" → "Principles of Accounts"). See subjectMatch.ts.
+ */
+export const normalizeSubjectName = makeSubjectNormalizer(SUBJECT_NORMALIZATION_MAP);
 
-  const trimmed = subjectName.trim();
-  if (SUBJECT_NORMALIZATION_MAP[trimmed]) return SUBJECT_NORMALIZATION_MAP[trimmed];
+/** Is this one of the school's known subjects (a value of the subject list)? */
+const KNOWN_SUBJECTS = new Set(Object.values(SUBJECT_NORMALIZATION_MAP));
+export const isKnownSubject = (name: string): boolean => KNOWN_SUBJECTS.has(name);
 
-  const lower = trimmed.toLowerCase();
-  const lowerMap: Record<string, string> = {};
-  Object.entries(SUBJECT_NORMALIZATION_MAP).forEach(([key, value]) => {
-    lowerMap[key.toLowerCase()] = value;
-  });
-
-  return lowerMap[lower] || trimmed;
-};
+/**
+ * A saved mark as the analysis screens use it: under ONE spelling of its
+ * subject (marks saved as "PRINCIPLES OF ACCOUNTS" join "Principles of
+ * Accounts"). The stored row is not changed — Results Data Check does that.
+ */
+function readResult(d: DocumentData): StudentResult {
+  const r = d as StudentResult;
+  const subjectId = normalizeSubjectName(r.subjectId || '');
+  return { ...r, subjectId, subjectName: isKnownSubject(subjectId) ? subjectId : r.subjectName };
+}
+/** The school's subject list (alias → subject). */
+export const SUBJECT_ALIASES: Readonly<Record<string, string>> = SUBJECT_NORMALIZATION_MAP;
 
 /**
  * Get the SMS-friendly abbreviation for a subject.
@@ -745,7 +755,7 @@ class ResultsService {
       const q = query(this.resultsCollection, ...constraints, orderBy('subjectName'));
       const snapshot = await getDocs(q);
 
-      return snapshot.docs.map(doc => doc.data() as StudentResult);
+      return snapshot.docs.map(doc => readResult(doc.data()));
     } catch (error) {
       console.error('Error fetching student results:', error);
       return [];
@@ -774,7 +784,7 @@ class ResultsService {
       const q = query(this.resultsCollection, ...constraints);
       const snapshot = await getDocs(q);
 
-      return snapshot.docs.map(doc => doc.data() as StudentResult);
+      return snapshot.docs.map(doc => readResult(doc.data()));
     } catch (error) {
       console.error('Error fetching teacher results:', error);
       return [];
@@ -804,7 +814,7 @@ class ResultsService {
         : query(this.resultsCollection);
 
       const snapshot = await getDocs(q);
-      const results = snapshot.docs.map(doc => doc.data() as StudentResult);
+      const results = snapshot.docs.map(doc => readResult(doc.data()));
 
       return results.sort((a, b) => {
         if (a.className !== b.className) return a.className.localeCompare(b.className);
@@ -838,7 +848,7 @@ class ResultsService {
       const q = query(this.resultsCollection, ...constraints, orderBy('studentName'));
       const snapshot = await getDocs(q);
 
-      return snapshot.docs.map(doc => doc.data() as StudentResult);
+      return snapshot.docs.map(doc => readResult(doc.data()));
     } catch (error) {
       console.error('Error fetching class subject results:', error);
       return [];
@@ -1463,7 +1473,7 @@ class ResultsService {
         : query(this.resultsCollection);
 
       const snapshot = await getDocs(q);
-      const results = snapshot.docs.map(doc => doc.data() as StudentResult);
+      const results = snapshot.docs.map(doc => readResult(doc.data()));
 
       const classMap = new Map<string, {
         className: string;
@@ -1529,7 +1539,7 @@ class ResultsService {
         : query(this.resultsCollection);
 
       const snapshot = await getDocs(q);
-      const results = snapshot.docs.map(doc => doc.data() as StudentResult);
+      const results = snapshot.docs.map(doc => readResult(doc.data()));
 
       const subjectMap = new Map<string, {
         subject: string;
