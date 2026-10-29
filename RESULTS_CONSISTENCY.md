@@ -187,3 +187,24 @@ Test against the emulator first: `pnpm test:rules`
 `pnpm test` — grid rules, end-to-end consistency (service + loader + monitor
 on an in-memory Firestore, every write checked against a model of the
 rules), data check, and Results Entry page render tests.
+
+## One spelling per subject
+
+The same subject typed differently ("PRINCIPLES OF ACCOUNTS", "Priciples of
+Accounts", "Principle of Account", "P.O.A") used to show as two subjects, each
+with its own marks. Now:
+
+- `normalizeSubjectName` (`client/services/subjectMatch.ts`) forgives case,
+  spaces, punctuation, "&"/"and" and small typos (1 letter for names up to 8
+  letters, 2 for longer; only when exactly one subject is that close). Unknown
+  subjects in ALL CAPS or all lower case go to Title Case. Every name in the
+  subject list gives the same result as before. The SMS server keeps a copy
+  (`sms-functions/functions/src/lib/subjectMatch.js`); a test checks they agree.
+- Marks are read under that one spelling (grid, report cards, monitor, admin
+  dashboard, analysis), and two subject assignments of one class for the same
+  subject show as one subject (the one with a teacher).
+- **Results Data Check → Same subject, different spellings (all terms)**
+  lists the spellings and saves every mark under the one spelling. If a
+  learner has a mark for the same test under both spellings, the newer is
+  kept. Classes with two assignments for one subject are listed to fix by hand
+  in Teacher Management.

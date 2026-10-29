@@ -18,6 +18,9 @@ import {
   countAllMissingNormalizedSubject,
   moveWrongTermGroup,
   enableAuthorityEnforcement,
+  findSubjectSpellings,
+  fixSubjectSpellings,
+  type SpellingReport,
   type DataCheckReport,
   type WrongTermGroup,
 } from '@/services/resultsDataCheck';
@@ -42,6 +45,20 @@ export default function ResultsDataCheck() {
   const [notice, setNotice] = useState('');
   const [pending, setPending] = useState<PendingFix | null>(null);
   const [working, setWorking] = useState(false);
+  const [spellings, setSpellings] = useState<SpellingReport | null>(null);
+  const [checkingSpellings, setCheckingSpellings] = useState(false);
+
+  const checkSpellings = async () => {
+    setCheckingSpellings(true);
+    setError('');
+    try {
+      setSpellings(await findSubjectSpellings());
+    } catch (e: any) {
+      setError(e?.message || 'The spelling check failed.');
+    } finally {
+      setCheckingSpellings(false);
+    }
+  };
 
   const check = async () => {
     setRunning(true);
@@ -64,7 +81,8 @@ export default function ResultsDataCheck() {
       resultsService.invalidateGrid();
       setNotice(msg);
       setPending(null);
-      await check();
+      if (report) await check();
+      if (spellings) await checkSpellings();
     } catch (e: any) {
       setError(e?.message || 'The fix failed.');
       setPending(null);
@@ -109,6 +127,24 @@ export default function ResultsDataCheck() {
 
         {error && <div className="bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg p-3">{error}</div>}
         {notice && <div className="bg-green-50 border border-green-200 text-green-800 text-sm rounded-lg p-3">{notice}</div>}
+
+        <SpellingsCard
+          report={spellings}
+          checking={checkingSpellings}
+          onCheck={checkSpellings}
+          onFix={() => spellings && setPending({
+            title: 'Join the spellings of each subject?',
+            message:
+              `${spellings.groups.reduce((n, g) => n + g.resultIds.length, 0)} mark(s) saved under another spelling will be saved under the subject's ` +
+              `one spelling (e.g. "${spellings.groups[0]?.from}" → "${spellings.groups[0]?.to}"). Marks are not changed. ` +
+              `If a learner has a mark for the same test under both spellings, the newer mark is kept.`,
+            run: async () => {
+              const r = await fixSubjectSpellings(spellings.groups);
+              return `${r.moved} mark(s) now under the right subject name` +
+                (r.droppedOlder ? `; ${r.droppedOlder} older duplicate mark(s) removed.` : '.');
+            },
+          })}
+        />
 
         {report && (
           <>
@@ -282,6 +318,63 @@ function Section({
         </ul>
       )}
       {!ok && children && <div className="mt-2 space-y-1.5">{children}</div>}
+    </div>
+  );
+}
+
+/** Same subject saved under different spellings — all terms, separate from the term check. */
+function SpellingsCard({ report, checking, onCheck, onFix }: { report: SpellingReport | null; checking: boolean; onCheck: () => void; onFix: () => void }) {
+  const rows = report?.groups.reduce((n, g) => n + g.resultIds.length, 0) ?? 0;
+  const ok = !!report && report.groups.length === 0 && report.duplicateSlots.length === 0;
+  return (
+    <div className={`rounded-xl border p-4 ${!report ? 'bg-white border-gray-200' : ok ? 'bg-green-50/40 border-green-200' : 'bg-amber-50/40 border-amber-200'}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="font-medium text-gray-900 flex items-center gap-2">
+            {report && (ok ? <CheckCircle size={16} className="text-green-600" /> : <AlertCircle size={16} className="text-amber-600" />)}
+            Same subject, different spellings (all terms)
+          </div>
+          <p className="text-xs text-gray-600 mt-0.5">
+            e.g. "PRINCIPLES OF ACCOUNTS" and "Priciples of Accounts" showing as two subjects, each with its own marks.
+            Screens already join them; fixing saves every mark under the subject&apos;s one spelling.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={onCheck} disabled={checking} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-xs disabled:opacity-50">
+            {checking ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />} {report ? 'Check again' : 'Check spellings'}
+          </button>
+          {report && report.groups.length > 0 && (
+            <button onClick={onFix} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs">Join spellings ({rows} marks)</button>
+          )}
+        </div>
+      </div>
+      {report && (
+        <div className="mt-2 space-y-2 text-xs text-gray-700" aria-live="polite">
+          <p>{report.totalRows} mark rows checked.{ok && ' Every subject is saved under one spelling.'}</p>
+          {report.groups.length > 0 && (
+            <ul className="ml-5 list-disc" aria-label="Spellings to join">
+              {report.groups.slice(0, 30).map(g => (
+                <li key={`${g.from}|${g.to}`}>
+                  &ldquo;{g.from}&rdquo; → <strong>{g.to}</strong>: {g.resultIds.length} mark(s), {g.classIds.length} class(es), {g.terms.join(', ')}
+                </li>
+              ))}
+              {report.groups.length > 30 && <li>…and {report.groups.length - 30} more</li>}
+            </ul>
+          )}
+          {report.duplicateSlots.length > 0 && (
+            <div>
+              <p className="font-medium text-gray-900">Classes with two assignments for one subject (fix by hand in Teacher Management — remove the extra one):</p>
+              <ul className="ml-5 list-disc" aria-label="Duplicate subject assignments">
+                {report.duplicateSlots.map(g => (
+                  <li key={`${g.classId}|${g.subject}`}>
+                    {g.className} • {g.subject}: {g.slots.map(s => `"${s.subject}"${s.teacher ? ` (${s.teacher})` : ' (no teacher)'}`).join(' and ')}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
