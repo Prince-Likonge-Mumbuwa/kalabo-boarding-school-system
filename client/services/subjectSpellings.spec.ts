@@ -9,7 +9,7 @@ vi.mock('firebase/auth', () => ({ getAuth: () => ({ currentUser: { uid: 'ADMIN' 
 
 import { resetStore, store, getDocData } from '../test/fakeFirestore';
 import { resultsService } from './resultsService';
-import { findSubjectSpellings, fixSubjectSpellings, fixMissingNormalizedSubject } from './resultsDataCheck';
+import { findSubjectSpellings, fixSubjectSpellings, fixMissingNormalizedSubject, mergeDuplicateSlots, planSlotMerge } from './resultsDataCheck';
 
 const TERM = 'Term 3';
 const YEAR = 2026;
@@ -123,5 +123,58 @@ describe('Results Data Check — adding the missing subject key', () => {
     expect(key('docA_English_endOfTerm_Term3_2026')).toBe('English');
     // Rows that already have a key are left alone.
     expect(await fixMissingNormalizedSubject(ids)).toBe(0);
+  });
+});
+
+describe('Results Data Check — one assignment per subject', () => {
+  beforeEach(() => {
+    const slots = store.get('class_slots')!;
+    slots.set('C1__Art & Design', { classId: 'C1', subject: 'Art & Design', normalizedSubject: 'Art & Design', ownerTeacherId: 'T5', ownerTeacherName: 'Nyangu' });
+    slots.set('C1__Art and Design', { classId: 'C1', subject: 'Art and Design', normalizedSubject: 'Art and Design', ownerTeacherId: 'T5', ownerTeacherName: 'Nyangu' });
+    slots.set('C1__CIVIC EDUCATION', { classId: 'C1', subject: 'CIVIC EDUCATION', normalizedSubject: 'CIVIC EDUCATION', ownerTeacherId: 'T6', ownerTeacherName: 'Nosiku' });
+    slots.set('C1__Civic Education', { classId: 'C1', subject: 'Civic Education', normalizedSubject: 'Civic Education', ownerTeacherId: 'T7', ownerTeacherName: 'Sibiho' });
+    // Records linked to the extra assignments.
+    store.get('results')!.set('docC_Principles of Accounts_week4_Term3_2026', {
+      studentId: 'docC', classId: 'C1', subjectId: 'Principles of Accounts', normalizedSubject: 'Priciples of Accounts', examType: 'week4', term: TERM, year: YEAR, marks: 20,
+    });
+    store.set('attendance_sessions', new Map([['S1', { classId: 'C1', slotId: 'C1__Art and Design', kind: 'periodic' }]]));
+    store.set('timetable_entries', new Map([['E1', { classId: 'C1', slotId: 'C1__Priciples of Accounts' }], ['E2', { classId: 'C1', slotId: 'C1__Art and Design' }]]));
+    store.set('teacher_assignments', new Map([
+      ['A1', { slotId: 'C1__Art and Design', teacherId: 'T5', status: 'active' }],
+      ['A2', { slotId: 'C1__Art & Design', teacherId: 'T5', status: 'active' }],
+      ['A3', { slotId: 'C1__Priciples of Accounts', teacherId: 'T9', status: 'ended' }],
+    ]));
+  });
+
+  it('plans: keep the one with a teacher / the right spelling; two different teachers are left to decide', async () => {
+    const { duplicateSlots } = await findSubjectSpellings();
+    const plans = Object.fromEntries(duplicateSlots.map(g => [g.subject, planSlotMerge(g)]));
+    expect(plans['Principles of Accounts']).toMatchObject({ kind: 'merge', keep: 'C1__Principles of Accounts', remove: ['C1__Priciples of Accounts'] });
+    expect(plans['Art & Design']).toMatchObject({ kind: 'merge', keep: 'C1__Art & Design', remove: ['C1__Art and Design'] });
+    expect(plans['Civic Education']).toMatchObject({ kind: 'decide' });
+    expect((plans['Civic Education'] as any).reason).toMatch(/Nosiku and Sibiho/);
+  });
+
+  it('removes the extra assignments and moves everything linked to them', async () => {
+    const { duplicateSlots } = await findSubjectSpellings();
+    const r = await mergeDuplicateSlots(duplicateSlots);
+    expect(r).toMatchObject({ classesFixed: 2, assignmentsRemoved: 2, marksMoved: 1, registersMoved: 1, timetableMoved: 2, teacherRowsClosed: 1 });
+    expect(r.toDecide).toEqual([{ className: 'Form 1A', subject: 'Civic Education', reason: expect.stringMatching(/choose who teaches it/) }]);
+
+    const slots = store.get('class_slots')!;
+    expect(slots.has('C1__Priciples of Accounts')).toBe(false);
+    expect(slots.has('C1__Art and Design')).toBe(false);
+    expect(slots.has('C1__Art & Design') && slots.has('C1__Principles of Accounts')).toBe(true);
+    expect(slots.has('C1__CIVIC EDUCATION') && slots.has('C1__Civic Education')).toBe(true); // untouched
+    expect(getDocData('results', 'docC_Principles of Accounts_week4_Term3_2026')).toMatchObject({ normalizedSubject: 'Principles of Accounts' });
+    expect(getDocData('attendance_sessions', 'S1')).toMatchObject({ slotId: 'C1__Art & Design', normalizedSubject: 'Art & Design' });
+    expect(getDocData('timetable_entries', 'E1')).toMatchObject({ slotId: 'C1__Principles of Accounts' });
+    expect(getDocData('timetable_entries', 'E2')).toMatchObject({ slotId: 'C1__Art & Design' });
+    expect(getDocData('teacher_assignments', 'A1')).toMatchObject({ status: 'ended', endReason: 'removed' });
+    expect(getDocData('teacher_assignments', 'A2')).toMatchObject({ status: 'active' });
+    expect(getDocData('teacher_assignments', 'A3')).toMatchObject({ status: 'ended' }); // history unchanged
+
+    // Only the Civic Education decision is left.
+    expect((await findSubjectSpellings()).duplicateSlots.map(g => g.subject)).toEqual(['Civic Education']);
   });
 });

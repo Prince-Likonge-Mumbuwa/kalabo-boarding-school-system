@@ -206,5 +206,13 @@ with its own marks. Now:
 - **Results Data Check → Same subject, different spellings (all terms)**
   lists the spellings and saves every mark under the one spelling. If a
   learner has a mark for the same test under both spellings, the newer is
-  kept. Classes with two assignments for one subject are listed to fix by hand
-  in Teacher Management.
+  kept.
+- **Remove extra assignments** (same section): a class with two assignments
+  for one subject ("Food & Nutrition" and "food and nutrition") keeps the one
+  with a teacher — or, when both have the same teacher, the correctly spelt
+  one. Marks (their rules key), attendance registers and live timetable
+  periods of the extra assignment move to the one kept; its open teacher row
+  is closed ("removed"); then it is deleted. A subject assigned to two
+  DIFFERENT teachers is left for the admin (remove the wrong teacher in
+  Teacher Management, then check again). Removing a teacher alone never
+  deletes an assignment — it only leaves it without a teacher.

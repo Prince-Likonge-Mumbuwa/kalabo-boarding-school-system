@@ -20,6 +20,9 @@ import {
   enableAuthorityEnforcement,
   findSubjectSpellings,
   fixSubjectSpellings,
+  mergeDuplicateSlots,
+  planSlotMerge,
+  type SlotMergeResult,
   type SpellingReport,
   type JoinSpellingsResult,
   type DataCheckReport,
@@ -313,6 +316,43 @@ export function SpellingsCard({ report, checking, onCheck }: { report: SpellingR
   const [progress, setProgress] = useState<[number, number] | null>(null);
   const [outcome, setOutcome] = useState<JoinSpellingsResult | null>(null);
   const [joinError, setJoinError] = useState('');
+  const [confirmingMerge, setConfirmingMerge] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [mergeProgress, setMergeProgress] = useState<[number, number] | null>(null);
+  const [mergeOutcome, setMergeOutcome] = useState<SlotMergeResult | null>(null);
+  const [mergeError, setMergeError] = useState('');
+
+  const plans = (report?.duplicateSlots ?? []).map(planSlotMerge);
+  const mergeable = plans.filter(p => p.kind === 'merge').length;
+  const slotName = (g: SpellingReport['duplicateSlots'][number], id: string) => {
+    const s = g.slots.find(x => x.id === id);
+    return s ? `"${s.subject}"${s.teacher ? ` (${s.teacher})` : ' (no teacher)'}` : id;
+  };
+
+  const merge = async () => {
+    if (!report) return;
+    setConfirmingMerge(false);
+    setMerging(true);
+    setMergeError('');
+    setMergeOutcome(null);
+    setMergeProgress([0, 0]);
+    try {
+      const r = await mergeDuplicateSlots(report.duplicateSlots, (done, total) => setMergeProgress([done, total]));
+      resultsService.invalidateGrid();
+      setMergeOutcome(r);
+      await onCheck();
+    } catch (e: any) {
+      console.error('Remove extra assignments failed', e);
+      setMergeError(
+        e?.code === 'permission-denied'
+          ? 'The database refused the change. Only an administrator can do this — sign in again as an administrator and retry.'
+          : `Stopped: ${e?.message || e}. Classes already done stay done; you can run it again.`,
+      );
+    } finally {
+      setMerging(false);
+      setMergeProgress(null);
+    }
+  };
 
   const rows = report?.groups.reduce((n, g) => n + g.resultIds.length, 0) ?? 0;
   const ok = !!report && report.groups.length === 0 && report.duplicateSlots.length === 0;
@@ -375,6 +415,23 @@ export function SpellingsCard({ report, checking, onCheck }: { report: SpellingR
           </p>
         )}
         {joinError && <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-red-800" role="alert">{joinError}</p>}
+        {merging && (
+          <p className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-blue-900">
+            <Loader2 size={14} className="animate-spin" />
+            {mergeProgress && mergeProgress[1] > 0 ? `Fixing class ${Math.min(mergeProgress[0] + 1, mergeProgress[1])} of ${mergeProgress[1]}…` : 'Starting…'}
+          </p>
+        )}
+        {mergeError && <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-red-800" role="alert">{mergeError}</p>}
+        {mergeOutcome && !merging && (
+          <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-green-900" role="status" aria-label="Extra assignments removed">
+            {mergeOutcome.assignmentsRemoved} extra assignment(s) removed in {mergeOutcome.classesFixed} class(es).
+            {' '}Moved to the assignment kept: {mergeOutcome.marksMoved} mark(s), {mergeOutcome.registersMoved} register(s), {mergeOutcome.timetableMoved} timetable period(s)
+            {mergeOutcome.teacherRowsClosed > 0 && `; ${mergeOutcome.teacherRowsClosed} duplicate teacher assignment(s) closed`}.
+            {mergeOutcome.toDecide.length > 0 && (
+              <span className="block text-amber-800">Left for you: {mergeOutcome.toDecide.map(d => `${d.className} ${d.subject}`).join(', ')}.</span>
+            )}
+          </div>
+        )}
         {outcome && !joining && (
           <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-green-900" role="status">
             {outcome.moved} mark(s) now under the right subject name
@@ -400,12 +457,22 @@ export function SpellingsCard({ report, checking, onCheck }: { report: SpellingR
               </ul>
             )}
             {report.duplicateSlots.length > 0 && (
-              <div>
-                <p className="font-medium text-gray-900">Classes with two assignments for one subject (fix by hand in Teacher Management — remove the extra one):</p>
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium text-gray-900">Classes with two assignments for one subject:</p>
+                  {mergeable > 0 && (
+                    <button onClick={() => setConfirmingMerge(true)} disabled={merging || joining || checking} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-50">
+                      {merging && <Loader2 size={12} className="animate-spin" />} Remove extra assignments ({mergeable} class{mergeable === 1 ? '' : 'es'})
+                    </button>
+                  )}
+                </div>
                 <ul className="ml-5 list-disc" aria-label="Duplicate subject assignments">
-                  {report.duplicateSlots.map(g => (
-                    <li key={`${g.classId}|${g.subject}`}>
-                      {g.className} • {g.subject}: {g.slots.map(s => `"${s.subject}"${s.teacher ? ` (${s.teacher})` : ' (no teacher)'}`).join(' and ')}
+                  {plans.map(p => (
+                    <li key={`${p.group.classId}|${p.group.subject}`}>
+                      <span className="font-medium">{p.group.className} • {p.group.subject}:</span>{' '}
+                      {p.kind === 'merge'
+                        ? <>keeps {slotName(p.group, p.keep)}, removes {p.remove.map(id => slotName(p.group, id)).join(' and ')}</>
+                        : <span className="text-red-700">{p.reason}. Remove the wrong teacher from this subject in Teacher Management, then check again.</span>}
                     </li>
                   ))}
                 </ul>
@@ -427,6 +494,19 @@ export function SpellingsCard({ report, checking, onCheck }: { report: SpellingR
         }
         type="transfer"
         confirmText="Yes, join them"
+      />
+      <ConfirmationModal
+        isOpen={confirmingMerge}
+        onClose={() => setConfirmingMerge(false)}
+        onConfirm={merge}
+        title="Remove the extra assignments?"
+        message={
+          `In ${mergeable} class(es) the extra assignment of a subject is removed, as listed. Its marks, attendance registers and ` +
+          'timetable periods move to the assignment kept, so nothing is lost; teachers keep their classes. ' +
+          'Classes where the subject has two different teachers are left for you.'
+        }
+        type="transfer"
+        confirmText="Yes, remove them"
       />
     </div>
   );
