@@ -4,6 +4,7 @@
 //   - Adds messageId + studentDocumentId to bulk + announcement results/failures
 //   - Adds bulkSendAllClasses() for cross-class bulk sends
 
+import { authJsonHeaders } from '@/lib/authHeaders';
 import {
   resultsService,
   formatStudentResultsSMS,
@@ -441,7 +442,7 @@ export const smsService = {
 
       const response = await fetch(`${SMS_API_URL}/sendSingleSms`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authJsonHeaders(),
         body: JSON.stringify({
           studentId,
           term,
@@ -519,7 +520,7 @@ export const smsService = {
 
       const response = await fetch(`${SMS_API_URL}/bulkSendSms`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authJsonHeaders(),
         body: JSON.stringify({
           classId,
           term,
@@ -760,7 +761,7 @@ export const smsService = {
 
       const response = await fetch(`${SMS_API_URL}/sendAnnouncement`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authJsonHeaders(),
         body: JSON.stringify({
           message: trimmed,
           target: params.target,

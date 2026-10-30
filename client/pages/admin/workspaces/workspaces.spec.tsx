@@ -25,6 +25,7 @@ vi.mock('@/pages/admin/ClassManagement', async () => ({ default: await mkStub('C
 vi.mock('@/pages/admin/ResultsEntryMonitor', async () => ({ default: await mkStub('Results Monitor') }));
 vi.mock('@/pages/admin/AdminResultsAnalysis', async () => ({ default: await mkStub('Results Analysis') }));
 vi.mock('@/pages/admin/SbaSchoolOverview', async () => ({ default: await mkStub('SBA Overview') }));
+vi.mock('@/pages/admin/Awards', async () => ({ default: await mkStub('Awards') }));
 vi.mock('@/pages/admin/LiveTimetable', async () => ({ default: await mkStub("Who's Teaching") }));
 vi.mock('@/pages/admin/AttendanceOverview', async () => ({
   default: await mkStub('Attendance'),
@@ -65,6 +66,7 @@ const CASES: Array<[string, string, string, string]> = [
   ['/dashboard/admin/results-monitor', 'results-sba', 'Results Monitor', 'Results Monitor page (embedded)'],
   ['/dashboard/admin/results-analysis', 'results-sba', 'Results Analysis', 'Results Analysis page (embedded)'],
   ['/dashboard/admin/sba-overview', 'results-sba', 'SBA Overview', 'SBA Overview page (embedded)'],
+  ['/dashboard/admin/awards', 'results-sba', 'Awards', 'Awards page (embedded)'],
   ['/dashboard/admin/attendance-overview', 'attendance-timetable', 'Overview', 'Attendance page (embedded)'],
   ['/dashboard/admin/timetable-live', 'attendance-timetable', "Who's Teaching", "Who's Teaching page (embedded)"],
   ['/dashboard/admin/timetable/periods', 'attendance-timetable', 'Periods', 'Periods page (embedded)'],
@@ -96,7 +98,7 @@ describe('admin workspaces', () => {
     cleanup();
     renderAt('/dashboard/admin/results-monitor');
     await screen.findByText(/Results Monitor page/);
-    expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Results Monitor', 'Results Analysis', 'SBA Overview']);
+    expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Results Monitor', 'Results Analysis', 'SBA Overview', 'Awards']);
     cleanup();
     renderAt('/dashboard/admin/attendance-overview');
     await screen.findByText(/Attendance page/);

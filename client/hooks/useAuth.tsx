@@ -40,6 +40,8 @@ interface User {
   subjects?: string[];
   schoolId?: string;
   schoolName?: string;
+  /** 'pending' / 'rejected' = a sign-up an administrator has not approved. */
+  status?: string;
 }
 
 interface TeacherSignupData {
@@ -113,7 +115,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               dateOfCurrentAppointment: userData.dateOfCurrentAppointment,
               subjects: userData.subjects,
               schoolId: userData.schoolId,
-              schoolName: userData.schoolName
+              schoolName: userData.schoolName,
+              status: userData.status,
             });
             setIsAuthenticated(true);
           } else {
@@ -245,7 +248,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           dateOfCurrentAppointment: teacherData.dateOfCurrentAppointment,
           subjects: teacherData.subjects || [],
           isActive: true,
-          profileComplete: true
+          profileComplete: true,
+          // An administrator approves the account before it can see anything.
+          status: 'pending'
         });
       }
 

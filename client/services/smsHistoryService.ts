@@ -2,6 +2,8 @@
 // Companion to smsService — same fetch-based pattern, same base URL.
 // Powers the SMS History panel and the retry endpoints.
 
+import { authJsonHeaders } from '@/lib/authHeaders';
+
 const SMS_API_URL =
   import.meta.env.VITE_SMS_API_URL ||
   'http://localhost:5001/catalyst-f1b1a/us-central1';
@@ -95,7 +97,7 @@ export interface RetryResponse {
 const post = async <T>(path: string, body: any): Promise<T> => {
   const res = await fetch(`${SMS_API_URL}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authJsonHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -136,4 +138,4 @@ export const smsHistoryService = {
    */
   retryOne: (messageId: string): Promise<RetryResponse> =>
     post<RetryResponse>('/retrySms', { messageId }),
-};
+};

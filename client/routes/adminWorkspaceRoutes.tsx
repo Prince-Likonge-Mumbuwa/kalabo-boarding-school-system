@@ -18,7 +18,7 @@ const AttendanceTimetableWorkspace = lazy(() => import('@/pages/admin/workspaces
 
 export const WORKSPACE_ROUTES = {
   admissionsClasses: ['/dashboard/admin/admissions', '/dashboard/admin/classes'],
-  resultsSba: ['/dashboard/admin/results-monitor', '/dashboard/admin/results-analysis', '/dashboard/admin/sba-overview'],
+  resultsSba: ['/dashboard/admin/results-monitor', '/dashboard/admin/results-analysis', '/dashboard/admin/sba-overview', '/dashboard/admin/awards'],
   attendanceTimetable: [
     '/dashboard/admin/attendance-overview',
     '/dashboard/admin/timetable-live',

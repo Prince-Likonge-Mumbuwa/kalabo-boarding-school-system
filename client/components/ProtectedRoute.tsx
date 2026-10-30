@@ -2,6 +2,8 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { ReactNode } from 'react';
+import { AwaitingApproval } from '@/components/AwaitingApproval';
+import { isAwaitingApproval } from '@/lib/approval';
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -30,6 +32,11 @@ export function ProtectedRoute({ children, allowedRoles = ['admin', 'teacher'] }
   // Not authenticated - redirect to signin
   if (!isAuthenticated) {
     return <Navigate to="/signin" state={{ from: location }} replace />;
+  }
+
+  // A teacher who signed up waits for an administrator before seeing anything.
+  if (user && user.userType === 'teacher' && isAwaitingApproval(user.status)) {
+    return <AwaitingApproval status={user.status!} />;
   }
 
   // Check if user has required role

@@ -9,20 +9,23 @@ const h = vi.hoisted(() => ({
   redeemError: null as null | string,
 }));
 
-vi.mock('@/services/guidanceService', () => ({
-  checkSponsorCode: vi.fn(async (typed: string) => {
-    h.calls.push('check');
-    if (typed.includes('USED')) throw new Error('That code has already been used.');
-    return { code: 'SP-7KQ3-M9XP', sponsorName: 'CAMFED', term: 'Term 3', year: 2026, learnerIds: ['a', 'b'], learnerCount: 2, status: 'active' };
-  }),
-  buildSponsorReports: vi.fn(async () => {
-    h.calls.push('reports');
-    return { cards: h.cards, noResults: [] };
-  }),
-  redeemSponsorCode: vi.fn(async () => {
-    h.calls.push('redeem');
-    if (h.redeemError) throw new Error(h.redeemError);
-  }),
+vi.mock('@/services/portalApi', () => ({
+  // The sponsor's calls now go to the server (Cloud Function `portal`).
+  portalApi: {
+    sponsorCheck: vi.fn(async (typed: string) => {
+      h.calls.push('check');
+      if (typed.includes('USED')) throw new Error('That code has already been used.');
+      return { code: 'SP-7KQ3-M9XP', sponsorName: 'CAMFED', term: 'Term 3', year: 2026, learnerCount: 2 };
+    }),
+    sponsorReports: vi.fn(async () => {
+      h.calls.push('reports');
+      return { cards: h.cards, noResults: [] };
+    }),
+    sponsorRedeem: vi.fn(async () => {
+      h.calls.push('redeem');
+      if (h.redeemError) throw new Error(h.redeemError);
+    }),
+  },
 }));
 vi.mock('@/services/pdf/sponsorReportsPDF', () => ({
   generateSponsorReportsPDF: vi.fn(async () => { h.calls.push('pdf'); return new Uint8Array([1]); }),

@@ -10,11 +10,10 @@
 import { useState, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
-import { learnerService } from '@/services/schoolService';
-import { resultsService, ReportCardData } from '@/services/resultsService';
+import type { ReportCardData } from '@/services/resultsService';
+import { portalApi, type PortalChild } from '@/services/portalApi';
 import { generateReportCardPDF } from '@/services/pdf/reportCardPDFLib';
 import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
-import type { Learner } from '@/types/school';
 import {
   Phone,
   Search,
@@ -53,9 +52,11 @@ const ParentPortal = () => {
   const setMode = (m: 'parent' | 'sponsor') =>
     setSearchParams(m === 'sponsor' ? { mode: 'sponsor' } : {}, { replace: true });
   const [phone, setPhone] = useState('');
+  // The number the children were found with (the report is checked against it).
+  const [searchedPhone, setSearchedPhone] = useState('');
   const [searching, setSearching] = useState(false);
-  const [children, setChildren] = useState<Learner[]>([]);
-  const [selectedChild, setSelectedChild] = useState<Learner | null>(null);
+  const [children, setChildren] = useState<PortalChild[]>([]);
+  const [selectedChild, setSelectedChild] = useState<PortalChild | null>(null);
   // Opens on the current academic term (was always "Term 1").
   const [term, setTerm] = useState<TermName>(() => getCurrentAcademicTerm().term);
   const [year, setYear] = useState<number>(() => getCurrentAcademicTerm().year);
@@ -99,7 +100,8 @@ const ParentPortal = () => {
     setHasSearched(false);
 
     try {
-      const learners = await learnerService.getLearnersByGuardianPhone(phone.trim());
+      const learners = await portalApi.parentChildren(phone.trim());
+      setSearchedPhone(phone.trim());
       setChildren(learners);
       setHasSearched(true);
 
@@ -121,12 +123,7 @@ const ParentPortal = () => {
     setReportCard(null);
 
     try {
-      const report = await resultsService.generateReportCard(
-        selectedChild.id || selectedChild.studentId,
-        term,
-        year,
-        { includeIncomplete: true, markMissing: true, publicView: true }
-      );
+      const report = await portalApi.parentReport(searchedPhone, selectedChild.id, term, year);
 
       if (!report) {
         setError(

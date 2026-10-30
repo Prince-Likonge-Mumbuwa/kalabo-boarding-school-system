@@ -4,6 +4,7 @@ import { useSchoolClasses } from '@/hooks/useSchoolClasses';
 import { useSchoolLearners } from '@/hooks/useSchoolLearners';
 import { useAuth } from '@/hooks/useAuth';
 import { TeacherRolesSection } from '@/components/admissions/TeacherRolesSection';
+import { PendingSignupsPanel } from '@/components/teachers/PendingSignupsPanel';
 import { TeacherDepartmentsSection } from '@/components/departments/TeacherDepartmentsSection';
 import { useHods } from '@/hooks/useDepartments';
 import { DepartmentsOverviewDialog } from '@/components/departments/DepartmentsOverviewDialog';
@@ -1119,6 +1120,14 @@ export default function TeacherManagement() {
               </div>
             ))}
           </div>
+
+          {/* ===== SIGN-UPS WAITING FOR APPROVAL ===== */}
+          {isUserAdmin && (
+            <PendingSignupsPanel
+              adminName={user?.fullName || 'Admin'}
+              onDone={(message, ok) => addToast({ type: ok ? 'success' : 'error', title: ok ? 'Saved' : 'Not saved', message })}
+            />
+          )}
 
           {/* ===== ONE-TIME SETUP BANNER ===== */}
           {isUserAdmin && engineReadyQuery.isSuccess && !engineReady && (
