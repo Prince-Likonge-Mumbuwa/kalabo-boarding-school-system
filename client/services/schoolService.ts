@@ -1627,7 +1627,9 @@ const teacherService = {
 
       const snapshot = await getDocs(q);
 
-      return snapshot.docs.map((docSnapshot) => {
+      // Sign-ups waiting for (or refused) approval are not staff yet: they
+      // are listed only in Teacher Management → waiting for approval.
+      return snapshot.docs.filter(d => !['pending', 'rejected'].includes((d.data() as DocumentData).status)).map((docSnapshot) => {
         const data = docSnapshot.data() as DocumentData;
         return {
           id: docSnapshot.id,

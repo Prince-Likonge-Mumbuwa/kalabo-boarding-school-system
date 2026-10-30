@@ -12,9 +12,9 @@
 
 import { useState } from 'react';
 import { AlertCircle, CheckCircle2, Download, FileText, KeyRound, Loader2 } from 'lucide-react';
-import { buildSponsorReports, checkSponsorCode, redeemSponsorCode, type SponsorReports } from '@/services/guidanceService';
+import type { SponsorReports } from '@/services/guidanceService';
+import { portalApi, type PortalSponsorCode } from '@/services/portalApi';
 import { levelHeading } from '@/services/guidancePlan';
-import type { SponsorCode } from '@/types/guidance';
 
 type Stage = 'idle' | 'checking' | 'loading' | 'pdf' | 'redeeming' | 'done';
 
@@ -22,7 +22,7 @@ export function SponsorPortalPanel() {
   const [typed, setTyped] = useState('');
   const [stage, setStage] = useState<Stage>('idle');
   const [progress, setProgress] = useState<[number, number]>([0, 0]);
-  const [code, setCode] = useState<SponsorCode | null>(null);
+  const [code, setCode] = useState<PortalSponsorCode | null>(null);
   const [reports, setReports] = useState<SponsorReports | null>(null);
   const [pdf, setPdf] = useState<{ bytes: Uint8Array; name: string } | null>(null);
   const [error, setError] = useState('');
@@ -43,15 +43,12 @@ export function SponsorPortalPanel() {
     setPdf(null);
     try {
       setStage('checking');
-      const found = await checkSponsorCode(typed);
+      const found = await portalApi.sponsorCheck(typed);
       setCode(found);
 
       setStage('loading');
-      setProgress([0, found.learnerIds.length]);
-      const r = await buildSponsorReports(found.learnerIds, found.term, found.year, {
-        publicView: true,
-        onProgress: (d, t) => setProgress([d, t]),
-      });
+      setProgress([0, found.learnerCount]);
+      const r = await portalApi.sponsorReports(found.code);
       setReports(r);
       if (r.cards.length === 0) {
         throw new Error(
@@ -68,7 +65,7 @@ export function SponsorPortalPanel() {
       );
 
       setStage('redeeming');
-      await redeemSponsorCode(found.code);
+      await portalApi.sponsorRedeem(found.code);
 
       const file = { bytes, name: sponsorPdfFileName(found.sponsorName, found.term, found.year) };
       setPdf(file);
@@ -83,7 +80,7 @@ export function SponsorPortalPanel() {
 
   const stageText =
     stage === 'checking' ? 'Checking the code…'
-    : stage === 'loading' ? `Collecting results ${progress[0]} of ${progress[1]}…`
+    : stage === 'loading' ? `Collecting results for ${progress[1]} learner${progress[1] === 1 ? '' : 's'}…`
     : stage === 'pdf' ? `Preparing report cards ${progress[0]} of ${progress[1]}…`
     : stage === 'redeeming' ? 'Finishing…'
     : '';

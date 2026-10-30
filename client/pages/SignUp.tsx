@@ -346,7 +346,7 @@ export default function SignUp() {
         isOpen: true,
         type: 'success',
         title: 'Account Created Successfully!',
-        message: `Your teacher account has been created successfully! You can now sign in to your dashboard.`,
+        message: `Your teacher account has been created. An administrator must approve it before you can use the system — please let the administration office know.`,
         redirectTo: '/signin'
       });
       
