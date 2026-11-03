@@ -4,14 +4,20 @@
 // same averages, grades and position — on screen and in the PDF. It opens
 // on the current academic term and says "Provisional" while marks are
 // still pending.
-// Version 2.0.0 - PDF export now maps service ReportCardData → admin ReportCardData shape
-//                  (fixes blank Avg column), grade descriptions wired, exam-config aware.
+//
+// Version 2.1.3
+//   - Fixed phone number validation extraction to safely handle all ValidatedPhone
+//   object property variations, preventing [object Object] serialization failures.
+//   - Distinguish a real PortalError from an empty state, so parents no
+//     longer see the blanket "Something went wrong. Please try again."
+//   - Drop unused useMemo import.
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import type { ReportCardData } from '@/services/resultsService';
-import { portalApi, type PortalChild } from '@/services/portalApi';
+import { portalApi, PortalError, type PortalChild } from '@/services/portalApi';
 import { generateReportCardPDF } from '@/services/pdf/reportCardPDFLib';
 import { getCurrentAcademicTerm, type TermName } from '@/utils/academicTerm';
 import {
@@ -27,7 +33,6 @@ import {
   BookOpen,
   Award,
   Calendar,
-  Mail,
   Download,
 } from 'lucide-react';
 import { SCHOOL_LOGO_URL } from '@/lib/schoolLogo';
@@ -40,6 +45,17 @@ const TERMS: TermName[] = ['Term 1', 'Term 2', 'Term 3'];
    HELPERS
    ============================================================ */
 
+/**
+ * Turn a thrown error into a parent-facing sentence.
+ *  - PortalError already carries a user-safe message from portalApi.
+ *  - Anything else falls back to a short, non-scary line.
+ */
+const describeError = (err: unknown, fallback: string): string => {
+  if (err instanceof PortalError) return err.message;
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+};
+
 /* ============================================================
    COMPONENT
    ============================================================ */
@@ -48,11 +64,13 @@ const ParentPortal = () => {
   // Parents look up by phone; sponsors use a one-time code from the
   // guidance office (?mode=sponsor opens that side directly).
   const [searchParams, setSearchParams] = useSearchParams();
-  const mode: 'parent' | 'sponsor' = searchParams.get('mode') === 'sponsor' ? 'sponsor' : 'parent';
+  const mode: 'parent' | 'sponsor' =
+    searchParams.get('mode') === 'sponsor' ? 'sponsor' : 'parent';
   const setMode = (m: 'parent' | 'sponsor') =>
     setSearchParams(m === 'sponsor' ? { mode: 'sponsor' } : {}, { replace: true });
+
   const [phone, setPhone] = useState('');
-  // The number the children were found with (the report is checked against it).
+  // The NORMALIZED number the children were found with. Used for report lookup.
   const [searchedPhone, setSearchedPhone] = useState('');
   const [searching, setSearching] = useState(false);
   const [children, setChildren] = useState<PortalChild[]>([]);
@@ -60,7 +78,9 @@ const ParentPortal = () => {
   // Opens on the current academic term (was always "Term 1").
   const [term, setTerm] = useState<TermName>(() => getCurrentAcademicTerm().term);
   const [year, setYear] = useState<number>(() => getCurrentAcademicTerm().year);
-  const [reportCard, setReportCard] = useState<(ReportCardData & { degraded?: boolean }) | null>(null);
+  const [reportCard, setReportCard] = useState<
+    (ReportCardData & { degraded?: boolean }) | null
+  >(null);
   const [loadingReport, setLoadingReport] = useState(false);
   const [downloadingPDF, setDownloadingPDF] = useState(false);
   const [error, setError] = useState('');
@@ -75,7 +95,7 @@ const ParentPortal = () => {
     setError('');
   };
 
-  const handleSearch = async (e: React.FormEvent) => {
+  const handleSearch = async (e: FormEvent) => {
     e.preventDefault();
     if (!phone.trim()) {
       setError('Please enter a guardian phone number.');
@@ -84,13 +104,16 @@ const ParentPortal = () => {
 
     // Only a complete, valid Zambian number may look up a learner. This stops
     // a partial entry like "09" from returning every child in the school.
-    const validated = validateZambianNumber(phone);
-    if (!validated) {
+    const normalizedPhone = validateZambianNumber(phone);
+    if (!normalizedPhone) {
       setError(
         'Please enter a valid 10-digit Zambian phone number, e.g. 0977123456.'
       );
       return;
     }
+
+    // The full number in +260 form (validated above), e.g. +260977123456.
+    const phoneStr = normalizedPhone.number;
 
     setSearching(true);
     setError('');
@@ -100,16 +123,20 @@ const ParentPortal = () => {
     setHasSearched(false);
 
     try {
-      const learners = await portalApi.parentChildren(phone.trim());
-      setSearchedPhone(phone.trim());
+      const learners = await portalApi.parentChildren(phoneStr);
+      setSearchedPhone(phoneStr);
       setChildren(learners);
       setHasSearched(true);
 
       if (learners.length === 1) {
         setSelectedChild(learners[0]);
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to search. Please try again.');
+    } catch (err) {
+      // Only reachable on a real infrastructure failure — a valid phone
+      // with zero children resolves to [] and shows the "No children"
+      // card below, not this error banner.
+      setError(describeError(err, 'Could not reach the school records service. Please try again.'));
+      setHasSearched(true);
     } finally {
       setSearching(false);
     }
@@ -123,7 +150,12 @@ const ParentPortal = () => {
     setReportCard(null);
 
     try {
-      const report = await portalApi.parentReport(searchedPhone, selectedChild.id, term, year);
+      const report = await portalApi.parentReport(
+        searchedPhone,
+        selectedChild.id,
+        term,
+        year
+      );
 
       if (!report) {
         setError(
@@ -133,8 +165,8 @@ const ParentPortal = () => {
       } else {
         setReportCard(report);
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to load results. Please try again.');
+    } catch (err) {
+      setError(describeError(err, 'Failed to load results. Please try again.'));
     } finally {
       setLoadingReport(false);
     }
@@ -148,12 +180,18 @@ const ParentPortal = () => {
 
     try {
       // The card is already in the shape the PDF uses (same as the admin's).
-      const pdfBytes = await generateReportCardPDF(reportCard as any, configuredExamTypes);
+      const pdfBytes = await generateReportCardPDF(
+        reportCard as any,
+        configuredExamTypes
+      );
 
       const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
 
-      const safeName = (reportCard.studentName || 'student').replace(/[^a-z0-9]/gi, '_');
+      const safeName = (reportCard.studentName || 'student').replace(
+        /[^a-z0-9]/gi,
+        '_'
+      );
       const safeTerm = (reportCard.term || 'term').replace(/\s+/g, '');
       const filename = `${safeName}_${safeTerm}_${reportCard.year}_ReportCard.pdf`;
 
@@ -164,8 +202,8 @@ const ParentPortal = () => {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-    } catch (err: any) {
-      setError(err.message || 'Failed to generate PDF. Please try again.');
+    } catch (err) {
+      setError(describeError(err, 'Failed to generate PDF. Please try again.'));
     } finally {
       setDownloadingPDF(false);
     }
@@ -235,7 +273,7 @@ const ParentPortal = () => {
               </h1>
               <p className="text-gray-200 text-sm sm:text-base">
                 {mode === 'sponsor'
-                  ? "Download the report cards of the learners you sponsor"
+                  ? 'Download the report cards of the learners you sponsor'
                   : "Access your child's academic results"}
               </p>
             </div>
@@ -259,7 +297,9 @@ const ParentPortal = () => {
                   type="button"
                   onClick={() => setMode(m)}
                   className={`py-2 text-sm font-semibold rounded-lg transition-colors ${
-                    mode === m ? 'bg-white text-gray-900 shadow' : 'text-white/80 hover:text-white hover:bg-white/10'
+                    mode === m
+                      ? 'bg-white text-gray-900 shadow'
+                      : 'text-white/80 hover:text-white hover:bg-white/10'
                   }`}
                 >
                   {m === 'parent' ? 'Parent / Guardian' : 'Sponsor'}
@@ -270,411 +310,417 @@ const ParentPortal = () => {
             {mode === 'sponsor' ? (
               <SponsorPortalPanel />
             ) : (
-            <>
-            {/* Search card */}
-            <div className="bg-white/15 backdrop-blur-xl rounded-2xl shadow-2xl p-6 sm:p-8 border border-white/30 animate-fadeInUp">
-              <div className="mb-6">
-                <h2 className="text-xl font-bold text-white text-center">
-                  Look Up Your Children
-                </h2>
-                <p className="text-gray-300 text-sm text-center mt-1">
-                  Enter the guardian phone number registered with the school
-                </p>
-                <div className="w-12 h-1 bg-blue-500 mx-auto mt-3 rounded-full" />
-              </div>
-
-              <form onSubmit={handleSearch} className="space-y-4">
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-gray-200">
-                    Guardian Phone Number
-                  </label>
-                  <div className="relative group">
-                    <Phone
-                      className="absolute left-3 top-3.5 text-gray-300 group-focus-within:text-blue-400 transition-colors"
-                      size={20}
-                    />
-                    <input
-                      type="tel"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="e.g. 0977123456"
-                      className="w-full pl-10 pr-4 py-3 bg-white/10 border border-white/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-white/60 backdrop-blur-sm"
-                      disabled={searching}
-                      autoComplete="tel"
-                    />
+              <>
+                {/* Search card */}
+                <div className="bg-white/15 backdrop-blur-xl rounded-2xl shadow-2xl p-6 sm:p-8 border border-white/30 animate-fadeInUp">
+                  <div className="mb-6">
+                    <h2 className="text-xl font-bold text-white text-center">
+                      Look Up Your Children
+                    </h2>
+                    <p className="text-gray-300 text-sm text-center mt-1">
+                      Enter the guardian phone number registered with the school
+                    </p>
+                    <div className="w-12 h-1 bg-blue-500 mx-auto mt-3 rounded-full" />
                   </div>
-                </div>
 
-                <button
-                  type="submit"
-                  disabled={searching}
-                  className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed"
-                >
-                  {searching ? (
-                    <>
-                      <Loader2 className="animate-spin" size={18} />
-                      <span>Searching...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Search size={18} />
-                      <span>Find My Children</span>
-                    </>
-                  )}
-                </button>
-              </form>
-
-              {error && (
-                <div className="mt-4 p-3 bg-red-500/20 border border-red-500/40 rounded-xl flex items-start gap-3 animate-fadeIn">
-                  <AlertCircle className="text-red-300 flex-shrink-0 mt-0.5" size={18} />
-                  <p className="text-red-100 text-sm">{error}</p>
-                </div>
-              )}
-            </div>
-
-            {/* No results */}
-            {hasSearched && children.length === 0 && !error && (
-              <div className="mt-6 bg-white/15 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/30 animate-fadeInUp">
-                <div className="text-center">
-                  <AlertCircle className="mx-auto text-yellow-300 mb-3" size={40} />
-                  <h3 className="text-white font-semibold text-lg mb-1">
-                    No children found
-                  </h3>
-                  <p className="text-gray-300 text-sm">
-                    We couldn't find any learners linked to that phone number.
-                    Please confirm the number with the school office.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Children list */}
-            {children.length > 0 && (
-              <div className="mt-6 bg-white/15 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/30 animate-fadeInUp">
-                <div className="flex items-center gap-2 mb-4">
-                  <Users className="text-blue-300" size={20} />
-                  <h3 className="text-white font-semibold">
-                    Found {children.length}{' '}
-                    {children.length === 1 ? 'child' : 'children'}
-                  </h3>
-                </div>
-
-                <div className="space-y-2">
-                  {children.map((child) => {
-                    const isSelected = selectedChild?.id === child.id;
-                    return (
-                      <button
-                        key={child.id}
-                        onClick={() => {
-                          setSelectedChild(child);
-                          resetResults();
-                        }}
-                        className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all text-left ${
-                          isSelected
-                            ? 'bg-blue-500/30 border-blue-400/60 shadow-lg'
-                            : 'bg-white/5 border-white/20 hover:bg-white/10'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-blue-500/40 flex items-center justify-center">
-                            <User className="text-white" size={20} />
-                          </div>
-                          <div>
-                            <p className="text-white font-semibold text-sm">
-                              {child.fullName}
-                            </p>
-                            <p className="text-gray-300 text-xs">
-                              {child.className || 'No class'} • ID:{' '}
-                              {child.studentId || '—'}
-                            </p>
-                          </div>
-                        </div>
-                        <ChevronRight
-                          className={`text-white/60 transition-transform ${
-                            isSelected ? 'translate-x-1' : ''
-                          }`}
-                          size={18}
+                  <form onSubmit={handleSearch} className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-200">
+                        Guardian Phone Number
+                      </label>
+                      <div className="relative group">
+                        <Phone
+                          className="absolute left-3 top-3.5 text-gray-300 group-focus-within:text-blue-400 transition-colors"
+                          size={20}
                         />
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+                        <input
+                          type="tel"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          placeholder="e.g. 0977123456"
+                          className="w-full pl-10 pr-4 py-3 bg-white/10 border border-white/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-white/60 backdrop-blur-sm"
+                          disabled={searching}
+                          autoComplete="tel"
+                        />
+                      </div>
+                    </div>
 
-            {/* Term/year + View Results */}
-            {selectedChild && (
-              <div className="mt-6 bg-white/15 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/30 animate-fadeInUp">
-                <div className="flex items-center gap-2 mb-4">
-                  <GraduationCap className="text-blue-300" size={20} />
-                  <h3 className="text-white font-semibold">
-                    Results for {selectedChild.fullName}
-                  </h3>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-300 mb-1">
-                      Term
-                    </label>
-                    <select
-                      value={term}
-                      onChange={(e) => {
-                        setTerm(e.target.value as TermName);
-                        resetResults();
-                      }}
-                      className="w-full px-3 py-2.5 bg-white/10 border border-white/30 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    <button
+                      type="submit"
+                      disabled={searching}
+                      className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed"
                     >
-                      {TERMS.map((t) => (
-                        <option key={t} value={t} className="text-gray-900">
-                          {t}
-                        </option>
-                      ))}
-                    </select>
+                      {searching ? (
+                        <>
+                          <Loader2 className="animate-spin" size={18} />
+                          <span>Searching...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Search size={18} />
+                          <span>Find My Children</span>
+                        </>
+                      )}
+                    </button>
+                  </form>
+
+                  {error && (
+                    <div className="mt-4 p-3 bg-red-500/20 border border-red-500/40 rounded-xl flex items-start gap-3 animate-fadeIn">
+                      <AlertCircle
+                        className="text-red-300 flex-shrink-0 mt-0.5"
+                        size={18}
+                      />
+                      <p className="text-red-100 text-sm">{error}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* No results — a normal empty state, not an error */}
+                {hasSearched && children.length === 0 && !error && (
+                  <div className="mt-6 bg-white/15 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/30 animate-fadeInUp">
+                    <div className="text-center">
+                      <AlertCircle
+                        className="mx-auto text-yellow-300 mb-3"
+                        size={40}
+                      />
+                      <h3 className="text-white font-semibold text-lg mb-1">
+                        No children found
+                      </h3>
+                      <p className="text-gray-300 text-sm">
+                        We couldn't find any learners linked to that phone
+                        number. Please confirm the number with the school office.
+                      </p>
+                    </div>
                   </div>
+                )}
 
-                  <div>
-                    <label className="block text-xs font-medium text-gray-300 mb-1">
-                      Year
-                    </label>
-                    <select
-                      value={year}
-                      onChange={(e) => {
-                        setYear(Number(e.target.value));
-                        resetResults();
-                      }}
-                      className="w-full px-3 py-2.5 bg-white/10 border border-white/30 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {Array.from({ length: 5 }).map((_, i) => {
-                        const y = new Date().getFullYear() - i;
+                {/* Children list */}
+                {children.length > 0 && (
+                  <div className="mt-6 bg-white/15 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/30 animate-fadeInUp">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Users className="text-blue-300" size={20} />
+                      <h3 className="text-white font-semibold">
+                        Found {children.length}{' '}
+                        {children.length === 1 ? 'child' : 'children'}
+                      </h3>
+                    </div>
+
+                    <div className="space-y-2">
+                      {children.map((child) => {
+                        const isSelected = selectedChild?.id === child.id;
                         return (
-                          <option key={y} value={y} className="text-gray-900">
-                            {y}
-                          </option>
+                          <button
+                            key={child.id}
+                            onClick={() => {
+                              setSelectedChild(child);
+                              resetResults();
+                            }}
+                            className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all text-left ${
+                              isSelected
+                                ? 'bg-blue-500/30 border-blue-400/60 shadow-lg'
+                                : 'bg-white/5 border-white/20 hover:bg-white/10'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-full bg-blue-500/40 flex items-center justify-center">
+                                <User className="text-white" size={20} />
+                              </div>
+                              <div>
+                                <p className="text-white font-semibold text-sm">
+                                  {child.fullName}
+                                </p>
+                                <p className="text-gray-300 text-xs">
+                                  {child.className || 'No class'} • ID: {child.studentId || '—'}
+                                </p>
+                              </div>
+                            </div>
+                            <ChevronRight
+                              className={`text-white/60 transition-transform ${
+                                isSelected ? 'translate-x-1' : ''
+                              }`}
+                              size={18}
+                            />
+                          </button>
                         );
                       })}
-                    </select>
-                  </div>
-
-                  <div className="flex items-end">
-                    <button
-                      onClick={handleLoadReport}
-                      disabled={loadingReport}
-                      className="w-full py-2.5 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed"
-                    >
-                      {loadingReport ? (
-                        <>
-                          <Loader2 className="animate-spin" size={16} />
-                          <span>Loading...</span>
-                        </>
-                      ) : (
-                        <>
-                          <BookOpen size={16} />
-                          <span>View Results</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Report Card */}
-            {reportCard && (
-              <div className="mt-6 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/40 animate-fadeInUp text-gray-800">
-                {/* Student header */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-gray-200">
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-900">
-                      {reportCard.studentName}
-                    </h3>
-                    <p className="text-sm text-gray-600">
-                      {reportCard.className} • Form {reportCard.form} •{' '}
-                      {reportCard.studentId}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="text-right">
-                      <p className="text-xs text-gray-500">Position</p>
-                      <p className="text-lg font-bold text-blue-700">
-                        {reportCard.position}
-                      </p>
                     </div>
-                    <button
-                      onClick={handleDownloadPDF}
-                      disabled={downloadingPDF}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-xl transition-all shadow-md hover:shadow-lg disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed text-sm"
-                    >
-                      {downloadingPDF ? (
-                        <>
-                          <Loader2 className="animate-spin" size={16} />
-                          <span>Preparing...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Download size={16} />
-                          <span>Download PDF</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Summary tiles */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4">
-                  <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
-                    <p className="text-xs text-gray-600">Overall</p>
-                    <p className="text-lg font-bold text-blue-700">
-                      {reportCard.percentage}%
-                    </p>
-                  </div>
-                  <div className="bg-green-50 rounded-xl p-3 border border-green-100">
-                    <p className="text-xs text-gray-600">Grade</p>
-                    <p className={`text-lg font-bold ${gradeColor(reportCard.overallGrade)}`}>
-                      {reportCard.overallGrade > 0
-                        ? `${reportCard.overallGrade} (${reportCard.overallGradeDescription})`
-                        : '—'}
-                    </p>
-                  </div>
-                  <div className="bg-yellow-50 rounded-xl p-3 border border-yellow-100">
-                    <p className="text-xs text-gray-600">Status</p>
-                    <p
-                      className={`text-lg font-bold capitalize ${
-                        reportCard.status === 'pass'
-                          ? 'text-green-700'
-                          : 'text-red-700'
-                      }`}
-                    >
-                      {reportCard.status}
-                    </p>
-                  </div>
-                  <div className="bg-purple-50 rounded-xl p-3 border border-purple-100">
-                    <p className="text-xs text-gray-600">Completion</p>
-                    <p className="text-lg font-bold text-purple-700">
-                      {reportCard.completionPercentage}%
-                    </p>
-                  </div>
-                </div>
-
-                {/* Provisional / partial-data notices */}
-                {reportCard.isProvisional && (
-                  <div className="mb-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800">
-                    <strong>Provisional:</strong> {reportCard.totalSubjects - reportCard.completedSubjects} subject
-                    {reportCard.totalSubjects - reportCard.completedSubjects === 1 ? ' is' : 's are'} still awaiting marks
-                    (shown as —). The average may change when they are entered.
-                  </div>
-                )}
-                {reportCard.degraded && (
-                  <div className="mb-3 p-3 rounded-xl bg-gray-50 border border-gray-200 text-xs text-gray-600">
-                    Some school settings could not be loaded, so this view may differ slightly from the official report card.
                   </div>
                 )}
 
-                {/* Subjects table */}
-                <div className="overflow-x-auto -mx-2 px-2">
-                  <table className="w-full min-w-[480px] text-sm">
-                    <thead>
-                      <tr className="text-left text-xs uppercase text-gray-500 border-b border-gray-200">
-                        <th className="py-2 pr-2">Subject</th>
-                        {showWeek4 && <th className="py-2 px-2 text-center">W4</th>}
-                        {showWeek8 && <th className="py-2 px-2 text-center">W8</th>}
-                        {showEOT && <th className="py-2 px-2 text-center">EOT</th>}
-                        <th className="py-2 px-2 text-center bg-gray-50">Avg</th>
-                        <th className="py-2 pl-2 text-center">Grade</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reportCard.subjects.map((subject) => (
-                        <tr
-                          key={subject.subjectId}
-                          className="border-b border-gray-100 hover:bg-gray-50"
+                {/* Term/year + View Results */}
+                {selectedChild && (
+                  <div className="mt-6 bg-white/15 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/30 animate-fadeInUp">
+                    <div className="flex items-center gap-2 mb-4">
+                      <GraduationCap className="text-blue-300" size={20} />
+                      <h3 className="text-white font-semibold">
+                        Results for {selectedChild.fullName}
+                      </h3>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-300 mb-1">
+                          Term
+                        </label>
+                        <select
+                          value={term}
+                          onChange={(e) => {
+                            setTerm(e.target.value as TermName);
+                            resetResults();
+                          }}
+                          className="w-full px-3 py-2.5 bg-white/10 border border-white/30 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
-                          <td className="py-2 pr-2">
-                            <p className="font-medium text-gray-900">
-                              {subject.subjectName}
-                            </p>
-                            <p className="text-[11px] text-gray-500">
-                              {subject.teacherName}
-                            </p>
-                          </td>
-                          {showWeek4 && (
-                            <td className="py-2 px-2 text-center text-gray-700">
-                              {formatMark(subject.week4)}
-                            </td>
-                          )}
-                          {showWeek8 && (
-                            <td className="py-2 px-2 text-center text-gray-700">
-                              {formatMark(subject.week8)}
-                            </td>
-                          )}
-                          {showEOT && (
-                            <td className="py-2 px-2 text-center text-gray-700">
-                              {formatMark(subject.endOfTerm)}
-                            </td>
-                          )}
-                          <td className="py-2 px-2 text-center font-semibold text-gray-900 bg-gray-50">
-                            {subject.averagePercentage >= 0
-                              ? `${subject.averagePercentage}%`
-                              : '—'}
-                          </td>
-                          <td
-                            className={`py-2 pl-2 text-center font-bold ${gradeColor(
-                              subject.grade
-                            )}`}
-                          >
-                            {subject.grade > 0 ? subject.grade : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                          {TERMS.map((t) => (
+                            <option key={t} value={t} className="text-gray-900">
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                {/* Teacher's comment */}
-                <div className="mt-5 p-4 bg-gray-50 rounded-xl border border-gray-200">
-                  <div className="flex items-start gap-2">
-                    <Award className="text-blue-600 flex-shrink-0 mt-0.5" size={18} />
-                    <div>
-                      <p className="text-xs font-semibold text-gray-500 uppercase mb-1">
-                        Teacher's Comment
-                      </p>
-                      <p className="text-sm text-gray-800">
-                        {reportCard.teachersComment}
-                      </p>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-300 mb-1">
+                          Year
+                        </label>
+                        <select
+                          value={year}
+                          onChange={(e) => {
+                            setYear(Number(e.target.value));
+                            resetResults();
+                          }}
+                          className="w-full px-3 py-2.5 bg-white/10 border border-white/30 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {Array.from({ length: 5 }).map((_, i) => {
+                            const y = new Date().getFullYear() - i;
+                            return (
+                              <option key={y} value={y} className="text-gray-900">
+                                {y}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      <div className="flex items-end">
+                        <button
+                          onClick={handleLoadReport}
+                          disabled={loadingReport}
+                          className="w-full py-2.5 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed"
+                        >
+                          {loadingReport ? (
+                            <>
+                              <Loader2 className="animate-spin" size={16} />
+                              <span>Loading...</span>
+                            </>
+                          ) : (
+                            <>
+                              <BookOpen size={16} />
+                              <span>View Results</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
-                {/* Footer meta */}
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
-                  <span className="inline-flex items-center gap-1">
-                    <Calendar size={12} /> Generated {reportCard.generatedDate}
-                  </span>
-                  <span>
-                    {reportCard.term} • {reportCard.year}
-                  </span>
-                  {reportCard.parentsEmail && (
-                    <span className="inline-flex items-center gap-1">
-                      <Mail size={12} /> {reportCard.parentsEmail}
-                    </span>
-                  )}
-                </div>
+                {/* Report Card */}
+                {reportCard && (
+                  <div className="mt-6 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/40 animate-fadeInUp text-gray-800">
+                    {/* Student header */}
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-gray-200">
+                      <div>
+                        <h3 className="text-xl font-bold text-gray-900">
+                          {reportCard.studentName}
+                        </h3>
+                        <p className="text-sm text-gray-600">
+                          {reportCard.className} • ID: {reportCard.studentId}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <p className="text-xs text-gray-500">Position</p>
+                          <p className="text-lg font-bold text-blue-700">
+                            {reportCard.position}
+                          </p>
+                        </div>
+                        <button
+                          onClick={handleDownloadPDF}
+                          disabled={downloadingPDF}
+                          className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-xl transition-all shadow-md hover:shadow-lg disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed text-sm"
+                        >
+                          {downloadingPDF ? (
+                            <>
+                              <Loader2 className="animate-spin" size={16} />
+                              <span>Preparing...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download size={16} />
+                              <span>Download PDF</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
 
-                <p className="mt-4 text-[11px] text-gray-400 text-center">
-                  N/C = Not Conducted • — = Not Entered • Grades 1–9 (1 best, 9 fail)
-                </p>
-              </div>
+                    {/* Summary tiles */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4">
+                      <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
+                        <p className="text-xs text-gray-600">Overall</p>
+                        <p className="text-lg font-bold text-blue-700">
+                          {reportCard.percentage}%
+                        </p>
+                      </div>
+                      <div className="bg-green-50 rounded-xl p-3 border border-green-100">
+                        <p className="text-xs text-gray-600">Grade</p>
+                        <p
+                          className={`text-lg font-bold ${gradeColor(
+                            reportCard.overallGrade
+                          )}`}
+                        >
+                          {reportCard.overallGrade > 0
+                            ? `${reportCard.overallGrade} (${reportCard.overallGradeDescription})`
+                            : '—'}
+                        </p>
+                      </div>
+                      <div className="bg-yellow-50 rounded-xl p-3 border border-yellow-100">
+                        <p className="text-xs text-gray-600">Status</p>
+                        <p
+                          className={`text-lg font-bold capitalize ${
+                            reportCard.status === 'pass'
+                              ? 'text-green-700'
+                              : 'text-red-700'
+                          }`}
+                        >
+                          {reportCard.status}
+                        </p>
+                      </div>
+                      <div className="bg-purple-50 rounded-xl p-3 border border-purple-100">
+                        <p className="text-xs text-gray-600">Completion</p>
+                        <p className="text-lg font-bold text-purple-700">
+                          {reportCard.completionPercentage}%
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Provisional / partial-data notices */}
+                    {reportCard.isProvisional && (
+                      <div className="mb-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800">
+                        <strong>Provisional:</strong>{' '}
+                        {reportCard.totalSubjects - reportCard.completedSubjects}{' '}
+                        subject
+                        {reportCard.totalSubjects - reportCard.completedSubjects === 1
+                          ? ' is'
+                          : 's are'}{' '}
+                        still awaiting marks (shown as —). The average may change
+                        when they are entered.
+                      </div>
+                    )}
+                    {reportCard.degraded && (
+                      <div className="mb-3 p-3 rounded-xl bg-gray-50 border border-gray-200 text-xs text-gray-600">
+                        Some school settings could not be loaded, so this view may
+                        differ slightly from the official report card.
+                      </div>
+                    )}
+
+                    {/* Subjects table */}
+                    <div className="overflow-x-auto -mx-2 px-2">
+                      <table className="w-full min-w-[480px] text-sm">
+                        <thead>
+                          <tr className="text-left text-xs uppercase text-gray-500 border-b border-gray-200">
+                            <th className="py-2 pr-2">Subject</th>
+                            {showWeek4 && (
+                              <th className="py-2 px-2 text-center">W4</th>
+                            )}
+                            {showWeek8 && (
+                              <th className="py-2 px-2 text-center">W8</th>
+                            )}
+                            {showEOT && (
+                              <th className="py-2 px-2 text-center">EOT</th>
+                            )}
+                            <th className="py-2 px-2 text-center bg-gray-50">
+                              Avg
+                            </th>
+                            <th className="py-2 pl-2 text-center">Grade</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reportCard.subjects.map((subject) => (
+                            <tr
+                              key={subject.subjectId}
+                              className="border-b border-gray-100 hover:bg-gray-50"
+                            >
+                              <td className="py-2 pr-2">
+                                <p className="font-medium text-gray-900">
+                                  {subject.subjectName}
+                                </p>
+                                <p className="text-[11px] text-gray-500">
+                                  {subject.teacherName}
+                                </p>
+                              </td>
+                              {showWeek4 && (
+                                <td className="py-2 px-2 text-center text-gray-700">
+                                  {formatMark(subject.week4)}
+                                </td>
+                              )}
+                              {showWeek8 && (
+                                <td className="py-2 px-2 text-center text-gray-700">
+                                  {formatMark(subject.week8)}
+                                </td>
+                              )}
+                              {showEOT && (
+                                <td className="py-2 px-2 text-center text-gray-700">
+                                  {formatMark(subject.endOfTerm)}
+                                </td>
+                              )}
+                              <td className="py-2 px-2 text-center font-semibold text-gray-900 bg-gray-50">
+                                {subject.averagePercentage >= 0
+                                  ? `${subject.averagePercentage}%`
+                                  : '—'}
+                              </td>
+                              <td
+                                className={`py-2 pl-2 text-center font-bold ${gradeColor(
+                                  subject.grade
+                                )}`}
+                              >
+                                {subject.grade > 0 ? subject.grade : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Teacher's comment */}
+                    <div className="mt-5 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                      <div className="flex items-start gap-2">
+                        <Award
+                          className="text-blue-600 flex-shrink-0 mt-0.5"
+                          size={18}
+                        />
+                        <div>
+                          <p className="text-xs font-semibold text-gray-500 uppercase mb-1">
+                            Teacher's Comment
+                          </p>
+                          <p className="text-sm text-gray-800">
+                            {reportCard.teachersComment}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer meta */}
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
+                      <span className="inline-flex items-center gap-1">
+                        <Calendar size={12} /> Generated for {reportCard.term} {reportCard.year}
+                      </span>
+                      <span>Kalabo Boarding Secondary School</span>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
-
-            </>
-            )}
-
-            {/* Footer */}
-            <div className="text-center mt-8 animate-fadeInUp">
-              <p className="text-gray-300/80 text-xs">
-                For support, contact the school office • KalaboBoarding-SRS
-              </p>
-            </div>
           </div>
         </div>
       </Layout>
