@@ -35,6 +35,12 @@ One grid per class + term + year:
 Loading: `client/services/resultsGridLoader.ts`. Errors are thrown, never
 shown as 0% or 100%.
 
+## Publishing
+
+Guardians and sponsors (Parent Portal, Sponsor Portal) only see a term the
+admin has **published**, which needs 98% of the term's grid entered. Staff
+screens are unaffected. See `RESULTS_PUBLICATION.md`.
+
 ## Pass rule (one rule everywhere)
 
 **The only fail is grade 9 (0–39%).** Grades 1–8 (40–100%) are passes.

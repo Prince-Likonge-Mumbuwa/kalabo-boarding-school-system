@@ -4,7 +4,10 @@ service cloud.firestore {
 
     // ==================== HELPERS ====================
 
-    function isAuthenticated() {
+    // Any Firebase sign-in, approved or not. Used only where a new or
+    // waiting account must reach its OWN profile (sign-up, "waiting for
+    // approval"). Everything else uses isAuthenticated().
+    function isSignedIn() {
       return request.auth != null;
     }
 
@@ -12,16 +15,33 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(userId)).data;
     }
 
+    // A teacher who signed up on the website waits for an administrator:
+    // status 'pending' until approved ('active'), or 'rejected'.
+    function isApprovedUser(data) {
+      return !(data.get('status', 'active') in ['pending', 'rejected']);
+    }
+
+    // A signed-in, APPROVED staff account: an admin, or a teacher who is not
+    // waiting for approval. Parents and sponsors never sign in (the portals
+    // go through the Cloud Function `portal`), so nothing is public.
+    function isAuthenticated() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && getUserData(request.auth.uid).get('userType', '') in ['admin', 'teacher']
+        && isApprovedUser(getUserData(request.auth.uid));
+    }
+
     function isAdmin(userId) {
-      return isAuthenticated() &&
+      return isSignedIn() &&
         exists(/databases/$(database)/documents/users/$(userId)) &&
         getUserData(userId).userType == 'admin';
     }
 
     function isTeacher(userId) {
-      return isAuthenticated() &&
+      return isSignedIn() &&
         exists(/databases/$(database)/documents/users/$(userId)) &&
-        getUserData(userId).userType == 'teacher';
+        getUserData(userId).userType == 'teacher' &&
+        isApprovedUser(getUserData(userId));
     }
 
     // Collections with their own explicit rules. They are EXCLUDED from the
@@ -30,6 +50,8 @@ service cloud.firestore {
     function hasExplicitRules(collection) {
       return collection in [
         'users', 'teachers', 'classes', 'learners', 'results',
+        // Results released to guardians and sponsors
+        'results_publication',
         'teacher_assignments', 'class_slots', 'assignment_events', 'system',
         'attendance_sessions',
         'reportCards', 'report_cards', 'attendanceTrends', 'examConfigs',
@@ -297,17 +319,21 @@ service cloud.firestore {
 
     // ==================== USERS ====================
     match /users/{userId} {
-      allow read: if isAuthenticated();
+      // Staff read profiles; anyone signed in reads their OWN (a teacher
+      // waiting for approval needs it to see that they are waiting).
+      allow get: if isAuthenticated() || (isSignedIn() && request.auth.uid == userId);
       allow list: if isAuthenticated();
 
+      // Sign-up: a teacher creates their own profile, waiting for approval.
       allow create: if isAdmin(request.auth.uid) || (
-        isAuthenticated()
+        isSignedIn()
         && request.auth.uid == userId
-        && request.resource.data.get('userType', '') != 'admin'
+        && request.resource.data.get('userType', '') == 'teacher'
+        && request.resource.data.get('status', '') == 'pending'
       );
 
       allow update: if isAdmin(request.auth.uid) || (
-        isAuthenticated()
+        isSignedIn()
         && request.auth.uid == userId
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'userType', 'status',
@@ -358,7 +384,7 @@ service cloud.firestore {
 
     // ==================== CLASSES ====================
     match /classes/{classId} {
-      allow read: if true;
+      allow read: if isAuthenticated();
 
       allow create: if isAdmin(request.auth.uid);
       allow delete: if isAdmin(request.auth.uid);
@@ -380,7 +406,7 @@ service cloud.firestore {
 
     // ==================== LEARNERS ====================
     match /learners/{learnerId} {
-      allow read: if true;
+      allow read: if isAuthenticated();
       allow write: if isAuthenticated() && (
         isAdmin(request.auth.uid) || isTeacher(request.auth.uid)
       );
@@ -429,7 +455,7 @@ service cloud.firestore {
 
     // ==================== RESULTS ====================
     match /results/{resultId} {
-      allow read: if true;
+      allow read: if isAuthenticated();
 
       allow create: if isAdmin(request.auth.uid)
         || (teacherMayCreate(request.resource.data)
@@ -445,6 +471,54 @@ service cloud.firestore {
         || teacherMayDelete(resource.data);
     }
 
+    // ==================== RESULTS PUBLICATION ====================
+    //
+    // results_publication/{year}_{Term}, e.g. 2026_Term3: the admin's
+    // decision to release a term's results to guardians and sponsors (the
+    // Parent Portal and Sponsor Portal, which are signed out). See
+    // RESULTS_PUBLICATION.md.
+    //
+    // Public read: the signed-out portals must see whether a term is open.
+    // The document holds the term, who published it and when, and how many
+    // results were entered — nothing about any learner.
+    // Write: admin only, in their own name. A term can only be published
+    // when at least 98% of the expected results were entered (the app checks
+    // the same figures; this stops anything else from skipping the check).
+    // Never deleted: withdrawing a term sets published to false.
+    function isValidPublication(pubId, d) {
+      return d.keys().hasAll(['term', 'year', 'published', 'updatedAt', 'updatedBy'])
+        && d.keys().hasOnly([
+          'term', 'year', 'published',
+          'requiredEntries', 'doneEntries', 'completionPercent',
+          'publishedAt', 'publishedBy', 'publishedByName',
+          'unpublishedAt', 'unpublishedBy', 'unpublishedByName',
+          'updatedAt', 'updatedBy'
+        ])
+        && d.term in ['Term 1', 'Term 2', 'Term 3']
+        && d.year is int && d.year >= 2000 && d.year <= 2100
+        && pubId == string(d.year) + '_' + d.term.replace(' ', '')
+        && d.published is bool
+        && d.updatedBy == request.auth.uid
+        && d.updatedAt == request.time
+        && (
+          d.published == false
+          || (
+            d.requiredEntries is int && d.requiredEntries > 0
+            && d.doneEntries is int && d.doneEntries <= d.requiredEntries
+            && d.doneEntries * 100 >= d.requiredEntries * 98
+            && d.publishedBy == request.auth.uid
+            && d.publishedAt == request.time
+          )
+        );
+    }
+
+    match /results_publication/{pubId} {
+      allow read: if true;
+      allow create, update: if isAdmin(request.auth.uid)
+        && isValidPublication(pubId, request.resource.data);
+      allow delete: if false;
+    }
+
     // ==================== ASSIGNMENT ENGINE ====================
 
     match /class_slots/{slotId} {
@@ -452,7 +526,8 @@ service cloud.firestore {
       // list so a parent's report card lists the same subjects as the
       // admin's. Slots hold class/subject/teacher names and cover dates —
       // the same teacher names already shown on public result rows.
-      allow read: if true;
+      // (The Parent Portal now reads through the Cloud Function `portal`.)
+      allow read: if isAuthenticated();
       allow create: if isAdmin(request.auth.uid)
         || hodMaySlot(slotId, null, request.resource.data);
       allow update: if isAdmin(request.auth.uid)
@@ -524,7 +599,8 @@ service cloud.firestore {
     // from the class the child was in that year. Holds names, class and the
     // school's student id only — the same data already public on learners.
     match /enrollments/{enrollmentId} {
-      allow read: if true;
+      // (The Parent Portal reads past terms through the Cloud Function `portal`.)
+      allow read: if isAuthenticated();
       allow write: if isAdmin(request.auth.uid);
     }
 
@@ -607,7 +683,8 @@ service cloud.firestore {
     }
 
     match /sponsor_codes/{code} {
-      allow get: if true;
+      // Sponsors check and spend codes through the Cloud Function `portal`.
+      allow get: if isGuidanceStaff();
       allow list: if isGuidanceStaff();
       allow create: if isGuidanceStaff()
         && request.resource.data.createdBy == request.auth.uid
@@ -619,14 +696,7 @@ service cloud.firestore {
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time;
       allow update: if (
-          // Spend (Parent Portal, signed out)
-          resource.data.status == 'active'
-          && request.time < resource.data.expiresAt
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'usedAt'])
-          && request.resource.data.status == 'used'
-          && request.resource.data.usedAt == request.time
-        ) || (
-          // Cancel (officer / admin)
+          // Cancel (officer / admin). Spending is done by the Cloud Function.
           isGuidanceStaff()
           && resource.data.status == 'active'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'revokedAt', 'revokedByName'])
@@ -958,9 +1028,8 @@ service cloud.firestore {
 
     // ==================== EXAM CONFIGURATION ====================
     match /examConfigs/{configId} {
-      // Public read: the Parent Portal must use the same active exams as
-      // the admin's report card. Configs hold only dates and mark totals.
-      allow read: if true;
+      // The Parent Portal reads them through the Cloud Function `portal`.
+      allow read: if isAuthenticated();
       // Admin only: only the admin Exam Management page writes configs, and
       // a teacher changing them would change every class's results.
       allow write: if isAdmin(request.auth.uid);

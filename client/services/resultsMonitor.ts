@@ -129,6 +129,12 @@ export interface MonitorData {
   ctx: TermContext;
   teachers: TeacherProgress[];
   vacant: VacantSubject[];
+  /**
+   * Whole-school totals for the term: every class's required and entered
+   * results, vacant subjects included (the teacher rows leave those out).
+   * Exact counts — publishing needs 98% and must not work from a rounded %.
+   */
+  completion: { requiredEntries: number; doneEntries: number };
   /** Classes whose data could not be loaded — shown as an error, never as 0%/100%. */
   failedClasses: Array<{ classId: string; className: string; error: string }>;
 }
@@ -173,6 +179,20 @@ export function toScreenSubjectProgress(sp: GridSubjectProgress, activeExams: Ex
       notConducted: e.notConducted,
     })),
   };
+}
+
+/** Required and entered results across class grids (every subject counts). */
+export function gridsCompletion(grids: Array<{ grid: ResultsGrid }>): { requiredEntries: number; doneEntries: number } {
+  let requiredEntries = 0;
+  let doneEntries = 0;
+  for (const g of grids) {
+    for (const s of g.grid.subjects) {
+      const sp = subjectProgress(g.grid, s.subjectId);
+      requiredEntries += sp.requiredEntries;
+      doneEntries += sp.doneEntries;
+    }
+  }
+  return { requiredEntries, doneEntries };
 }
 
 // ==================== AGGREGATION (pure) ====================
@@ -333,7 +353,7 @@ export async function loadMonitorData(
 ): Promise<MonitorData> {
   const ctx = await loadTermContext(term, year);
   if (ctx.activeExams.length === 0 || classes.length === 0) {
-    return { ctx, teachers: [], vacant: [], failedClasses: [] };
+    return { ctx, teachers: [], vacant: [], completion: { requiredEntries: 0, doneEntries: 0 }, failedClasses: [] };
   }
   const termResults = await loadTermResults(ctx.term, ctx.year);
   const failedClasses: MonitorData['failedClasses'] = [];
@@ -354,5 +374,5 @@ export async function loadMonitorData(
   );
   const grids = loaded.filter((g): g is NonNullable<typeof g> => g !== null);
   const { teachers, vacant } = aggregateMonitor(ctx, grids, teacherInfo);
-  return { ctx, teachers, vacant, failedClasses };
+  return { ctx, teachers, vacant, completion: gridsCompletion(grids), failedClasses };
 }

@@ -47,6 +47,12 @@ school are doing. Every number opens the page behind it.
 5. **Learners & school** — learners at risk, enrolment by form (boys / girls),
    admitted this term, sponsors, data quality, recent activity (audit trail).
 
+## Publish results
+
+Under *Results entry* in the **This term** column. Guardians and sponsors
+only see a term the admin has published, and only once 98% of its results
+are entered. See `RESULTS_PUBLICATION.md`.
+
 ## Needs attention — the rules
 
 | Item | When | Level |
@@ -82,6 +88,7 @@ still show.
 | `client/services/nerveCentreLoader.ts` | Firestore reads (classes, learners, daily registers per class, results this / last term, exam configs, teachers, class slots, holidays, failed SMS, audit log, sponsor codes) |
 | `client/hooks/useNerveCentre.ts` | One query per panel, refresh intervals |
 | `client/components/nerve/NervePanels.tsx` | Panel, vital, attention strip, charts, timeline |
+| `client/components/results/PublishResultsPanel.tsx` | The Publish results panel (`PublishResultsPanel.spec.tsx`) |
 | `client/pages/AdminDashboard.tsx` | The page (`AdminDashboard.spec.tsx`, sample school in `client/test/nerveFixture.ts`) |
 
 Also: the Results Entry Monitor opens pre-filtered from a link

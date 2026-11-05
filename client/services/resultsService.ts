@@ -45,6 +45,7 @@ import {
   type LoadedClassGrid,
 } from '@/services/resultsGridLoader';
 import { classIdForYear } from '@/services/enrollmentService';
+import { assertTermReleased } from '@/services/resultsPublication';
 
 // ==================== ENHANCED TYPES ====================
 
@@ -1317,10 +1318,14 @@ class ResultsService {
     options?: {
       includeIncomplete?: boolean;
       markMissing?: boolean;
-      /** Parent Portal (signed out). */
+      /** Parent Portal (signed out). Only a published term is returned. */
       publicView?: boolean;
     }
   ): Promise<(ReportCardData & { degraded?: boolean }) | null> {
+    // Guardians and sponsors only see a term the admin has published
+    // (RESULTS_PUBLICATION.md). Staff screens never use publicView.
+    if (options?.publicView) await assertTermReleased(term, year);
+
     const studentDoc = await this.resolveStudentDocument(inputStudentId);
     if (!studentDoc) {
       console.warn(`⚠️ Student not found: ${inputStudentId}`);
