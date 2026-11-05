@@ -4,8 +4,8 @@
 //   │ NEEDS ATTENTION — only what's wrong, worst first, each opens the fix  │
 //   ├ TODAY ──────────────┬ THIS TERM ───────────────┬ LEARNERS & SCHOOL ──┤
 //   │ attendance, trend,  │ timeline, results entry, │ at risk, enrolment,  │
-//   │ registers, lessons  │ pass-rate trend, forms,  │ sponsors, data       │
-//   │ by period, staff    │ subjects                 │ quality, activity    │
+//   │ registers, lessons  │ publish results, pass-   │ sponsors, data       │
+//   │ by period, staff    │ rate trend, forms, subj. │ quality, activity    │
 //   └─────────────────────┴──────────────────────────┴──────────────────────┘
 //
 // Calculations: services/nerveCentre.ts (tested). Data: hooks/useNerveCentre.ts.
@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { AnnouncementModal } from '@/components/AnnouncementModal';
+import { PublishResultsPanel } from '@/components/results/PublishResultsPanel';
 import { useAuth } from '@/hooks/useAuth';
 import { useNerveCentre } from '@/hooks/useNerveCentre';
 import { pickTermConfig } from '@/services/resultsGrid';
@@ -286,6 +287,8 @@ export default function AdminDashboard() {
           </ul>
         )}
       </Panel>
+
+      <PublishResultsPanel actor={user?.uid ? { uid: user.uid, name: user.fullName || 'Admin' } : null} />
 
       <Panel title="Performance" icon={<BarChart3 size={16} className="text-emerald-600" />} to="/dashboard/admin/results-analysis" toLabel="Analysis" loading={nc.rowsThis.isLoading} error={nc.rowsThis.error}>
         <p className="mb-1 text-xs text-slate-600">Pass rate (marks of 40% and above) test by test — {nc.term.label} beside {nc.prev.label}</p>

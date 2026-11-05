@@ -12,6 +12,8 @@ const fx = vi.hoisted(() => ({ data: null as any }));
 vi.mock('@/hooks/useNerveCentre', () => ({ useNerveCentre: () => fx.data }));
 vi.mock('@/components/DashboardLayout', () => ({ DashboardLayout: ({ children }: any) => <div>{children}</div> }));
 vi.mock('@/components/AnnouncementModal', () => ({ AnnouncementModal: ({ isOpen }: any) => (isOpen ? <div role="dialog">Announcement</div> : null) }));
+// The publish panel has its own tests (PublishResultsPanel.spec.tsx); it needs a data provider.
+vi.mock('@/components/results/PublishResultsPanel', () => ({ PublishResultsPanel: () => <section aria-label="Publish results" /> }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'ADMIN', fullName: 'Jean Hakalima', userType: 'admin' } }) }));
 
 import AdminDashboard from './AdminDashboard';

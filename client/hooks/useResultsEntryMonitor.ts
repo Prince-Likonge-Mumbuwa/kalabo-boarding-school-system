@@ -196,6 +196,8 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions = 
     missingByExamType,
     vacantSubjects: (monitorQuery.data?.vacant ?? []) as VacantSubject[],
     failedClasses: monitorQuery.data?.failedClasses ?? [],
+    /** Whole-school required / entered results; null until the term has loaded. */
+    completion: monitorQuery.data?.completion ?? null,
     isLoading: enabled && (monitorQuery.isLoading || classesLoading || teachersLoading),
     isFetching: monitorQuery.isFetching,
     isError: monitorQuery.isError,

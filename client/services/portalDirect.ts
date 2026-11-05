@@ -9,6 +9,9 @@
 // signed-out visitors read learners and results; once the security update
 // closes those reads, the function is the only way in (and by then it is
 // deployed, so this is never used).
+//
+// Only PUBLISHED terms are shown (resultsPublication.ts): the report card
+// builder refuses an unpublished term for a public view.
 
 import type { PortalChild, PortalReportCard, PortalSponsorCode } from './portalApi';
 import type { SponsorReports } from './guidanceService';
@@ -48,6 +51,10 @@ export const portalDirect = {
   async sponsorReports(code: string): Promise<SponsorReports> {
     const { checkSponsorCode, buildSponsorReports } = await import('./guidanceService');
     const c = await checkSponsorCode(code);
+    // Say "not released" once, up front, instead of per learner (a learner
+    // whose card cannot be built is listed as "no results").
+    const { assertTermReleased } = await import('./resultsPublication');
+    await assertTermReleased(c.term, c.year);
     return buildSponsorReports(c.learnerIds, c.term, c.year, { publicView: true });
   },
 

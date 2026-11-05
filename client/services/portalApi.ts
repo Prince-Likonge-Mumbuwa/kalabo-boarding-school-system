@@ -188,6 +188,31 @@ async function viaPortal<T>(remote: () => Promise<T>, direct: () => Promise<T>):
   }
 }
 
+/**
+ * Guardians and sponsors only get a term the school has published. Checked
+ * here as well as in the report card builder, so the answer is the same
+ * whether the portal function or the browser fallback builds the cards.
+ */
+async function requireReleased(term: string, year: number): Promise<void> {
+  // Loaded on demand, like Firebase above, to keep this module light.
+  const { isTermReleased, ResultsNotReleasedError } = await import('@/services/resultsPublication');
+  let released: boolean;
+  try {
+    released = await isTermReleased(term, year);
+  } catch (e) {
+    const err = e as { message?: string };
+    throw new PortalError(
+      'We could not check whether these results have been released. Please try again.',
+      'internal',
+      err?.message
+    );
+  }
+  if (!released) {
+    const notReleased = new ResultsNotReleasedError(term, year);
+    throw new PortalError(notReleased.message, notReleased.code);
+  }
+}
+
 /** For tests. */
 export function resetPortalMode() {
   directMode = false;
@@ -236,6 +261,8 @@ export const portalApi = {
     const clean = (phone || '').trim();
     if (!clean || !learnerId) return null;
 
+    await requireReleased(term, year);
+
     const res = await viaPortal(
       () => call<{ reportCard?: PortalReportCard | null }>({ action: 'parentReport', phone: clean, learnerId, term, year }),
       async () => ({ reportCard: await portalDirect.parentReport(clean, learnerId, term, year) })
@@ -265,6 +292,8 @@ export const portalApi = {
     if (!res?.code) {
       throw new PortalError('That sponsor code could not be checked.', 'internal');
     }
+    // Before any report is built and before the code could be spent.
+    await requireReleased(res.code.term, res.code.year);
     return res.code;
   },
 
@@ -283,6 +312,15 @@ export const portalApi = {
         'The sponsor reports could not be generated. Please try again.',
         'internal'
       );
+    }
+    // The portal function builds these from the code's own term; hold back
+    // any term that is not published.
+    const seen = new Set<string>();
+    for (const card of res.reports.cards ?? []) {
+      const key = `${card.term}|${card.year}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      await requireReleased(card.term, Number(card.year));
     }
     return res.reports;
   },

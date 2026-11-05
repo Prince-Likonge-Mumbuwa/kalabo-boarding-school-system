@@ -30,6 +30,7 @@ const NOUNS: Record<string, [string, string, string]> = {
   teachers: ['Staff', 'staff record', 'staff records'],
   classes: ['Classes', 'class', 'classes'],
   results: ['Results', 'result', 'results'],
+  results_publication: ['Results', 'results release', 'results releases'],
   attendance_sessions: ['Attendance', 'register', 'registers'],
   attendance: ['Attendance', 'attendance record', 'attendance records'],
   class_slots: ['Class assignments', 'class allocation', 'class allocations'],
