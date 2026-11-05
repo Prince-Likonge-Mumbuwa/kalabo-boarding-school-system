@@ -295,6 +295,7 @@ export function EnrolmentBars({ rows }: { rows: Array<{ form: string; boys: numb
               <span className={cn(r.other ? '' : 'rounded-r-[4px]')} style={{ width: `${(r.girls / max) * 100}%`, background: VIZ.s2 }} />
               {r.other > 0 && <span className="rounded-r-[4px] bg-slate-300" style={{ width: `${(r.other / max) * 100}%` }} />}
             </span>
+            <span className="shrink-0 text-right text-[11px] tabular-nums text-slate-600">{r.boys} boys · {r.girls} girls</span>
             <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-slate-800">{r.total}</span>
           </li>
         ))}
