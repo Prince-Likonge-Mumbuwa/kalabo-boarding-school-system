@@ -156,26 +156,59 @@ function grade(percentage) {
 
 // ==================== DATA FETCHERS ====================
 
-async function getActiveExamTypes(term, year) {
+const ALL_EXAMS = ['week4', 'week8', 'endOfTerm'];
+const TOTAL_MARKS_FIELD = {
+  week4: 'week4TotalMarks',
+  week8: 'week8TotalMarks',
+  endOfTerm: 'endOfTermTotalMarks',
+};
+
+/**
+ * Exams that count toward a learner's average this term. Same rule as the
+ * app (client/types/exam.ts isExamActive + getActiveExamTypesForClass):
+ *   - the exam's box is ticked AND its total marks are above 0
+ *   - the config is not switched off
+ *   - the learner's class does not skip that test (notWrittenBy)
+ * Falls back to all three exams only when no usable config exists.
+ */
+async function getActiveExamTypes(term, year, classId) {
   try {
     const snap = await db.collection('examConfigs')
       .where('term', '==', term).where('year', '==', year)
-      .limit(1).get();
+      .get();
 
-    if (snap.empty) return ['week4', 'week8', 'endOfTerm'];
+    if (snap.empty) return ALL_EXAMS.slice();
 
-    const c = snap.docs[0].data();
-    const types = [];
-    if (c.examTypes?.week4)     types.push('week4');
-    if (c.examTypes?.week8)     types.push('week8');
-    if (c.examTypes?.endOfTerm) types.push('endOfTerm');
-    return types.length ? types : ['week4', 'week8', 'endOfTerm'];
+    const configs = snap.docs.map(d => d.data());
+    const c = configs.find(x => x.isActive !== false) || configs[0];
+    if (c.isActive === false) return ALL_EXAMS.slice();
+
+    const types = ALL_EXAMS.filter(t => {
+      if (c.examTypes?.[t] !== true) return false;
+      if (!((c[TOTAL_MARKS_FIELD[t]] ?? 0) > 0)) return false;
+      const skipped = c.notWrittenBy?.[t] || [];
+      return !(classId && skipped.includes(classId));
+    });
+    return types.length ? types : ALL_EXAMS.slice();
   } catch (err) {
     console.error('getActiveExamTypes:', err);
-    return ['week4', 'week8', 'endOfTerm'];
+    return ALL_EXAMS.slice();
   }
 }
 
+const toMillis = (v) => {
+  if (!v) return 0;
+  if (typeof v.toMillis === 'function') return v.toMillis();
+  const t = Date.parse(String(v));
+  return Number.isNaN(t) ? 0 : t;
+};
+
+/**
+ * One entry per subject, holding the learner's percentage for each active
+ * exam that was actually sat. Absent (-1), not conducted (-2) and unmarked
+ * exams are left out, so they never drag an average down. If a cell has two
+ * rows (old duplicates) the newest wins.
+ */
 async function getStudentResultsBySubject(studentDocId, term, year, examTypes) {
   const q = await db.collection('results')
     .where('studentId', '==', studentDocId)
@@ -187,12 +220,21 @@ async function getStudentResultsBySubject(studentDocId, term, year, examTypes) {
   q.docs.forEach(d => {
     const r = d.data();
     if (!examTypes.includes(r.examType)) return;
-    if (!map.has(r.subjectName)) {
-      map.set(r.subjectName, {
-        subjectName: r.subjectName, week4: null, week8: null, endOfTerm: null,
-      });
-    }
-    map.get(r.subjectName)[r.examType] = r.percentage;
+    if (typeof r.marks !== 'number' || r.marks < 0) return;
+
+    let pct;
+    if (typeof r.percentage === 'number' && r.percentage >= 0) pct = r.percentage;
+    else if (typeof r.totalMarks === 'number' && r.totalMarks > 0) pct = (r.marks / r.totalMarks) * 100;
+    else pct = r.marks;
+
+    const subjectName = normalizeSubjectName(r.subjectId || r.subjectName || '');
+    if (!subjectName) return;
+    if (!map.has(subjectName)) map.set(subjectName, { subjectName, exams: {} });
+
+    const entry = map.get(subjectName);
+    const at = toMillis(r.updatedAt);
+    const prev = entry.exams[r.examType];
+    if (!prev || at >= prev.at) entry.exams[r.examType] = { pct, at };
   });
   return Array.from(map.values());
 }
@@ -219,7 +261,7 @@ async function getStudentResultsBySubject(studentDocId, term, year, examTypes) {
  */
 async function formatSMSMessage(studentDocId, customId, term, year, studentData, classData) {
   try {
-    const examTypes = await getActiveExamTypes(term, year);
+    const examTypes = await getActiveExamTypes(term, year, studentData.classId);
     const subjects  = await getStudentResultsBySubject(studentDocId, term, year, examTypes);
 
     const studentName = studentData.fullName || studentData.name || 'N/A';
@@ -247,17 +289,15 @@ async function formatSMSMessage(studentDocId, customId, term, year, studentData,
     );
 
     for (const s of sortedSubjects) {
-      // Prefer endOfTerm → week8 → week4 (latest available)
-      let latest = null;
-      if (s.endOfTerm != null)  latest = s.endOfTerm;
-      else if (s.week8 != null) latest = s.week8;
-      else if (s.week4 != null) latest = s.week4;
+      // Subject mark = average of every active exam that was sat
+      // (Week 4, Week 8, End of Term) - the same figure the report card shows.
+      const scores = Object.values(s.exams).map(e => e.pct);
+      if (scores.length === 0) continue;
 
-      if (latest == null || latest < 0) continue;
-
+      const subjectAvg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
       const code = getSubjectSmsCode(s.subjectName);
-      tokens.push(`${code} ${Math.round(latest)}`);
-      total += latest;
+      tokens.push(`${code} ${subjectAvg}`);
+      total += subjectAvg;
       count++;
     }
 
@@ -321,4 +361,4 @@ module.exports = {
   grade,
   SUBJECT_SMS_ABBREVIATIONS,
   SUBJECT_NORMALIZATION_MAP,
-};
+};

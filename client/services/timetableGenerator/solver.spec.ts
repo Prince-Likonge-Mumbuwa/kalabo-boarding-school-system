@@ -134,6 +134,21 @@ describe('timetable problem', () => {
     expect(readiness({ ...base, signoffs: [so('Languages')] }).ready).toBe(false);
     expect(readiness({ ...base, signoffs: [so('Languages'), so('Mathematics')] }).ready).toBe(true);
   });
+
+  it('a subject no department has chosen is listed but does not stop the timetable', () => {
+    const cfg: TimetableConfig = { ...EMPTY_CONFIG, levels: { 'form-1': { key: 'form-1', label: 'Form 1', subjects: [req('maths', 6), req('silozi', 4)] } } };
+    const so = { id: 'Mathematics', department: 'Mathematics', term: 'Term 1' as const, year: 2027, byUid: 'h', byName: 'H', byRole: 'hod' as const, at: null, vacantCount: 0 };
+    const r = readiness({
+      config: cfg,
+      classes: [{ id: 'A', name: 'Form 1A', type: 'form', level: 1 }],
+      ownedSlotIds: new Set(['A__maths']),
+      departmentOf: (s: string) => (s === 'maths' ? 'Mathematics' : null),
+      signoffs: [so],
+    });
+    expect(r.noDepartment).toEqual(['silozi']);
+    expect(r.blockers).toEqual([]);
+    expect(r.ready).toBe(true);
+  });
 });
 
 describe('timetable solver', () => {

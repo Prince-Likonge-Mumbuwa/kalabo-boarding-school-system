@@ -126,7 +126,7 @@ export function ReadinessPanel({ onOpenCurriculum }: { onOpenCurriculum: () => v
           ))}
         </ul>
         {r.noDepartment.length > 0 && (
-          <p className="mt-3 text-xs text-amber-800">Not in any department: {r.noDepartment.join(', ')}. The HoD adds them in My Department, or the admin in Teacher Management → Departments.</p>
+          <p className="mt-3 text-xs text-amber-800">Not in any department: {r.noDepartment.join(', ')}. This does not stop the timetable from being generated; they are timetabled as usual. A HoD may add them in My Department, or the admin in Teacher Management → Departments.</p>
         )}
       </Card>
 

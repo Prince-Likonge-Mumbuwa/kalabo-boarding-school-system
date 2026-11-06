@@ -320,7 +320,11 @@ export interface Readiness {
   levels: Array<{ key: string; label: string; classCount: number; subjectCount: number }>;
   missingLevels: string[];
   departments: DepartmentReadiness[];
-  /** Curriculum subjects no department has chosen. */
+  /**
+   * Curriculum subjects no department has chosen. Information only: a HoD
+   * may leave a subject out, and it is still timetabled (it just has no
+   * department sign-off to wait for).
+   */
   noDepartment: string[];
   vacantTotal: number;
   /** Everything needed to generate is in place. */
@@ -374,7 +378,8 @@ export function readiness(input: {
   const blockers: string[] = [];
   if (levels.size === 0) blockers.push('There are no active classes.');
   if (missingLevels.length) blockers.push(`Set the subjects for ${missingLevels.join(', ')} (Curriculum).`);
-  if (noDept.size) blockers.push(`No department has chosen ${[...noDept].sort().join(', ')}. The HoD (or admin) adds them to a department.`);
+  // Subjects no department has chosen do NOT block generating: they are listed
+  // in `noDepartment` for information only.
   const unsigned = departments.filter(d => !d.signoff);
   if (unsigned.length) blockers.push(`Waiting for allocations to be marked complete: ${unsigned.map(d => d.department).join(', ')}.`);
 
