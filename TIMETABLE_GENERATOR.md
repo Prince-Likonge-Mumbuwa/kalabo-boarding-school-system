@@ -22,7 +22,9 @@ and the periods as columns**.
 
 1. **Readiness** — the timetable can only be generated when every
    department whose subjects are in the curriculum has marked its
-   allocations complete, and every level has its subjects. Subjects still
+   allocations complete, and every level has its subjects. A subject that no
+   department has chosen does not block generating: it is timetabled as usual
+   and is only listed as "Not in any department". Subjects still
    without a teacher are listed; they are timetabled without one (when a
    teacher is allocated later they take over those periods).
 2. **Curriculum** — per level (Form 1, Grade 10 …), each subject's:
