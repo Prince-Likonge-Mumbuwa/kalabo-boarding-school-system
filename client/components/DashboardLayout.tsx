@@ -7,6 +7,7 @@ import { useGuidanceOfficer } from '@/hooks/useGuidanceOfficer';
 import { useMyHodRole } from '@/hooks/useDepartments';
 import { useTimetablerRole } from '@/hooks/useTimetableBuilder';
 import { useTeacherClasses, holdsFormTeacherSlot } from '@/hooks/useTeacherClasses';
+import { aiConfigured } from '@/services/aiApi';
 import {
   Menu,
   X,
@@ -29,6 +30,7 @@ import {
   History,
   CalendarRange,
   HeartHandshake,
+  Sparkles,
 } from 'lucide-react';
 
 // Union of all navigable tab ids — keeps activeTab type-safe across pages.
@@ -56,6 +58,7 @@ type ActiveTab =
   | 'attendance-timetable'
   | 'audit-trail'
   | 'guidance'
+  | 'ai-tools'
   | (string & {}); // allow any string for forward-compatibility without losing hints
 
 interface DashboardLayoutProps {
@@ -132,6 +135,8 @@ function DashboardShell({ children, activeTab = 'dashboard' }: DashboardLayoutPr
     ...(hodRole ? [{ id: 'my-department', label: 'My Department', icon: Award, path: '/dashboard/teacher/department' }] : []),
     // A HoD the admin allowed to generate timetables.
     ...(hodRole && isTimetabler ? [{ id: 'timetable-builder', label: 'Timetable Builder', icon: CalendarRange, path: '/dashboard/teacher/timetable-builder' }] : []),
+    // Shown only where the site has been told where the AI server is (see @/services/aiApi).
+    ...(aiConfigured ? [{ id: 'ai-tools', label: 'AI Tools', icon: Sparkles, path: '/dashboard/teacher/ai' }] : []),
   ];
 
   const menuItems = isAdmin ? adminMenuItems : teacherMenuItems;

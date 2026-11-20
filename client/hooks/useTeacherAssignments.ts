@@ -156,7 +156,7 @@ export const useTeacherAssignments = (
     retry: 2,
     refetchOnWindowFocus: false, // whole-school read: not on every tab switch
     // Covers start/expire by date — re-evaluate every 5 minutes.
-    refetchInterval: 5 * 60 * 1000,
+    refetchInterval: 15 * 60 * 1000, // covers change by date; Refresh updates at once
   });
 
   const rows = assignmentsQuery.data?.rows ?? [];

@@ -44,8 +44,9 @@ export const useOnCoverTeachers = (opts: { enabled?: boolean } = {}): OnCoverInf
     enabled: opts.enabled !== false,
     // Covers start/expire by date — re-evaluate periodically so the count
     // flips on its own at the start/end of a cover.
-    refetchInterval: 5 * 60 * 1000,
-    staleTime: 60 * 1000,
+    // Reads every class slot, so keep it slow: 15 minutes is plenty for changes that happen by date.
+    refetchInterval: 15 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const snap = await getDocs(collection(db, 'class_slots'));
       const now = new Date();
