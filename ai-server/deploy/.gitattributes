@@ -1,0 +1,4 @@
+# Shell scripts run on the Linux VPS: keep Unix line endings even when
+# checked out on Windows. The .bat files run on Windows: Windows line endings.
+*.sh text eol=lf
+*.bat text eol=crlf
