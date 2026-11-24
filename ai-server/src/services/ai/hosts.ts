@@ -25,8 +25,10 @@ export interface Host {
   embedModel: string;
   /**
    * How a search request says whether its text is a question or a passage:
-   * NVIDIA uses input_type "query"/"passage", DeepInfra uses task
-   * "search_query"/"document". The resulting vectors are meant to be the same.
+   * input_type "query"/"passage". DeepInfra used to want task
+   * "search_query"/"document" but now refuses it ("use input_type"; Nov 2026).
+   * With input_type, DeepInfra's Nemotron-3.5-Embed-1B gives the same vectors
+   * as NVIDIA's nemotron-3-embed-1b (similarity 1.0000).
    */
   embedStyle: "input_type" | "task";
 }
@@ -39,7 +41,7 @@ export function allHosts(config: AppConfig): Record<HostId, Host> {
     },
     deepinfra: {
       id: "deepinfra", label: "DeepInfra", apiKey: config.deepinfra.apiKey, baseUrl: config.deepinfra.baseUrl, keyName: "DEEPINFRA_API_KEY",
-      writeModel: config.deepinfra.model, embedModel: config.deepinfra.embeddingModel, embedStyle: "task",
+      writeModel: config.deepinfra.model, embedModel: config.deepinfra.embeddingModel, embedStyle: "input_type",
     },
   };
 }

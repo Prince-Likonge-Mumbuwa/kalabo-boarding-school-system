@@ -140,7 +140,7 @@ async function repair(content: string, broken: Analysed[], writer: Writer, signa
     const after = content.slice(at + b.raw.length, at + b.raw.length + 400).split("\n").slice(0, 6).join("\n");
     return `FIGURE ${i + 1}\nProblems:\n- ${b.problems.join("\n- ")}\nQuestion text before it:\n"""\n${before}\n"""\nThe block:\n${b.raw}\nText after it:\n"""\n${after}\n"""`;
   }).join("\n\n");
-  const reply = await writer.generate({ system: REPAIR_SYSTEM, user: `${list}\n\nWrite the edits.`, signal });
+  const reply = await writer.generate({ system: REPAIR_SYSTEM, user: `${list}\n\nWrite the edits.`, signal, job: "figureRepair" });
   const json = /\{[\s\S]*\}/.exec(reply)?.[0];
   if (!json) return content;
   let edits: { find?: unknown; replace?: unknown }[] = [];
@@ -229,13 +229,14 @@ export interface FigureReport {
 export async function processFigures(
   content: string,
   ctx: CheckContext,
-  opts: { writer?: Writer; signal?: AbortSignal; onStatus?: (message: string) => void } = {},
+  opts: { writer?: Writer; signal?: AbortSignal; onStatus?: (message: string) => void; keep?: string[] } = {},
 ): Promise<FigureReport> {
   content = normaliseFigureFences(content);
   let analysed = await analyse(content, ctx);
   if (!analysed.length) return { content, figures: 0, withProblems: 0, repaired: false };
   let repaired = false;
-  const broken = analysed.filter((a) => a.fixable);
+  // Figures the server built from the question's own numbers (answerFigures.ts) are never rewritten by the AI.
+  const broken = analysed.filter((a) => a.fixable && !opts.keep?.some((k) => a.raw.includes(k)));
   if (broken.length && opts.writer) {
     opts.onStatus?.(`Fixing ${broken.length} figure${broken.length === 1 ? "" : "s"}…`);
     try {

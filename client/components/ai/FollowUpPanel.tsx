@@ -7,8 +7,8 @@
 //   continuation  part of the plan was not covered: finish it
 //   revision      most learners got it: a short recap next lesson (nothing to write)
 //
-// The new plan is filed in 8 Lesson Plan, linked to the original, and both
-// appear in 10 (vii) Remedial Work Plan. The date offered is the class's
+// The new plan is filed in 9 Lesson Plan, linked to the original, and both
+// appear in 11 (vii) Remedial Work Plan. The date offered is the class's
 // next lesson on the teacher's timetable.
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -20,7 +20,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { teacherAi } from '@/services/aiApi';
 import { getTimetableForTeacher } from '@/services/timetableService';
 import { getCurrentAcademicTerm } from '@/utils/academicTerm';
-import { followUpFor, type EFileDocument, type FollowUpKind } from '@/types/ai';
+import { efileSection, followUpFor, type EFileDocument, type FollowUpKind } from '@/types/ai';
 import { cn } from '@/lib/utils';
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -120,7 +120,7 @@ export function FollowUpPanel({ document }: { document: EFileDocument }) {
           <LifeBuoy size={20} className={cn('mt-0.5 hidden shrink-0 sm:block', style.icon)} />
           <div className="min-w-0 flex-1 text-sm text-gray-800">
             <p className="font-semibold text-gray-900">{style.title}</p>
-            <p className="mt-0.5">{why}{kind && !document.followUp && ' The AI can write the follow-up lesson from this plan and its evaluation. It is filed in 8 Lesson Plan and listed in 10 (vii) Remedial Work Plan.'}</p>
+            <p className="mt-0.5">{why}{kind && ` The remedial work for this lesson is in ${efileSection('remedialPlan').label} ${efileSection('remedialPlan').title}.`}{kind && !document.followUp && ` The AI can also write the follow-up lesson from this plan and its evaluation. It is filed in ${efileSection('lessonPlans').label.replace('Section ', '')} ${efileSection('lessonPlans').title}.`}</p>
           </div>
         </div>
         {kind && document.followUp && (

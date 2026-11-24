@@ -8,6 +8,7 @@ import { auth, db } from '@/lib/firebase';
 import { doc, updateDoc, deleteDoc } from '@/lib/auditedFirestore';
 import { FaceRecognitionToggleCard } from '@/components/face/FaceRecognitionToggleCard';
 import { MyDepartmentsCard } from '@/components/departments/MyDepartmentsCard';
+import { SchoolStatementsCard } from '@/components/efile/SchoolStatementsCard';
 import {
   User,
   Mail,
@@ -816,6 +817,9 @@ export default function Settings() {
           {/* Face recognition (admins): on/off only — enrolment and match
               levels are in Attendance → Face recognition */}
           {user?.userType === 'admin' && <FaceRecognitionToggleCard />}
+
+          {/* Vision & mission (admins): shown in every teacher's eFile, sections 1 and 2 */}
+          {user?.userType === 'admin' && <SchoolStatementsCard />}
 
           {/* 5. Delete Account */}
           <div className="bg-white rounded-xl border border-red-200 shadow-sm overflow-hidden">

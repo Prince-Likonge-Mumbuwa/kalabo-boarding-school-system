@@ -8,24 +8,35 @@
 //   10   Assessment Records (i)–(viii)    AI tests as Question Samples and again as
 //                                         Marking Keys; the other parts are entries
 //
-// From the school system, live (services/efileSystem.ts): 4 the timetable,
-// 5 class lists and subject registers (attendance), 10 (ii) progress chart,
-// 10 (vi) analysis and 10 (vii) remedial work (results, lesson evaluations).
-// Scanned papers (components/ai/ScanCapture.tsx): 10 (v) marked scripts
-// (highest, average, lowest of each assessment), 10 (iii) own question papers.
+// From the school system, live (services/efileSystem.ts): 1–2 the vision and
+// mission (written by the admin in Settings), 4 the timetable, 5 class lists
+// and subject registers (attendance), 6 the official syllabus (superAdmin),
+// 10 records of work (evaluated lesson plans), 11 (i) homework (lesson plans),
+// 11 (ii) progress chart, 11 (vi) analysis and 11 (vii) remedial work
+// (results, the plans' remedial work, lesson evaluations). The year and term
+// picked at the top choose which term sections 6, 9 and 10 show.
+// 3 Individual Work Plan: the AI writes it from the term's schemes of work
+// (WorkPlanWriter, POST /efile-file/work-plan) and it is saved as an entry.
+// Scanned papers (components/ai/ScanCapture.tsx): 11 (v) marked scripts
+// (highest, average, lowest of each assessment), 11 (iii) own question papers.
 //
 // The whole file, one section or one item downloads as a PDF made with
 // pdf-lib (services/pdf/efileExport.ts), like the report cards. Opening an AI
 // document goes to EFileDocument.tsx.
 // Address: /dashboard/teacher/ai/efile?section=<id>
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { SCHOOL_NAME } from '@/components/ai/brand';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, Camera, Check, Database, Download, Eye, FileSearch, FileText, FolderOpen, Loader2, Pencil, Plus, Save, Search, Sparkles, Trash2, UserRound,
+  ArrowLeft, CalendarRange, Camera, Check, Database, Download, Eye, FileSearch, FileText, FolderOpen, Loader2, Pencil, Plus, Save, Search, Sparkles, Trash2, UserRound,
 } from 'lucide-react';
 import { ScanDialog, ScanThumb, type AssessmentChoice } from '@/components/ai/ScanCapture';
-import { examTypeOf, scriptSuggestions, useProfileDefaults, useSystemRecords, type ClassResults, type SystemRecord } from '@/services/efileSystem';
+import {
+  currentPeriod, examTypeOf, inPeriod, periodKey, periodLabel, scriptSuggestions, useProfileDefaults, useSystemRecords, useTeachingLoad, weeksInTerm,
+  type ClassResults, type FilePeriod, type SystemRecord, type TeachingLoad,
+} from '@/services/efileSystem';
+import type { TermName } from '@/utils/academicTerm';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { AiGate } from '@/components/ai/AiGate';
 import { featureByKey } from '@/components/ai/aiFeatures';
@@ -76,15 +87,31 @@ function TeacherFile() {
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const view: View = isView(params.get('section')) ? (params.get('section') as View) : 'details';
-  const go = (id: View) => setParams(id === 'details' ? {} : { section: id }, { replace: true });
+  const go = (id: View) => setParams((old) => {
+    const next = new URLSearchParams(old);
+    if (id === 'details') next.delete('section'); else next.set('section', id);
+    return next;
+  }, { replace: true });
 
   const docs = useQuery({ queryKey: ['efile'], queryFn: teacherAi.efileList, retry: false });
   const meta = useQuery({ queryKey: ['efile-file'], queryFn: teacherAi.efileMeta, retry: false });
   const documents = docs.data ?? [];
   const file: EFileMeta = { profile: {}, entries: [], ...meta.data, scans: meta.data?.scans ?? [] };
   const teacher = file.profile.fullName || user?.fullName || '';
-  // Timetable, class lists, registers, marks: read live from the school system.
-  const system = useSystemRecords(documents);
+  // Timetable, class lists, registers, marks: read live from the school system,
+  // for the year and term chosen at the top (?year=2026&term=Term+2).
+  const period: FilePeriod = (() => {
+    const year = Number(params.get('year')), term = params.get('term') as TermName | null;
+    return year && term && /^Term [123]$/.test(term) ? { term, year } : currentPeriod();
+  })();
+  const setPeriod = (p: FilePeriod) => setParams((old) => {
+    const next = new URLSearchParams(old);
+    const now = currentPeriod();
+    if (p.term === now.term && p.year === now.year) { next.delete('year'); next.delete('term'); }
+    else { next.set('year', String(p.year)); next.set('term', p.term); }
+    return next;
+  }, { replace: true });
+  const system = useSystemRecords(documents, period);
   const recordsOf = (id: EFileSectionId) => system.records.filter((r) => r.section === id);
 
   const count = (s: EFileSectionInfo): number =>
@@ -113,11 +140,12 @@ function TeacherFile() {
       <div className="flex flex-col gap-3 rounded-2xl bg-slate-50 px-4 py-3.5 ring-1 ring-inset ring-slate-200 sm:flex-row sm:items-center">
         <FileText size={20} className="hidden shrink-0 text-slate-600 sm:block" />
         <p className="flex-1 text-sm text-gray-700">
-          {progress || <>Your <strong className="font-semibold">Teacher&rsquo;s File</strong> as the school keeps it: a cover, your details, the contents, then sections 1–10 with every document, ready to print or submit.</>}
+          {progress || <>Your <strong className="font-semibold">Teacher&rsquo;s File</strong> as the school keeps it: a cover, your details, the contents, then sections 1–11 with every document, ready to print or submit.</>}
         </p>
         <PdfButton label="Download Teacher's File (PDF)" variant="default" busy={pdf.busy === 'file'} onClick={() => downloadFile()} />
       </div>
       {pdf.error && <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-200">{pdf.error}</p>}
+      <PeriodBar period={period} periods={system.periods} onChange={setPeriod} />
 
       <div className="grid gap-5 lg:grid-cols-[270px_minmax(0,1fr)]">
         {/* Sections: a list on wide screens, a menu on phones */}
@@ -161,7 +189,7 @@ function TeacherFile() {
               <h2 id="section-title" className="mt-0.5 text-xl font-bold tracking-tight text-gray-900">{info ? info.title : 'Teacher\u2019s Details'}</h2>
               <p className="mt-1 text-sm text-gray-600">{info ? info.description : 'Printed on the cover and on the Teacher\u2019s Details page of your file.'}</p>
             </div>
-            {info && <PdfButton label={info.source === 'group' ? 'Section 10 PDF' : 'Section PDF'} busy={pdf.busy === `section:${info.id}`} onClick={() => downloadFile([info.id])} className="shrink-0" />}
+            {info && <PdfButton label={info.source === 'group' ? `${info.label} PDF` : 'Section PDF'} busy={pdf.busy === `section:${info.id}`} onClick={() => downloadFile([info.id])} className="shrink-0" />}
           </div>
           {docs.isLoading || meta.isLoading ? (
             <div className="grid gap-4 sm:grid-cols-2">{[0, 1, 2, 3].map((i) => <Card key={i}><Skeleton className="h-10 w-10" /><Skeleton className="mt-4 h-4 w-4/5" /><Skeleton className="mt-2 h-3 w-1/2" /></Card>)}</div>
@@ -185,12 +213,227 @@ function TeacherFile() {
               {info.id === 'scriptSamples' && <Scripts documents={documents} file={file} marks={system.marks} />}
               {info.source === 'ai' && <AiDocuments info={info} documents={documents.filter((d) => d.feature === info.feature)} />}
               {info.id === 'questionSamples' && <OwnPapers scans={file.scans.filter((x) => x.section === 'questionSamples')} />}
-              {(info.source === 'entries' || info.alsoEntries) && <Entries info={info} entries={file.entries.filter((e) => e.section === info.id)} teacher={teacher} heading={info.system || info.scans ? 'Your own entries' : undefined} />}
+              {info.id === 'workPlan' && <WorkPlanWriter documents={documents} period={period} profile={file.profile} />}
+              {info.id === 'lessonGrid' && <LessonGridWriter period={period} />}
+              {(info.source === 'entries' || info.alsoEntries) && <Entries info={info} entries={file.entries.filter((e) => e.section === info.id)} teacher={teacher} heading={info.id === 'remedialPlan' ? 'Remedial work (written after lesson evaluations) and your own entries' : info.id === 'lessonGrid' ? 'Your lesson grids' : info.system || info.scans ? 'Your own entries' : info.id === 'workPlan' ? 'Your work plans' : undefined} />}
             </>
           )}
         </section>
       </div>
     </div>
+  );
+}
+
+// ───────────── Which year and term sections 6, 9 and 10 show ─────────────
+
+function PeriodBar({ period, periods, onChange }: { period: FilePeriod; periods: FilePeriod[]; onChange: (p: FilePeriod) => void }) {
+  const years = [...new Set([...periods.map((p) => p.year), period.year])].sort((a, b) => b - a);
+  const terms = (['Term 1', 'Term 2', 'Term 3'] as TermName[]);
+  const has = new Set(periods.map(periodKey));
+  const now = currentPeriod();
+  const isNow = period.term === now.term && period.year === now.year;
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center">
+      <CalendarRange size={20} className="hidden shrink-0 text-blue-600 sm:block" />
+      <p className="flex-1 text-sm text-gray-700">
+        Records for <strong className="font-semibold">{periodLabel(period)}</strong>{isNow ? ' (this term)' : ''}: syllabus, records of work, homework, progress charts, analysis and remedial work. The PDF uses the same term.
+      </p>
+      <div className="flex gap-2">
+        <Select aria-label="Year" className="w-28" value={period.year} onChange={(e) => {
+          const year = Number(e.target.value);
+          const term = terms.find((t) => has.has(periodKey({ term: t, year })) && t === period.term) ?? [...terms].reverse().find((t) => has.has(periodKey({ term: t, year }))) ?? period.term;
+          onChange({ year, term });
+        }}>
+          {years.map((y) => <option key={y} value={y}>{y}</option>)}
+        </Select>
+        <Select aria-label="Term" className="w-32" value={period.term} onChange={(e) => onChange({ year: period.year, term: e.target.value as TermName })}>
+          {terms.map((t) => <option key={t} value={t}>{t}{has.has(periodKey({ term: t, year: period.year })) ? '' : ' (no records)'}</option>)}
+        </Select>
+        {!isNow && <Button type="button" variant="ghost" className="h-10 rounded-xl" onClick={() => onChange(now)}>This term</Button>}
+      </div>
+    </div>
+  );
+}
+
+// ───────────── 3 Individual Work Plan and 7 Lesson Grid, written by the AI ─────────────
+
+const addEntryToCache = (queryClient: ReturnType<typeof useQueryClient>, entry: EFileEntry) => {
+  queryClient.setQueryData<EFileMeta>(['efile-file'], (m) => (m ? { ...m, entries: [...m.entries, entry] } : m));
+  void queryClient.invalidateQueries({ queryKey: ['ai-session'] });
+};
+
+function WriterCard({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Card>
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700"><Sparkles size={18} /></span>
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-gray-900">{title}</h3>
+          {children}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function WriterFeedback({ error, done }: { error: string; done: string }) {
+  return (
+    <>
+      {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-200">{error}</p>}
+      {done && <p role="status" className="mt-3 flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800 ring-1 ring-inset ring-emerald-200"><Check size={16} /> {done}</p>}
+    </>
+  );
+}
+
+/**
+ * Section 3. The Individual Work Plan in the Ministry format: the classes and
+ * lessons a week come from the timetable (the teacher can correct them), the
+ * weeks from the school calendar, the co-curricular work from the teacher.
+ */
+function WorkPlanWriter({ documents, period, profile }: { documents: EFileSummary[]; period: FilePeriod; profile: Record<string, string> }) {
+  const queryClient = useQueryClient();
+  const { load, loading } = useTeachingLoad();
+  const [span, setSpan] = useState<'term' | 'year'>('term');
+  const [lessons, setLessons] = useState<Record<string, number>>({});
+  const [coCurricular, setCoCurricular] = useState(profile.coCurricular ?? '');
+  const schemes = documents.filter((d) => d.feature === 'schemeOfWork').sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const ofTerm = schemes.filter((d) => inPeriod(d, period));
+  const firstPicks = () => [...new Map(ofTerm.map((d) => [`${d.inputs.className || d.inputs.level}|${d.inputs.subject}`, d.id])).values()];
+  const [picked, setPicked] = useState<string[]>(firstPicks);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState('');
+  useEffect(() => { setPicked(firstPicks()); setDone(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [periodKey(period), documents.length]);
+  useEffect(() => { setCoCurricular(profile.coCurricular ?? ''); }, [profile.coCurricular]);
+  const keyOf = (l: TeachingLoad) => `${l.classId}|${l.subject}`;
+  const lessonsOf = (l: TeachingLoad) => lessons[keyOf(l)] ?? l.lessonsPerWeek;
+  const weeks = weeksInTerm(period);
+  const periodLabelText = span === 'term' ? periodLabel(period) : `January to December ${period.year}`;
+  const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+
+  const write = async () => {
+    setBusy(true); setError(''); setDone('');
+    try {
+      // The co-curricular duties are remembered for next time (Teacher's Details).
+      if ((profile.coCurricular ?? '') !== coCurricular.trim()) {
+        const saved = await teacherAi.efileSaveProfile({ ...profile, coCurricular: coCurricular.trim() });
+        queryClient.setQueryData<EFileMeta>(['efile-file'], (m) => (m ? { ...m, profile: saved } : m));
+      }
+      const entry = await teacherAi.efileWriteWorkPlan({
+        periodLabel: periodLabelText, terms: span === 'term' ? 1 : 3, weeksPerTerm: weeks,
+        classes: load.map((l) => ({ className: l.className, subject: l.subject, level: l.level, lessonsPerWeek: lessonsOf(l), periodsPerWeek: l.periodsPerWeek })),
+        schemeIds: picked, coCurricular: coCurricular.trim(), department: profile.department ?? '', teacherName: profile.fullName ?? '', school: SCHOOL_NAME,
+      });
+      addEntryToCache(queryClient, entry);
+      setDone(`"${entry.title}" is saved below. Open it to check and edit it.`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <WriterCard title="Write my Individual Work Plan">
+      <p className="mt-0.5 text-sm text-gray-600">In the Ministry format: job purpose, then each key result area (planning, teaching, continuous assessment, class management, co-curricular activities, professional development) with its principal accountability, schedule of activities and targets, the assumptions and the signatures. The targets are counted from your timetable and the school calendar.</p>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <Field label="Work plan period">
+          <Select value={span} onChange={(e) => setSpan(e.target.value as 'term' | 'year')} disabled={busy}>
+            <option value="term">{periodLabel(period)} ({weeks} weeks)</option>
+            <option value="year">The whole year {period.year} (3 terms)</option>
+          </Select>
+        </Field>
+        <Field label="Co-curricular duties (optional)" hint="Clubs, sports, PMS, duties: in your own words. Remembered for next time.">
+          <TextArea rows={2} maxLength={600} value={coCurricular} onChange={(e) => setCoCurricular(e.target.value)} disabled={busy} placeholder="e.g. Patron of the ICT club (Wednesdays), football coach, PMS supervisor for Block B" />
+        </Field>
+      </div>
+      <fieldset className="mt-4">
+        <legend className="text-sm font-medium text-gray-700">Classes and lessons a week (from your timetable)</legend>
+        {loading ? <p className="mt-2 flex items-center gap-2 text-sm text-gray-500"><Loader2 size={14} className="animate-spin" /> Reading your timetable…</p>
+          : load.length === 0 ? <p className="mt-2 text-sm text-gray-600">No classes are assigned to you yet.</p> : (
+            <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+              {load.map((l) => (
+                <li key={keyOf(l)} className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 px-3 py-2 text-sm">
+                  <span className="min-w-0"><span className="block font-medium text-gray-900">{l.subject}, {l.className}</span><span className="block text-xs text-gray-500">{l.periodsPerWeek ? `${l.periodsPerWeek} periods on the timetable` : 'Not on the timetable yet: enter the lessons'}</span></span>
+                  <label className="flex items-center gap-2 text-xs text-gray-600">
+                    <TextInput type="number" min={0} max={20} className="h-9 w-16 rounded-lg text-center" value={lessonsOf(l)} onChange={(e) => setLessons((x) => ({ ...x, [keyOf(l)]: Math.max(0, Math.min(20, Number(e.target.value) || 0)) }))} disabled={busy} aria-label={`Lessons a week, ${l.subject} ${l.className}`} />
+                    lessons / week
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+      </fieldset>
+      {schemes.length > 0 && (
+        <fieldset className="mt-4">
+          <legend className="text-sm font-medium text-gray-700">Schemes of work to take the topics from (optional)</legend>
+          <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+            {(ofTerm.length ? ofTerm : schemes.slice(0, 6)).map((d) => (
+              <li key={d.id}>
+                <label className={cn('flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2 text-sm transition', picked.includes(d.id) ? 'border-blue-300 bg-blue-50/60' : 'border-gray-200 hover:border-gray-300')}>
+                  <input type="checkbox" className="mt-0.5 h-4 w-4 accent-blue-600" checked={picked.includes(d.id)} onChange={() => toggle(d.id)} disabled={busy} />
+                  <span className="min-w-0"><span className="block font-medium text-gray-900">{d.inputs.subject}, {d.inputs.className || d.inputs.level}</span><span className="block text-xs text-gray-500">{d.inputs.term || ''} · made {timeAgo(d.createdAt)}</span></span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
+      )}
+      <WriterFeedback error={error} done={done} />
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <Button type="button" onClick={write} disabled={busy || loading || load.length === 0 || picked.length > 8} className="h-10 rounded-xl bg-blue-600 font-semibold hover:bg-blue-700">
+          {busy ? <Loader2 size={16} className="mr-2 animate-spin" /> : <Sparkles size={16} className="mr-2" />}
+          {busy ? 'Writing your work plan…' : 'Write work plan with AI'}
+        </Button>
+        <span className="text-xs text-gray-500">{busy ? 'This takes under a minute.' : `Counts as one of today’s documents.`}</span>
+      </div>
+    </WriterCard>
+  );
+}
+
+/** Section 7. The Lesson Grid (Syllabus Analysis Grid) for one class and the chosen term. */
+function LessonGridWriter({ period }: { period: FilePeriod }) {
+  const queryClient = useQueryClient();
+  const { load, loading } = useTeachingLoad();
+  const choices = [...new Map(load.filter((l) => l.level).map((l) => [`${l.subject}|${l.className}`, l])).values()];
+  const [pick, setPick] = useState('');
+  const chosen = choices.find((l) => `${l.subject}|${l.className}` === pick) ?? choices[0];
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState('');
+  const weeks = weeksInTerm(period);
+  const write = async () => {
+    if (!chosen) return;
+    setBusy(true); setError(''); setDone('');
+    try {
+      const entry = await teacherAi.efileWriteSyllabusGrid({ subject: chosen.subject, className: chosen.className, level: chosen.level, termLabel: periodLabel(period), weeks });
+      addEntryToCache(queryClient, entry);
+      setDone(`"${entry.title}" is saved below. It prints across the page.`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <WriterCard title={`Write a Lesson Grid for ${periodLabel(period)}`}>
+      <p className="mt-0.5 text-sm text-gray-600">Week by week: topic, sub-topic, curriculum philosophy and goals, prescribed competence, key concepts and content, learning strategies, assessment, learning environment, material development, teacher status and references. Taken from the official syllabus, and from your scheme of work for the class if you have one, so the weeks agree.</p>
+      {loading ? <p className="mt-3 flex items-center gap-2 text-sm text-gray-500"><Loader2 size={14} className="animate-spin" /> Loading your classes…</p>
+        : choices.length === 0 ? <p className="mt-3 text-sm text-gray-600">No classes are assigned to you yet.</p> : (
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <Field label="Class and subject">
+              <Select className="min-w-[16rem]" value={chosen ? `${chosen.subject}|${chosen.className}` : ''} onChange={(e) => setPick(e.target.value)} disabled={busy}>
+                {choices.map((l) => <option key={`${l.subject}|${l.className}`} value={`${l.subject}|${l.className}`}>{l.subject}, {l.className}</option>)}
+              </Select>
+            </Field>
+            <Button type="button" onClick={write} disabled={busy || !chosen} className="h-10 rounded-xl bg-blue-600 font-semibold hover:bg-blue-700">
+              {busy ? <Loader2 size={16} className="mr-2 animate-spin" /> : <Sparkles size={16} className="mr-2" />}
+              {busy ? 'Writing the lesson grid…' : `Write the lesson grid (${weeks} weeks)`}
+            </Button>
+          </div>
+        )}
+      <WriterFeedback error={error} done={done} />
+    </WriterCard>
   );
 }
 
@@ -237,7 +480,7 @@ function ProfileForm({ profile }: { profile: Record<string, string> }) {
   );
 }
 
-// ───────────────────────────── 7–9 and 10 (iii)–(iv): AI documents ─────────────────────────────
+// ───────────────────────────── 8–10 and 11 (iii)–(iv): AI documents ─────────────────────────────
 
 function AiDocuments({ info, documents }: { info: EFileSectionInfo; documents: EFileSummary[] }) {
   const [search, setSearch] = useState('');
@@ -262,8 +505,8 @@ function AiDocuments({ info, documents }: { info: EFileSectionInfo; documents: E
       {info.part && (
         <p className="rounded-xl bg-blue-50/70 px-4 py-3 text-sm text-gray-700 ring-1 ring-inset ring-blue-200">
           {info.part === 'questions'
-            ? <>Your tests print here as <strong className="font-semibold">question papers only</strong>; their marking keys print under 10 (iv) Marking Keys.</>
-            : <>The <strong className="font-semibold">marking key, rubric and specification grid</strong> of each test print here; the questions print under 10 (iii) Question Samples.</>}
+            ? <>Your tests print here as <strong className="font-semibold">question papers only</strong>; their marking keys print under 11 (iv) Marking Keys.</>
+            : <>The <strong className="font-semibold">marking key, rubric and specification grid</strong> of each test print here; the questions print under 11 (iii) Question Samples.</>}
         </p>
       )}
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px_160px_auto]">
@@ -473,7 +716,7 @@ function SystemRecords({ note, records, loading }: { note: string; records: Syst
   );
 }
 
-// ───────────── 10 (v) Scripts Samples: highest, average, lowest of each assessment ─────────────
+// ───────────── 11 (v) Scripts Samples: highest, average, lowest of each assessment ─────────────
 
 const slotLabel = (s?: ScriptSlot) => SCRIPT_SLOTS.find((x) => x.slot === s)?.label ?? '';
 
@@ -481,7 +724,7 @@ function Scripts({ documents, file, marks }: { documents: EFileSummary[]; file: 
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState<{ assessment?: string; slot?: ScriptSlot } | null>(null);
   const scripts = file.scans.filter((x) => x.section === 'scriptSamples');
-  // Scripts come from assessments only: the AI ones and the teacher's own papers in 10 (iii).
+  // Scripts come from assessments only: the AI ones and the teacher's own papers in 11 (iii).
   const choices: AssessmentChoice[] = [
     ...documents.filter((d) => d.feature === 'assessment').map((d) => {
       const exam = examTypeOf(d.inputs.kind ?? '');
@@ -500,7 +743,7 @@ function Scripts({ documents, file, marks }: { documents: EFileSummary[]; file: 
     queryClient.setQueryData<EFileMeta>(['efile-file'], (m) => (m ? { ...m, scans: m.scans.filter((x) => x.id !== s.id) } : m));
   };
   if (!choices.length)
-    return <Card padded={false}><EmptyState icon={<Camera size={22} />} title="No assessments yet">Marked scripts are kept for an assessment. Generate a test, or add your own question paper under 10 (iii), then scan its scripts here.</EmptyState></Card>;
+    return <Card padded={false}><EmptyState icon={<Camera size={22} />} title="No assessments yet">Marked scripts are kept for an assessment. Generate a test, or add your own question paper under 11 (iii), then scan its scripts here.</EmptyState></Card>;
   return (
     <>
       <div className="flex justify-end">
@@ -549,7 +792,7 @@ function Scripts({ documents, file, marks }: { documents: EFileSummary[]; file: 
   );
 }
 
-// ───────────── 10 (iii): the teacher's own question papers, scanned ─────────────
+// ───────────── 11 (iii): the teacher's own question papers, scanned ─────────────
 
 function OwnPapers({ scans }: { scans: EFileScan[] }) {
   const queryClient = useQueryClient();

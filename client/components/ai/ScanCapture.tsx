@@ -143,8 +143,8 @@ export function ScanDialog({ kind, assessments, initial, onClose }: {
           <DialogTitle>{kind === 'script' ? 'Add a marked script' : 'Add your own question paper'}</DialogTitle>
           <DialogDescription>
             {kind === 'script'
-              ? 'Scan the marked script of the learner with the highest, an average or the lowest mark. It is kept in 10 (v) Scripts Samples as evidence of the assessment.'
-              : 'Scan a question paper you set yourself. It is filed in 10 (iii) Question Samples beside the papers written with the AI.'}
+              ? 'Scan the marked script of the learner with the highest, an average or the lowest mark. It is kept in 11 (v) Scripts Samples as evidence of the assessment.'
+              : 'Scan a question paper you set yourself. It is filed in 11 (iii) Question Samples beside the papers written with the AI.'}
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); void save(); }}>

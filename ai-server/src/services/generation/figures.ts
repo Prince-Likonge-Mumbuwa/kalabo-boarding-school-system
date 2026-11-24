@@ -147,7 +147,14 @@ const SUBJECT: Record<Family, string> = {
 /** The part of the assessment task about figures. */
 export function figureGuide(subject: string, mode: string | undefined, extras: FigureExtras = {}): string {
   const m = (mode ?? "none").toLowerCase();
-  if (m === "none" || m === "") return "FIGURES: do not include any figures or ```figure blocks in this assessment, and never write \"in the diagram\" or \"study the figure\": give every length, angle and coordinate in words. You may still write maths in TeX between $…$.";
+  if (m === "none" || m === "") {
+    const none = "FIGURES IN THE QUESTIONS: none. Do not put any figure in the questions, and never write \"in the diagram\" or \"study the figure\": give every length, angle and coordinate in words. You may still write maths in TeX between $…$.";
+    // Mathematics and Physics: what the learner draws is still shown, complete, in the marking key.
+    const fam = familyOf(subject);
+    if (fam === "maths" || /physic/i.test(subject))
+      return `${none}\nFIGURES IN THE MARKING KEY: yes. Every construction, locus, graph, region, transformation or Venn diagram the learner must draw is answered in the Marking Key with a figure of the complete correct answer, written as below.\n\n${HOW}${fam === "maths" ? `\n\n${MATHS_FIGURES}` : ""}`;
+    return `FIGURES: do not include any figures or \`\`\`figure blocks in this assessment, and never write "in the diagram" or "study the figure": give every length, angle and coordinate in words. You may still write maths in TeX between $…$.`;
+  }
   const amount = m === "many"
     ? "Build most structured questions (and some multiple-choice questions) around a figure: about 4 to 6 figures in the paper."
     : "Include 1 to 3 figures, on the questions where reading a figure is the skill being tested.";

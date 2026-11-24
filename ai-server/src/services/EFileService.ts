@@ -10,12 +10,39 @@ import type { EFileDocument, EFileEntry, EFileMeta, EFileScan, EFileSectionId, L
 import { AppError } from "../utils/errors.js";
 import { JsonStore } from "../utils/JsonStore.js";
 
-export type EFileSummary = Omit<EFileDocument, "content" | "sources">;
+/**
+ * Short pieces of a lesson plan's text, sent with the list so the eFile can
+ * build the Homework record (10 i), the Records of Work (9) and the planned
+ * remedial work (10 vii) without downloading every plan.
+ */
+export interface LessonExtracts {
+  goal?: string;
+  homework?: string;
+  remedial?: string;
+}
+
+export type EFileSummary = Omit<EFileDocument, "content" | "sources"> & { extracts?: LessonExtracts };
+
+/** The text of one "## Heading" section (without the heading), or "" if the plan has none. */
+export function sectionText(content: string, heading: string): string {
+  const match = new RegExp(`^##\\s+${heading}[^\\n]*\\n([\\s\\S]*?)(?=^##\\s|(?![\\s\\S]))`, "im").exec(content);
+  return match ? match[1].trim() : "";
+}
+
+const cap = (text: string, max: number) => (text.length > max ? `${text.slice(0, max).replace(/\s+\S*$/, "")} …` : text);
+
+export function lessonExtracts(content: string): LessonExtracts {
+  const pick = (heading: string, max: number) => cap(sectionText(content, heading), max) || undefined;
+  return { goal: pick("Lesson Goal", 400), homework: pick("Homework", 900), remedial: pick("Remedial Work", 1200) };
+}
 
 /** Section names used before the school's own Teacher's File layout (18 Nov 2026). */
 const LEGACY_SECTIONS: Record<string, EFileSectionId> = {
   timetables: "timetable", results: "progressChart", remedial: "remedialPlan", cpd: "miscellaneous", observations: "miscellaneous", circulars: "miscellaneous",
 };
+/** Where an entry is shown: old section names mapped, and lesson grids written before the Lesson Grid had its own section (22 Nov 2026) moved there from Syllabus. */
+const sectionOf = (e: EFileEntry): EFileSectionId =>
+  e.section === "syllabus" && /^(syllabus analysis grid|lesson grid)\b/i.test(e.title) ? "lessonGrid" : LEGACY_SECTIONS[e.section as string] ?? e.section;
 
 export class EFileService {
   private stores = new Map<string, JsonStore<EFileDocument[]>>();
@@ -28,7 +55,7 @@ export class EFileService {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new AppError(400, "Invalid user.", "invalid_user");
     let store = this.stores.get(uid);
     if (!store) {
-      store = new JsonStore(path.join(this.dataDir, "efile", `${uid}.json`), () => []);
+      store = new JsonStore(path.join(this.dataDir, "efile", `${uid}.json`), () => [], { pretty: false });
       this.stores.set(uid, store);
     }
     return store;
@@ -47,7 +74,7 @@ export class EFileService {
 
   async meta(uid: string): Promise<EFileMeta> {
     const m = await this.metaFor(uid).read();
-    const entries = m.entries.map((e) => ({ ...e, section: LEGACY_SECTIONS[e.section as string] ?? e.section }));
+    const entries = m.entries.map((e) => ({ ...e, section: sectionOf(e) }));
     return {
       profile: { ...m.profile },
       entries: entries.sort((a, b) => (a.date ?? a.createdAt).localeCompare(b.date ?? b.createdAt)),
@@ -107,7 +134,7 @@ export class EFileService {
     });
   }
 
-  addEntry(uid: string, entry: { section: EFileSectionId; title: string; content: string; date?: string }): Promise<EFileEntry> {
+  addEntry(uid: string, entry: { section: EFileSectionId; title: string; content: string; date?: string; lessonId?: string }): Promise<EFileEntry> {
     const now = new Date().toISOString();
     const saved: EFileEntry = { ...entry, id: randomUUID(), createdAt: now, updatedAt: now };
     return this.metaFor(uid).update((m) => {
@@ -135,14 +162,35 @@ export class EFileService {
 
   async list(uid: string): Promise<EFileSummary[]> {
     return (await this.storeFor(uid).read())
-      .map(({ content: _c, sources: _s, ...summary }) => summary)
+      .map(({ content, sources: _s, ...summary }): EFileSummary =>
+        summary.feature === "lessonPlan" ? { ...summary, extracts: this.extractsOf(summary.id, content) } : summary)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** Lesson-plan extracts, worked out once per version of the plan (the list is asked for often). */
+  private extracts = new Map<string, { length: number; value: LessonExtracts }>();
+  private extractsOf(id: string, content: string): LessonExtracts {
+    const hit = this.extracts.get(id);
+    if (hit && hit.length === content.length) return hit.value;
+    const value = lessonExtracts(content);
+    this.extracts.set(id, { length: content.length, value });
+    return value;
   }
 
   async get(uid: string, id: string): Promise<EFileDocument> {
     const document = (await this.storeFor(uid).read()).find((d) => d.id === id);
     if (!document) throw new AppError(404, "Document not found in your eFile.", "not_found");
     return document;
+  }
+
+  /** Several of the teacher's own documents with their text (unknown ids are refused). */
+  async getMany(uid: string, ids: string[]): Promise<EFileDocument[]> {
+    const all = await this.storeFor(uid).read();
+    return ids.map((id) => {
+      const document = all.find((d) => d.id === id);
+      if (!document) throw new AppError(404, "Document not found in your eFile.", "not_found");
+      return document;
+    });
   }
 
   add(uid: string, document: Omit<EFileDocument, "id" | "createdAt">): Promise<EFileDocument> {

@@ -23,8 +23,16 @@ export class AccessService {
     return [...(await this.store.read())].sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  /** Called whenever a teacher opens AI Tools: remember them and refresh their details. */
-  touch(teacher: { uid: string; email: string }, name: string): Promise<TeacherRecord> {
+  /**
+   * Called on every teacher request: remember them and refresh their details.
+   * Saved to disk only when something changed or "last seen" is over five
+   * minutes old, so a busy morning does not mean a file write per request.
+   */
+  async touch(teacher: { uid: string; email: string }, name: string): Promise<TeacherRecord> {
+    const known = (await this.store.read()).find((t) => t.uid === teacher.uid);
+    if (known && (!name || name === known.name) && (!teacher.email || teacher.email === known.email)
+      && Date.now() - Date.parse(known.lastSeenAt) < 5 * 60_000)
+      return { ...known };
     return this.store.update((teachers) => {
       const now = new Date().toISOString();
       let record = teachers.find((t) => t.uid === teacher.uid);

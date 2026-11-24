@@ -59,22 +59,21 @@ export class RetrievalService {
     const embedding = await this.embedder.embedQuery(request.query);
     const subjectKeys = subjectKeysFor(request.subject); // ICT also finds Computer Studies and Computer Science
     const flag = levelFlag(request.level);
-    const focused: RetrievedChunk[] = [];
     const groups = (request.focus ?? []).filter((f) => f.topicCodes?.length || f.subTopicCodes?.length);
-    for (const f of groups)
-      focused.push(
-        ...(await this.store.query(embedding, Math.max(2, Math.ceil(request.topK / 2 / groups.length)), {
+    // All the searches at once (they are independent), not one after another.
+    const [focusedLists, general, style] = await Promise.all([
+      Promise.all(groups.map((f) =>
+        this.store.query(embedding, Math.max(2, Math.ceil(request.topK / 2 / groups.length)), {
           subjectKeys: f.subjectKey ? [f.subjectKey] : subjectKeys,
           levelFlag: flag,
           topicCodes: f.topicCodes,
           subTopicCodes: f.subTopicCodes,
           documentIds: f.documentIds,
-        })),
-      );
-    const general = await this.store.query(embedding, request.topK, { subjectKeys, levelFlag: flag });
-    const style = request.styleExamples
-      ? await this.store.query(embedding, request.styleExamples, { subjectKeys, docType: "past_paper" })
-      : [];
+        }))),
+      this.store.query(embedding, request.topK, { subjectKeys, levelFlag: flag }),
+      request.styleExamples ? this.store.query(embedding, request.styleExamples, { subjectKeys, docType: "past_paper" }) : Promise.resolve([] as RetrievedChunk[]),
+    ]);
+    const focused = focusedLists.flat();
     // Past-paper examples have their own small allowance, so they never push out syllabus material.
     const matches = [...focused, ...general.filter((m) => m.metadata.docType !== "past_paper" || !request.styleExamples)];
 

@@ -18,7 +18,8 @@ export function createApp(services: Services) {
   app.use(express.json({ limit: "1mb" }));
 
   app.get("/api/health", async (_req, res) => {
-    res.json({ ok: true, superAdminCreated: await services.superAdmin.exists() });
+    const writer = services.generation.writer as { load?: { running: number; waiting: number; limit: number } };
+    res.json({ ok: true, superAdminCreated: await services.superAdmin.exists(), writer: writer.load ?? null });
   });
   app.use("/api/superadmin", superAdminRoutes(services));
   app.use("/api/teacher", teacherRoutes(services));

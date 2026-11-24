@@ -177,10 +177,38 @@ export class FallbackEmbedder implements Embedder {
   }
 }
 
-/** The embedder for SEARCH_HOSTS: one host, or a FallbackEmbedder over several. */
+/**
+ * Remembers the embeddings of recent searches (most recent 500), so teachers
+ * planning the same sub-topic, or a teacher generating again, skip the
+ * embedding call entirely; searches already in flight for the same text are
+ * shared. Indexing is passed straight through.
+ */
+export class CachedEmbedder implements Embedder {
+  private cache = new Map<string, Promise<number[]>>();
+  constructor(private inner: Embedder, private size = 500) {}
+  get model() { return this.inner.model; }
+  get available() { return this.inner.available; }
+  embedDocuments(texts: string[]) { return this.inner.embedDocuments(texts); }
+  embedQuery(text: string): Promise<number[]> {
+    const key = text.trim();
+    const hit = this.cache.get(key);
+    if (hit) {
+      this.cache.delete(key); // most recently used goes to the end
+      this.cache.set(key, hit);
+      return hit;
+    }
+    const vector = this.inner.embedQuery(key);
+    this.cache.set(key, vector);
+    vector.catch(() => this.cache.delete(key)); // a failed search is not remembered
+    if (this.cache.size > this.size) this.cache.delete(this.cache.keys().next().value!);
+    return vector;
+  }
+}
+
+/** The embedder for SEARCH_HOSTS: one host, or a FallbackEmbedder over several, with the search cache. */
 export function createEmbedder(config: AppConfig): Embedder {
   const hosts = hostsInOrder(config, config.searchHosts);
   const embedders = hosts.map((host) => new NvidiaEmbeddingService(config, host, hosts.length > 1 ? 1 : 3));
   if (embedders.length === 0) return new NvidiaEmbeddingService(config); // no key at all: explains what is missing
-  return embedders.length === 1 ? embedders[0] : new FallbackEmbedder(embedders);
+  return new CachedEmbedder(embedders.length === 1 ? embedders[0] : new FallbackEmbedder(embedders));
 }

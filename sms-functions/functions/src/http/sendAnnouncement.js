@@ -14,6 +14,7 @@
 const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { requireAdmin } = require('../lib/requireAdmin');
 const { validateZambianNumber } = require('../lib/phone');
 const { dispatchMessage } = require('../lib/dispatch');
 
@@ -35,6 +36,9 @@ exports.sendAnnouncement = onRequest(
   },
   async (req, res) => {
     try {
+      // Only a signed-in administrator may use this (it spends SMS credit / shows guardians' numbers).
+      if (!(await requireAdmin(req, res))) return;
+
       const { message, target, senderName, senderUid } = req.body;
       const category = req.body.category === 'summons' ? 'summons' : 'general';
       const summons = category === 'summons' && req.body.summons ? {

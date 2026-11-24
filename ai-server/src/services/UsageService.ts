@@ -23,7 +23,7 @@ export class UsageService {
   private store: JsonStore<UsageEvent[]>;
 
   constructor(dataDir: string) {
-    this.store = new JsonStore(path.join(dataDir, "usage.json"), () => []);
+    this.store = new JsonStore(path.join(dataDir, "usage.json"), () => [], { pretty: false });
   }
 
   record(uid: string, feature: FeatureKey, action: UsageEvent["action"]): Promise<void> {

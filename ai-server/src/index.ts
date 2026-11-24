@@ -23,6 +23,9 @@ createApp(services).listen(config.port, async () => {
   // Hosts are tried in this order; a host without a key in .env is left out.
   console.log(`  ${writers.length ? "✓" : "✗"} Writing          ${writers.length ? names(writers, (h) => h.writeModel) : `no key for ${config.writerHosts.join(" or ")} in .env (WRITER_HOSTS)`}`);
   console.log(`  ${searchers.length ? "✓" : "✗"} Search           ${searchers.length ? names(searchers, (h) => h.embedModel) : `no key for ${config.searchHosts.join(" or ")} in .env (SEARCH_HOSTS)`}`);
+  if (writers.some((h) => /ultra/i.test(h.writeModel)))
+    console.log(`  ! Speed            the Ultra model is very large and slow; NVIDIA_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b is much faster`);
+  console.log(`  ✓ Queue            ${config.writerConcurrency} documents at a time (WRITER_CONCURRENCY); light jobs on ${config.fastModel || "the main model"}`);
   console.log(`  ✓ Allowed from     ${config.clientOrigins.join(", ")}`);
   console.log(`  ✓ Storage          ${config.dataDir}`);
   // ChromaDB starts at the same moment as this server and needs a few seconds,

@@ -26,6 +26,7 @@ import {
   ActivityChecklist, CriteriaField, LessonOfField, PRESETS, SectionsBuilder, TopicChecklist, TopicPicker, readSections, sectionsProblem, sectionsToValues,
 } from '@/components/ai/CurriculumFields';
 import { DocumentActions, DocumentPaper, headerFrom, type DocumentPaperHandle } from '@/components/ai/DocumentPaper';
+import { GenerationStage, GenerationSteps, useSmoothText } from '@/components/ai/GenerationStage';
 import { LessonImport } from '@/components/ai/LessonImport';
 import { FigurePicker } from '@/components/ai/figures/FigureLibraryDialog';
 import { Card, CardTitle, ChipGroup, EmptyState, Field, Pill, Select, Skeleton, TextArea, TextInput } from '@/components/ai/ui';
@@ -72,26 +73,6 @@ function ToolField({ field, value, onChange, disabled }: { field: AiField; value
   return <Field label={field.label} htmlFor={id} hint={field.hint} className={field.wide ? 'sm:col-span-2 lg:col-span-1 xl:col-span-2' : ''}>{control}</Field>;
 }
 
-/** Three-step progress shown while a document is made (four when the server checks the diagrams). */
-function Progress({ phase, hasText, status }: { phase: Phase; hasText: boolean; status?: string }) {
-  const steps = [
-    { label: 'Reading the curriculum', done: phase !== 'searching', active: phase === 'searching' },
-    { label: hasText ? 'Writing' : 'Planning the document', done: phase === 'done' || !!status, active: phase === 'writing' && !status },
-    ...(status ? [{ label: status, done: phase === 'done', active: phase === 'writing' }] : []),
-    { label: 'Saved to your eFile', done: phase === 'done', active: false },
-  ];
-  return (
-    <ol className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm" aria-live="polite">
-      {steps.map((s) => (
-        <li key={s.label} className={cn('flex items-center gap-2', s.done ? 'text-emerald-700' : s.active ? 'font-medium text-blue-700' : 'text-gray-400')}>
-          {s.done ? <CheckCircle2 size={16} /> : s.active ? <Loader2 size={16} className="animate-spin" /> : <span className="h-4 w-4 rounded-full border-2 border-current" />}
-          {s.label}
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 function Generator({ feature, session }: { feature: AiFeatureInfo; session: TeacherAiSession }) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -107,6 +88,8 @@ function Generator({ feature, session }: { feature: AiFeatureInfo; session: Teac
   const [sentInputs, setSentInputs] = useState<Record<string, string>>({});
   const [savedId, setSavedId] = useState<string | null>(null);
   const [status, setStatus] = useState('');
+  // Documents ahead of this one in the AI server's queue (busy times).
+  const [queueAhead, setQueueAhead] = useState(0);
   // Kept on screen with the document (e.g. "written without the curriculum search").
   const [notice, setNotice] = useState('');
   const stop = useRef<AbortController | null>(null);
@@ -139,6 +122,31 @@ function Generator({ feature, session }: { feature: AiFeatureInfo; session: Teac
   }, [chosenClass, subject]);
 
   const header = useMemo(() => headerFrom(feature.key as GeneratorKey, title || feature.label, sentInputs), [feature, title, sentInputs]);
+  // The text flows onto the page at an even pace while it is written (GenerationStage.tsx).
+  const shown = useSmoothText(content, busy && !status);
+  // Follow the writing down the page, until the teacher scrolls up to read.
+  const follow = useRef(true);
+  useEffect(() => {
+    if (!busy) return;
+    follow.current = true;
+    const stopFollowing = (e: Event) => { if (e.type !== 'keydown' || ['ArrowUp', 'PageUp', 'Home'].includes((e as KeyboardEvent).key)) follow.current = false; };
+    const wheel = (e: WheelEvent) => { if (e.deltaY < 0) follow.current = false; };
+    window.addEventListener('wheel', wheel, { passive: true });
+    window.addEventListener('touchmove', stopFollowing, { passive: true });
+    window.addEventListener('keydown', stopFollowing);
+    return () => { window.removeEventListener('wheel', wheel); window.removeEventListener('touchmove', stopFollowing); window.removeEventListener('keydown', stopFollowing); };
+  }, [busy]);
+  const lastFollow = useRef(0);
+  useEffect(() => {
+    if (!busy || !follow.current || !shown) return;
+    const now = Date.now();
+    if (now - lastFollow.current < 400) return;
+    lastFollow.current = now;
+    const caret = output.current?.querySelector('.doc-caret-line');
+    if (!caret) return;
+    const box = caret.getBoundingClientRect();
+    if (box.bottom > window.innerHeight - 60) window.scrollBy({ top: box.bottom - window.innerHeight * 0.7, behavior: 'smooth' });
+  }, [shown, busy]);
 
   const generate = async (event: FormEvent) => {
     event.preventDefault();
@@ -175,7 +183,7 @@ function Generator({ feature, session }: { feature: AiFeatureInfo; session: Teac
     const controller = new AbortController();
     stop.current = controller;
     let written = ''; // state does not update inside this function, so keep our own copy
-    setPhase('searching'); setStatus(''); setNotice(''); setError(''); setContent(''); setSources([]); setTitle(''); setSavedId(null); setSentInputs(inputs);
+    setPhase('searching'); setStatus(''); setQueueAhead(0); setNotice(''); setError(''); setContent(''); setSources([]); setTitle(''); setSavedId(null); setSentInputs(inputs);
     // On phones the document is below the form: bring it into view.
     requestAnimationFrame(() => { if (window.innerWidth < 1024) output.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
     try {
@@ -184,6 +192,7 @@ function Generator({ feature, session }: { feature: AiFeatureInfo; session: Teac
         onText: (text) => { written += text; setContent(written); },
         onStatus: setStatus,
         onNotice: setNotice,
+        onQueue: setQueueAhead,
       }, controller.signal);
       setContent(document.content);
       setSavedId(document.id);
@@ -327,7 +336,7 @@ function Generator({ feature, session }: { feature: AiFeatureInfo; session: Teac
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border border-gray-200 bg-white px-4 py-3">
               <div className="mr-auto min-w-0">
-                {busy ? <Progress phase={phase} hasText={!!content} status={status} /> : savedId ? (
+                {busy ? <GenerationSteps feature={feature.key as GeneratorKey} phase={phase} content={shown} status={status} /> : savedId ? (
                   <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                     <span className="flex items-center gap-2 font-medium text-emerald-700"><CheckCircle2 size={16} /> Saved to your eFile</span>
                     <Link to={`/dashboard/teacher/ai/efile/${savedId}`} className="inline-flex items-center gap-1 font-semibold text-blue-700 hover:text-blue-800"><FolderOpen size={15} /> Open</Link>
@@ -345,15 +354,9 @@ function Generator({ feature, session }: { feature: AiFeatureInfo; session: Teac
               </p>
             )}
             {phase === 'searching' || (phase === 'writing' && !content) ? (
-              <div className="mx-auto w-full max-w-[860px] rounded-2xl bg-white px-6 py-8 ring-1 ring-gray-200 sm:px-10">
-                <div className="flex items-center gap-4"><Skeleton className="h-14 w-14 rounded-full" /><div className="flex-1"><Skeleton className="h-5 w-2/3" /><Skeleton className="mt-2 h-3 w-1/3" /></div></div>
-                <Skeleton className="mt-8 h-6 w-1/2" />
-                <Skeleton className="mt-4 h-20 w-full" />
-                <div className="mt-6 space-y-3">{[90, 75, 85, 60, 80].map((w) => <Skeleton key={w} className="h-3" />)}</div>
-                <p className="mt-6 text-center text-xs text-gray-500">{phase === 'searching' ? 'Finding the right syllabus passages…' : 'The AI is planning your document. This can take a minute.'}</p>
-              </div>
+              <GenerationStage feature={feature.key as GeneratorKey} phase={phase} inputs={sentInputs} queueAhead={queueAhead} />
             ) : (
-              <DocumentPaper ref={paper} header={header} content={content} sources={sources} writing={busy} />
+              <DocumentPaper ref={paper} header={header} content={busy ? shown : content} sources={sources} writing={busy} caret={status || undefined} />
             )}
           </div>
         )}

@@ -7,7 +7,7 @@
 //     session token (kept in sessionStorage, so it ends with the browser tab).
 import type {
   AccessState, AiSettings, AiTeacher, ClassCurriculum, CurriculumDocument, CurriculumMap, DocType, EFileDocument,
-  EFileEntry, EFileMeta, EFileScan, EFileSectionId, EFileSummary, FeatureKey, FigureDetails, GeneratorKey, LessonEvaluationAnswers, LibraryFigure, MapTopic, PictureSuggestion, Source, SuperAdminOverview, TeacherAiSession,
+  EFileEntry, EFileMeta, EFileScan, RemedialWorkResult, EFileSectionId, EFileSummary, FeatureKey, FigureDetails, GeneratorKey, LessonEvaluationAnswers, LibraryFigure, MapTopic, PictureSuggestion, Source, SuperAdminOverview, TeacherAiSession,
 } from '@/types/ai';
 import type { LibraryPicture } from '@/components/ai/figures/render/image';
 
@@ -60,6 +60,19 @@ async function teacherToken(): Promise<string | null> {
   return (await auth.currentUser?.getIdToken()) ?? null;
 }
 
+export interface WorkPlanRequest {
+  /** "Term 1 2026" or "January to December 2026". */
+  periodLabel: string;
+  terms: number;
+  weeksPerTerm: number;
+  classes: { className: string; subject: string; level: string; lessonsPerWeek: number; periodsPerWeek: number }[];
+  schemeIds: string[];
+  coCurricular: string;
+  department: string;
+  teacherName: string;
+  school: string;
+}
+
 export interface GenerateHandlers {
   /** The curriculum search finished: the document's title and the passages it will use. */
   onMeta?: (meta: { title: string; sources: Source[]; model: string }) => void;
@@ -69,6 +82,8 @@ export interface GenerateHandlers {
   onStatus?: (message: string) => void;
   /** Something to keep on screen beside the document (e.g. the curriculum search was down). */
   onNotice?: (message: string) => void;
+  /** Many teachers at once: how many documents are ahead in the queue (0 = writing starts now). */
+  onQueue?: (ahead: number) => void;
 }
 
 /** Blob -> data: URL. */
@@ -127,6 +142,7 @@ export const teacherAi = {
         else if (event.type === 'text') handlers.onText?.(event.text);
         else if (event.type === 'status') handlers.onStatus?.(event.message);
         else if (event.type === 'notice') handlers.onNotice?.(event.message);
+        else if (event.type === 'queue') handlers.onQueue?.(Number(event.ahead) || 0);
         else if (event.type === 'done') return event.document as EFileDocument;
         else if (event.type === 'error') throw new AiApiError(event.message, 0, event.code);
       }
@@ -154,6 +170,12 @@ export const teacherAi = {
     call<EFileEntry>('/teacher/efile-file/entries', await teacherToken(), json('POST', entry)),
   efileUpdateEntry: async (id: string, change: Partial<{ section: EFileSectionId; title: string; content: string; date: string }>) =>
     call<EFileEntry>(`/teacher/efile-file/entries/${encodeURIComponent(id)}`, await teacherToken(), json('PUT', change)),
+  /** 3 Individual Work Plan (Ministry format): the AI writes it from the timetable's classes, the calendar, schemes and curriculum. */
+  efileWriteWorkPlan: async (body: WorkPlanRequest) =>
+    call<EFileEntry>('/teacher/efile-file/work-plan', await teacherToken(), json('POST', body)),
+  /** 7 Lesson Grid (Syllabus Analysis Grid) for one class and term, from the official curriculum (and the class's scheme of work). */
+  efileWriteSyllabusGrid: async (body: { subject: string; className: string; level: string; termLabel: string; weeks: number }) =>
+    call<EFileEntry>('/teacher/efile-file/syllabus-grid', await teacherToken(), json('POST', body)),
   efileDeleteEntry: async (id: string) =>
     call<void>(`/teacher/efile-file/entries/${encodeURIComponent(id)}`, await teacherToken(), { method: 'DELETE' }),
 
@@ -177,9 +199,13 @@ export const teacherAi = {
   /** After the lesson: the teacher's answers -> an evaluation statement written by the AI (nothing is saved yet). */
   evaluationDraft: async (id: string, answers: LessonEvaluationAnswers) =>
     (await call<{ statement: string }>(`/teacher/efile/${encodeURIComponent(id)}/evaluation/draft`, await teacherToken(), json('POST', { answers }))).statement,
-  /** Saves the (edited) statement into the lesson plan's Lesson Evaluation section. */
+  /**
+   * Saves the (edited) statement into the lesson plan's Lesson Evaluation section. When the
+   * evaluation shows the lesson did not go well, the AI also writes its remedial work into
+   * 11 (vii) Remedial Work Plan (remedialWork says what happened).
+   */
   evaluationSave: async (id: string, answers: LessonEvaluationAnswers, statement: string) =>
-    call<EFileDocument>(`/teacher/efile/${encodeURIComponent(id)}/evaluation`, await teacherToken(), json('PUT', { answers, statement })),
+    call<EFileDocument & { remedialWork?: RemedialWorkResult }>(`/teacher/efile/${encodeURIComponent(id)}/evaluation`, await teacherToken(), json('PUT', { answers, statement })),
 
   // ── Diagram library ──
   figures: async (filter: { subject?: string; level?: string } = {}) => {

@@ -10,6 +10,7 @@
  * A map starts as a "draft". Only "approved" maps reach teachers, so a reading
  * mistake is fixed in the console before anyone plans a lesson from it.
  */
+import { tidyTopics } from "./tidyTopics.js";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { CurriculumDocument } from "../../types.js";
@@ -189,6 +190,6 @@ export class CurriculumMapService {
     const keys = subjectKeysFor(subject);
     const map = own ?? approved.find((m) => keys.includes(labelKey(m.subject)));
     if (!map) return null;
-    return { subject: map.subject, documentName: map.documentName, topics: structuredClone(map.topics.filter((t) => t.form === form)) };
+    return { subject: map.subject, documentName: map.documentName, topics: tidyTopics(structuredClone(map.topics.filter((t) => t.form === form))) };
   }
 }

@@ -51,7 +51,7 @@ export interface PdfDocumentPart {
 }
 
 export interface PdfSection {
-  /** "Section 7", "10 (iii)": printed on the divider. */
+  /** "Section 8", "11 (iii)": printed on the divider. */
   label: string;
   /** "7.", "iii.": printed in the contents. */
   ref: string;
@@ -129,7 +129,8 @@ export function joinLines(lines: string[]): string {
   return lines.reduce((out, line, k) => {
     if (!k) return line;
     const prev = lines[k - 1].trimEnd();
-    const own = /^\s*(\((?:[a-h]|i{1,3}|iv|vi{0,3}|ix|x)\)|Answer\b|Answers\b)/i.test(line) || /(\]|\b[MAB]\d|\bft|\bcao)\s*$/i.test(prev);
+    // Also a line starting with a "•" condition, and any line after a Markdown line break (two spaces at the end).
+    const own = /^\s*(\((?:[a-h]|i{1,3}|iv|vi{0,3}|ix|x)\)|Answer\b|Answers\b|•)/i.test(line) || /(\]|\b[MAB]\d|\bft|\bcao)\s*$/i.test(prev) || / {2}$/.test(lines[k - 1]);
     return `${out}${own ? ' <br>' : ''} ${line}`;
   }, '');
 }

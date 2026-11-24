@@ -61,13 +61,17 @@ const MATHS = `Set the questions the way the Examinations Council of Zambia (ECZ
 - Say exactly what is wanted: the accuracy ("correct to 3 significant figures", "in its simplest form", "in standard form"), the value of π to use, the units, and "Show your working" where method marks are given.
 - Constructions: "Using a ruler and a pair of compasses only, construct …" then loci ("Within triangle PQR, construct the locus of points which are (i) 6 cm from Q, (ii) equidistant from PR and PQ") and a region to shade; the construction figure goes in the MARKING KEY only.
 ${COMMON}
-- MARKING KEY FOR MATHEMATICS: write the full worked solution in MATHEMATICS, not sentences. One step per line, each step an equation, substitution or expression in TeX, with the mark at the end of the line: M1 for a correct method, A1 for the correct answer that follows it, B1 for an independent correct value. End each part with "Answer: …". Words only where a step needs a reason (a geometry reason such as "(angle at centre = 2 × angle at circumference)", "(alternate segment theorem)") or for a construction ("see Figure n"). Never explain a method in a paragraph. Example:
-  (a) $x = \\dfrac{11 \\pm \\sqrt{(-11)^2 - 4(3)(-1)}}{2(3)}$ M1
-  $x = \\dfrac{11 \\pm \\sqrt{133}}{6}$ M1
-  Answer: $x = 3.76$ or $x = -0.09$ A1 A1
-  Graphs, regions, transformations, Venn diagrams and constructions the learner draws go in the key as complete figures.`;
+- MARKING KEY FOR MATHEMATICS: a full worked solution for every part, set out as in "HOW TO SET OUT A WORKED MARKING KEY": one equation per line with its M1/A1/B1 mark, a geometry reason in brackets where a step needs one, and "**Answer:**" at the end of each part. Never explain a method in a paragraph. Graphs, regions, transformations, Venn diagrams and constructions the learner draws are answered with a complete figure of the correct answer.`;
 
-/** Chemistry, Physics and Integrated Science. */
+/** Physics (5054): calculations from a formula, graphs from experiments, ray and circuit diagrams. */
+const PHYSICS = `Set the questions the way the Examinations Council of Zambia (ECZ) sets Physics:
+- Open structured questions with an experiment, a set of readings, a figure or a real Zambian context (Kariba and Kafue Gorge hydro-electric power, solar water heaters, a minibus accelerating on the Great East Road, a copper smelter). No business scenarios.
+- Command words: State / Name [1 per point]; Define [1]–[2]; Explain [2]; Describe an experiment [3]–[5] (apparatus, readings, how the result is found); Calculate [2]–[4] (formula, substitution, answer with units); Draw / Complete a ray diagram, circuit diagram or graph [2]–[4]; Plot a graph from a table of readings, then use it [4]–[6].
+- Give every quantity a value and a unit; state g = 10 N/kg (or m/s²) and other constants where needed; keep numbers that work out to sensible answers.
+${COMMON}
+- MARKING KEY FOR PHYSICS: a worked solution for every calculation, set out as in "HOW TO SET OUT A WORKED MARKING KEY": the equation in symbols, the substitution, each step and the answer with its unit, one per line with its M1/A1/B1 mark; "**Answer:**" at the end. Definitions and explanations as marking points ("1 mark each, any two of"). A graph the learner plots is answered by the complete graph as a figure (axes with labels and units, the plotted points, the best-fit line or curve) with the values read from it; a ray or circuit diagram by a complete labelled figure where one can be drawn, otherwise by its marking points.`;
+
+/** Chemistry and Integrated Science. */
 const SCIENCE = `Set the questions the way the Examinations Council of Zambia (ECZ) sets the sciences:
 - Open structured questions with an experiment, a set of results, a figure or a real Zambian context where it fits (copper mining on the Copperbelt, water treatment, fertilisers, solar power). No business scenarios.
 - Command words: State / Name [1 per point]; Explain [2]; Describe [1 per step]; Calculate (show the formula, substitution and answer with units) [2]–[4]; Write a balanced equation (with state symbols where asked) [2]; Draw / Complete a diagram or table [2]–[3].
@@ -81,12 +85,13 @@ const HUMANITIES = `Set the questions the way the Examinations Council of Zambia
 ${COMMON}
 - Marking key: numbered marking points ("any four of: …, 2 marks each: 1 for the point, 1 for the explanation"), more points than the marks so any correct ones score; figures read from data worked out with the values.`;
 
-type StyleFamily = "biology" | "maths" | "science" | "humanities" | "cs";
+type StyleFamily = "biology" | "maths" | "physics" | "science" | "humanities" | "cs";
 const familyFor = (subject: string): StyleFamily => {
   const s = subject.toLowerCase();
   if (/biolog|agric|life science/.test(s)) return "biology";
   if (/math/.test(s)) return "maths";
-  if (/chem|physic|science/.test(s)) return "science";
+  if (/physic/.test(s)) return "physics";
+  if (/chem|science/.test(s)) return "science";
   if (/geograph|history|civic|social studies|religious/.test(s)) return "humanities";
   return "cs";
 };
@@ -96,8 +101,32 @@ export function eczStyleFor(subject: string): string {
   switch (familyFor(subject)) {
     case "biology": return BIOLOGY;
     case "maths": return MATHS;
+    case "physics": return PHYSICS;
     case "science": return SCIENCE;
     case "humanities": return HUMANITIES;
     default: return ECZ_STYLE;
   }
 }
+
+/** Subjects whose marking keys are worked solutions. */
+export const isWorkedSubject = (subject: string) => /math|physic/i.test(subject);
+
+/** How a worked marking key is laid out (used when the paper is written, prompts.ts, and by the key check, keyCheck.ts). */
+export const WORKED_KEY_FORMAT = `HOW TO SET OUT A WORKED MARKING KEY (Mathematics and Physics):
+- One "### Question n" heading per question, then each part on its own line in bold: **(a)**, **(b)**, **(i)**.
+- Under each part, the solution as a column of steps, ONE step per line, each line one TeX expression between single dollar signs, then its marks: M1 (method), A1 (accurate value that follows), B1 (independent mark). Nothing else on the line except, where a geometry step needs it, a short reason in brackets after the maths: "(angles in the same segment)".
+- Start from the formula or the rule, then the substitution, then each simplification, then the value: never skip from the question to the answer.
+- Keep the units inside the maths: $v = 12\\ \\text{m s}^{-1}$, $A = 41.4\\ \\text{cm}^2$.
+- End each part with a line "**Answer:** $…$ " and its total marks in brackets, e.g. **Answer:** $x = 3.76$ or $x = -0.09$ [3]
+- No sentences that explain the method: show the method as maths. Words only for a geometry reason, an "accept …" alternative (at the end, in italics: *accept 9.3*), or "ft" (follow through).
+- Physics: write the equation in symbols first ($P = \\dfrac{W}{t}$), then the numbers ($P = \\dfrac{1800}{60}$), then the answer with units ($P = 30\\ \\text{W}$). State the quantity being found.
+- A construction, locus, graph, region (inequalities, linear programming), transformation or Venn diagram that the learner must draw is answered by a FIGURE of the complete, correct answer (a \`\`\`figure block), with every construction arc, every locus labelled, the required region hatched and labelled, the plotted curve and the values read from it. Under the figure, the marks as short lines: "B1 base $PQ = 10\\ \\text{cm}$", "B1 locus (i): arc centre $Q$, radius $6\\ \\text{cm}$", "B1 region $T$ shaded"; and any measured value as maths with its tolerance: $PR = 8.9\\ \\text{cm} \\pm 0.2$ B1.
+- Example:
+### Question 3
+**(a)**
+$PR^2 = PQ^2 + QR^2 - 2(PQ)(QR)\\cos Q$ M1
+$PR^2 = 12^2 + 9^2 - 2(12)(9)\\cos 50^\\circ$ M1
+$PR^2 = 225 - 138.84 = 86.16$
+$PR = \\sqrt{86.16} = 9.28\\ \\text{cm}$ A1
+**Answer:** $PR = 9.28\\ \\text{cm}$ [3]`;
+

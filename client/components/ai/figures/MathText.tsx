@@ -17,5 +17,6 @@ export function MathText({ tex, display = false }: { tex: string; display?: bool
     return display
       ? <div className="doc-math-display" data-math dangerouslySetInnerHTML={{ __html: svg }} />
       : <span className="doc-math" data-math dangerouslySetInnerHTML={{ __html: svg }} />;
-  return display ? <div className="doc-math-display doc-math-raw">{tex}</div> : <span className="doc-math-raw">{tex}</span>;
+  const raw = tex.replace(/^\\displaystyle\s*/, '');
+  return display ? <div className="doc-math-display doc-math-raw">{raw}</div> : <span className="doc-math-raw">{raw}</span>;
 }

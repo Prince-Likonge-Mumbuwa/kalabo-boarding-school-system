@@ -167,7 +167,7 @@ export interface UsageEvent {
  * KEEP IN STEP with EFILE_SECTIONS in client/types/ai.ts.
  */
 export const EFILE_SECTION_IDS = [
-  "vision", "mission", "workPlan", "timetable", "classList", "syllabus",
+  "vision", "mission", "workPlan", "timetable", "classList", "syllabus", "lessonGrid",
   "schemesOfWork", "lessonPlans", "recordsOfWork", "assessmentRecords",
   "homework", "progressChart", "questionSamples", "markingKeys", "scriptSamples", "analysisSheet", "remedialPlan", "miscellaneous",
 ] as const;
@@ -184,6 +184,8 @@ export interface EFileEntry {
   content: string;
   /** The date it refers to (YYYY-MM-DD), if any. */
   date?: string;
+  /** Remedial work written from a lesson's evaluation: the lesson plan it belongs to. */
+  lessonId?: string;
   createdAt: string;
   updatedAt: string;
 }

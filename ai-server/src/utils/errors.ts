@@ -36,6 +36,8 @@ export function describeProviderError(label: string, model: string, err: unknown
 
   if (status === 401 || status === 403 || /api key not valid|invalid api key|unauthorized/i.test(detail))
     return new AppError(502, `${label} rejected the API key. Check ${keyName} in ai-server/.env.`, "invalid_api_key");
+  if (status === 410 || /end of life|end-of-life|deprecated|retired|no longer (available|supported|served)/i.test(detail))
+    return new AppError(502, `${label}: the model "${model}" has been retired by the provider. Put a current model in NVIDIA_MODEL in ai-server/.env (e.g. nvidia/nemotron-3.5-super-vl-120b-a12b) and restart.`, "unsupported_model");
   if (status === 404 || /model.*not (found|exist)|unknown model/i.test(detail))
     return new AppError(502, `${label} does not recognise the model "${model}", or it is not enabled for your account. Update the model ID in ai-server/.env.`, "unsupported_model");
   // NVIDIA screens every input; some textbook passages (e.g. on reproduction,

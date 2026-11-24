@@ -19,7 +19,7 @@
  */
 import { type FigureExtras, figureGuide } from "./figures.js";
 import type { FeatureKey, RetrievedChunk } from "../../types.js";
-import { eczStyleFor } from "./eczStyle.js";
+import { WORKED_KEY_FORMAT, eczStyleFor, isWorkedSubject } from "./eczStyle.js";
 import { followUpInstructions, type FollowUpKind } from "./followUp.js";
 import { describeSections, type SectionPlan } from "./syllabusContext.js";
 
@@ -57,7 +57,9 @@ STRICT RULES:
 8. When an OFFICIAL SYLLABUS block is given, it is the approved curriculum: use its topic and sub-topic names and codes, and its specific competences and expected standards, exactly as written (never reword or renumber them).
 9. When a TEACHING MODULE block is given, it is the Ministry's approved lesson design: build the lesson from its learning activities, environments, materials, methods, "How to conduct" steps, hook, key terms and content tips, adapted to the class and the time. Do not contradict it.
 10. Set scenarios in real Zambian contexts (a market in Lusaka, a clinic in Chipata, a farm in Mkushi, a school tuck shop), with local names.
-11. Output only the document body, in Markdown: section headings with ## (and ### inside a section); bullet lists with "- "; numbered lists with "1. "; bold with **; tables in Markdown pipe format with a header row; inside a table cell, separate items with <br>. No introduction, no closing remarks, no code fences (except the figure and code blocks an assessment task explicitly allows).`;
+11. Output only the document body, in Markdown: section headings with ## (and ### inside a section); bullet lists with "- "; numbered lists with "1. "; bold with **; tables in Markdown pipe format with a header row; inside a table cell, separate items with <br>. No introduction, no closing remarks, no code fences (except the figure and code blocks an assessment task explicitly allows).
+12. Plan and check everything silently before you write. Your output is the finished document, written once from the first heading to the last: never write notes to yourself, doubts, corrections ("Wait", "Actually", "Let's recalc", "We'll change …"), comments about the figures or their JSON, or a second version. If a number does not work, change the question so that everything agrees, and write only the result.
+13. Never use HTML (no &nbsp;, &emsp; or other entities, no <br> outside table cells) and never indent with spaces: put each part (a), (b) and each sub-part (i), (ii) on its own new line, and write a list of conditions as separate lines ("- T is at most 6 cm from Y").`;
 
 /** What is known besides the form. */
 export interface PromptContext {
@@ -298,7 +300,8 @@ For show-your-working questions: state clearly what must be shown, and leave the
 ${figureGuide(i.subject, i.diagrams, ctx.figures)}
 
 ## Marking Key
-For every question: the correct answer or the acceptable points, and how the marks are awarded (e.g. "1 mark each for any two of ..."; for working, method marks M1 and accuracy marks A1). Mention acceptable alternative answers where they exist.
+${isWorkedSubject(i.subject) ? `A worked solution for every question, set out exactly as below. Every answer must be correct: solve each question fully before writing it down.
+${WORKED_KEY_FORMAT}` : `For every question: the correct answer or the acceptable points, and how the marks are awarded (e.g. "1 mark each for any two of ..."; for working, method marks M1 and accuracy marks A1). Mention acceptable alternative answers where they exist.`}
 
 ## Specification Grid
 A table: Question | Marks | Specific Competence (code) | Learning Objective Tested | Level

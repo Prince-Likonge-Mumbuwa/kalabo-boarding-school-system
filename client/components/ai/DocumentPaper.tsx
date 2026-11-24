@@ -17,13 +17,15 @@
 // file gets each one as a PNG picture packed inside it (Word does not show
 // SVG reliably). Notes marked data-screen-only (what the AI server found when
 // it checked a figure) never print and never go into Word.
-import { forwardRef, useImperativeHandle, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy, FileDown, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DOC_TYPE_LABELS, type GeneratorKey, type Source } from '@/types/ai';
 import { BRAND_NAVY, BRAND_SKY, SCHOOL_LOGO_URL, SCHOOL_MOTTO, SCHOOL_NAME } from './brand';
 import { featureByKey } from './aiFeatures';
 import { Markdown } from './Markdown';
+import { cleanDocument } from './cleanStream';
+import { STREAM_CSS, WritingCaret } from './GenerationStage';
 
 /** The facts printed in the details strip. Missing ones print as a line to fill in by hand. */
 export interface DocHeader {
@@ -99,6 +101,17 @@ export const DOC_CSS = `
 .doc-figure-note{font-style:italic;color:#a16207}
 .doc-math svg{display:inline-block}
 .doc-math-display{text-align:center;margin:10px 0;overflow-x:auto}
+.doc-work{width:100%;border-collapse:collapse;margin:4px 0 12px;border:0}
+.doc-work td{border:0;padding:3px 0;vertical-align:middle}
+.doc-work-math{padding:3px 0 3px 16px}
+.doc-work-step .doc-work-math{border-left:2px solid #d6e0ee}
+.doc-work-marks{width:1%;white-space:nowrap;text-align:right;padding-left:14px!important}
+.doc-mark{display:inline-block;min-width:26px;margin-left:4px;padding:0 6px;border:1px solid #9fb3cf;border-radius:6px;font-size:11px;font-weight:700;line-height:18px;color:${BRAND_NAVY};text-align:center;background:#fff}
+.doc-mark-total{border-color:${BRAND_NAVY};background:#eef3fa}
+.doc-work-label{display:inline-block;font-weight:700;margin-right:10px;color:#111827}
+.doc-work-part td{padding-top:10px}
+.doc-work-answer .doc-work-math{background:#f1f8f3;border-left:3px solid #2f855a;padding:6px 12px;border-radius:0 8px 8px 0}
+.doc-work-answer-label{display:inline-block;font-weight:700;color:#276749;margin-right:10px;text-transform:uppercase;font-size:10.5px;letter-spacing:.06em}
 .doc-math-raw{font-family:Consolas,monospace;font-size:.92em;color:#334155}
 .doc-pre{font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.5;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;margin:8px 0;white-space:pre-wrap}
 .doc-pre code{background:none;padding:0}
@@ -134,14 +147,16 @@ function MetaCell({ label, children }: { label: string; children?: ReactNode }) 
 }
 
 /** The sheet itself: letterhead, details and body (what prints and goes into Word). */
-function Sheet({ header, content, writing }: { header: DocHeader; content: string; writing: boolean }) {
+function Sheet({ header, content, writing, caret }: { header: DocHeader; content: string; writing: boolean; caret?: string }) {
   const kind = featureByKey(header.feature).label;
   const learners = header.learners
     ? <>{header.learners} <span className="muted">(B {header.boys ?? '–'} · G {header.girls ?? '–'})</span></>
     : null;
   const lastLabel = header.feature === 'recordOfWork' ? 'Week ending' : 'Date';
+  // The model's notes to itself and a draft it started again are never shown (cleanStream.ts).
+  const shown = useMemo(() => cleanDocument(content).content, [content]);
   return (
-    <div className="doc-paper">
+    <div className={writing ? 'doc-paper doc-writing' : 'doc-paper'}>
       <table className="doc-letterhead" role="presentation">
         <tbody>
           <tr>
@@ -170,8 +185,8 @@ function Sheet({ header, content, writing }: { header: DocHeader; content: strin
           </tr>
         </tbody>
       </table>
-      <Markdown source={header.feature === 'assessment' ? content : withoutCitations(content)} />
-      {writing && <span className="ml-0.5 inline-block h-4 w-2 animate-pulse rounded-sm bg-blue-600 align-middle" aria-hidden />}
+      <Markdown source={header.feature === 'assessment' ? shown : withoutCitations(shown)} />
+      {writing && <WritingCaret label={caret ?? 'Writing…'} />}
     </div>
   );
 }
@@ -376,10 +391,12 @@ interface DocumentPaperProps {
   sources: Source[];
   /** True while the document is still arriving. */
   writing?: boolean;
+  /** What the pen at the end says while writing (e.g. "Checking every answer in the marking key…"). */
+  caret?: string;
 }
 
 /** The sheet on a shadowed page. The parent can call print() and word() through a ref. */
-export const DocumentPaper = forwardRef<DocumentPaperHandle, DocumentPaperProps>(function DocumentPaper({ header, content, sources, writing = false }, ref) {
+export const DocumentPaper = forwardRef<DocumentPaperHandle, DocumentPaperProps>(function DocumentPaper({ header, content, sources, writing = false, caret }, ref) {
   const sheet = useRef<HTMLDivElement>(null);
   useImperativeHandle(ref, () => ({
     print: () => printSheet(sheet.current!.firstElementChild as HTMLElement, header.title, isLandscape(header.feature)),
@@ -390,7 +407,8 @@ export const DocumentPaper = forwardRef<DocumentPaperHandle, DocumentPaperProps>
     <div className="space-y-3">
       <div className={`mx-auto w-full ${width} rounded-2xl bg-white px-4 py-6 shadow-[0_1px_3px_rgba(16,24,40,0.06),0_12px_32px_-12px_rgba(16,24,40,0.18)] ring-1 ring-gray-200 sm:px-10 sm:py-10`}>
         <style>{DOC_CSS}</style>
-        <div ref={sheet}><Sheet header={header} content={content} writing={writing} /></div>
+        {writing && <style>{STREAM_CSS}</style>}
+        <div ref={sheet}><Sheet header={header} content={content} writing={writing} caret={caret} /></div>
       </div>
       {!writing && <SourcesPanel sources={sources} className={width} />}
     </div>

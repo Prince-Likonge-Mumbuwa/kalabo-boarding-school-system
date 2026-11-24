@@ -11,12 +11,13 @@
 // The AI only rewords what the teacher said (see EVALUATION_SYSTEM in
 // ai-server/src/services/generation/prompts.ts); nothing is saved until Save.
 import { useMemo, useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2, ClipboardCheck, Loader2, Sparkles } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ChipGroup, TextArea } from '@/components/ai/ui';
 import { teacherAi } from '@/services/aiApi';
-import type { EFileDocument, LessonEvaluationAnswers } from '@/types/ai';
+import { efileSection, followUpFor, type EFileDocument, type LessonEvaluationAnswers } from '@/types/ai';
 import { cn } from '@/lib/utils';
 
 const CHALLENGES = ['Time ran out', 'Too few computers', 'Power outage', 'Materials not available', 'Learners lacked prior knowledge', 'Large class size', 'Learners were absent'];
@@ -56,6 +57,7 @@ export function LessonEvaluationDialog({ document, open, onOpenChange, onSaved }
   const [answers, setAnswers] = useState<LessonEvaluationAnswers>(() => ({ ...blank, ...(document.evaluation?.answers ?? {}) }));
   const [statement, setStatement] = useState(document.evaluation?.statement ?? '');
   const [step, setStep] = useState<1 | 2>(1);
+  const queryClient = useQueryClient();
   const [busy, setBusy] = useState<'' | 'writing' | 'saving'>('');
   const [error, setError] = useState('');
   const set = (patch: Partial<LessonEvaluationAnswers>) => setAnswers((a) => ({ ...a, ...patch }));
@@ -74,10 +76,20 @@ export function LessonEvaluationDialog({ document, open, onOpenChange, onSaved }
     }
   };
 
+  // A lesson that did not go well gets its remedial work written by the AI, into 11 (vii) Remedial Work Plan.
+  const advice = followUpFor(answers);
+  const needsRemedial = advice === 'remedial' || advice === 'continuation';
   const save = async () => {
     setBusy('saving'); setError('');
     try {
-      onSaved(await teacherAi.evaluationSave(document.id, answers, statement));
+      const { remedialWork, ...saved } = await teacherAi.evaluationSave(document.id, answers, statement);
+      onSaved(saved);
+      void queryClient.invalidateQueries({ queryKey: ['efile-file'] });
+      if (remedialWork?.status === 'failed') {
+        // The evaluation is saved; saving again retries the remedial work.
+        setError(`Your evaluation is saved, but the remedial work could not be written (${remedialWork.error}). Press Save again to try once more.`);
+        return;
+      }
       onOpenChange(false);
     } catch (err) {
       setError((err as Error).message);
@@ -104,7 +116,7 @@ export function LessonEvaluationDialog({ document, open, onOpenChange, onSaved }
           <DialogDescription className="text-sm text-gray-600">
             {step === 1
               ? 'A few quick answers. The AI turns them into the written evaluation; you check it before it is saved.'
-              : 'Written only from your answers. Edit anything, then save it into the lesson plan.'}
+              : `Written only from your answers. Edit anything, then save it into the lesson plan.${needsRemedial ? ` Your answers show the lesson did not go as planned, so when you save, the AI also writes its remedial work into ${efileSection('remedialPlan').label} ${efileSection('remedialPlan').title}.` : ''}`}
           </DialogDescription>
           <ol className="mt-3 flex gap-2" aria-label="Steps">
             {[1, 2].map((n) => <li key={n} className={cn('h-1.5 flex-1 rounded-full', step >= n ? 'bg-blue-600' : 'bg-gray-200')} />)}
@@ -179,7 +191,8 @@ export function LessonEvaluationDialog({ document, open, onOpenChange, onSaved }
                 {busy === 'writing' ? <Loader2 size={16} className="mr-2 animate-spin" /> : <Sparkles size={16} className="mr-2" />} Write again
               </Button>
               <Button onClick={save} disabled={!!busy || statement.trim().length < 20} className="h-11 rounded-xl bg-emerald-600 px-5 font-semibold hover:bg-emerald-700">
-                {busy === 'saving' ? <Loader2 size={16} className="mr-2 animate-spin" /> : <CheckCircle2 size={16} className="mr-2" />} Save to lesson plan
+                {busy === 'saving' ? <Loader2 size={16} className="mr-2 animate-spin" /> : <CheckCircle2 size={16} className="mr-2" />}
+                {busy === 'saving' ? (needsRemedial ? 'Saving and writing the remedial work…' : 'Saving…') : 'Save to lesson plan'}
               </Button>
             </>
           )}

@@ -11,6 +11,7 @@ import {
 } from '@/types/ai';
 import type { SystemRecord } from '@/services/efileSystemTables';
 import { withoutCitations, type PdfDocumentPart, type PdfSection } from './efilePDF';
+import { cleanDocument } from '@/components/ai/cleanStream';
 
 // ───────────── eFile items → PDF parts ─────────────
 
@@ -28,7 +29,8 @@ export function documentPart(d: EFileDocument): PdfDocumentPart {
         ['Term', i.term], ['Learners', learners], d.feature === 'recordOfWork' ? ['Week ending', i.weekEnding] : ['Date', i.date],
       ],
     },
-    markdown: d.feature === 'assessment' ? d.content : withoutCitations(d.content),
+    // Older documents may still hold the model's notes or a first draft (cleanStream.ts).
+    markdown: d.feature === 'assessment' ? cleanDocument(d.content).content : withoutCitations(cleanDocument(d.content).content),
     landscape: d.feature === 'schemeOfWork',
   };
 }
@@ -37,7 +39,8 @@ export function entryPart(e: EFileEntry, teacher: string): PdfDocumentPart {
   const section = efileSection(e.section);
   const kind = section.entryName ? section.entryName[0].toUpperCase() + section.entryName.slice(1) : section.title;
   // Wide tables (six or more columns) print across the page.
-  const wide = e.content.split('\n').some((l) => l.trim().startsWith('|') && l.split('|').length - 2 >= 6);
+  // The work plan prints landscape, like the Ministry's form.
+  const wide = e.section === 'workPlan' || e.content.split('\n').some((l) => l.trim().startsWith('|') && l.split('|').length - 2 >= 6);
   return {
     letterhead: { school: SCHOOL_NAME, motto: SCHOOL_MOTTO, kind, title: e.title, details: [['Teacher', teacher], ['Date', longDate(e.date)], ['Section', `${section.label}: ${section.title}`]] },
     markdown: e.content,
@@ -51,10 +54,11 @@ const KEY_START = /^##\s+(Marking Key|Rubric)\b/im;
 /** An assessment split for the file: the question paper (Question Samples) or its key (Marking Keys). */
 export function assessmentPart(d: EFileDocument, part: 'questions' | 'key'): PdfDocumentPart | null {
   const whole = documentPart(d);
-  const at = d.content.search(KEY_START);
-  if (part === 'questions') return at < 0 ? whole : { ...whole, markdown: d.content.slice(0, at).trimEnd() };
+  const content = whole.markdown;
+  const at = content.search(KEY_START);
+  if (part === 'questions') return at < 0 ? whole : { ...whole, markdown: content.slice(0, at).trimEnd() };
   if (at < 0) return null;
-  return { ...whole, letterhead: { ...whole.letterhead, kind: 'Marking Key', title: `Marking key: ${d.title}` }, markdown: d.content.slice(at) };
+  return { ...whole, letterhead: { ...whole.letterhead, kind: 'Marking Key', title: `Marking key: ${d.title}` }, markdown: content.slice(at) };
 }
 
 const sortKey = (d: { inputs?: Record<string, string>; date?: string; createdAt: string }) => d.date ?? d.inputs?.date ?? d.createdAt;
@@ -75,7 +79,7 @@ export function scanPart(s: EFileScan, pages: Uint8Array[], teacher: string): Pd
     ? [['Assessment', s.title], ['Category', slotLabel(s.slot)], ['Learner', s.learner], ['Mark', markOf(s)], ['Date', longDate(s.date)], ['Pages', String(s.pages)]]
     : [['Question paper', s.title], ['Set by', teacher], ['Date', longDate(s.date)], ['Pages', String(s.pages)]];
   return {
-    letterhead: { school: SCHOOL_NAME, motto: SCHOOL_MOTTO, kind: script ? 'Marked script' : 'Question paper (scanned)', title, details: [['Teacher', teacher], ['Date', longDate(s.date)], ['Section', script ? '10 (v): Scripts Samples' : '10 (iii): Question Samples']] },
+    letterhead: { school: SCHOOL_NAME, motto: SCHOOL_MOTTO, kind: script ? 'Marked script' : 'Question paper (scanned)', title, details: [['Teacher', teacher], ['Date', longDate(s.date)], ['Section', script ? '11 (v): Scripts Samples' : '11 (iii): Question Samples']] },
     markdown: `| Item | Detail |\n|---|---|\n${rows.filter(([, v]) => v).map(([k, v]) => `| ${k} | ${String(v).replace(/\|/g, '/')} |`).join('\n')}\n\n${script ? 'The marked script follows, as scanned.' : 'The question paper follows, as scanned.'}`,
     scans: pages.map((bytes, n) => ({ bytes, caption: `${title}: page ${n + 1} of ${pages.length}` })),
   };
@@ -97,7 +101,7 @@ export function fileSections(
   extra: { system?: SystemRecord[]; scanPages?: Map<string, Uint8Array[]> } = {},
 ): PdfSection[] {
   const partsOf = (group: EFileSectionInfo) => EFILE_SECTIONS.filter((x) => x.sub && EFILE_SECTIONS.indexOf(x) > EFILE_SECTIONS.indexOf(group));
-  // Asking for section 10 brings its parts with it.
+  // Asking for section 11 brings its parts with it.
   const wanted = only?.flatMap((id) => (efileSection(id).source === 'group' ? [id, ...partsOf(efileSection(id)).map((x) => x.id)] : [id]));
   return EFILE_SECTIONS.filter((s) => !wanted || wanted.includes(s.id)).map((s) => {
     const system = (extra.system ?? []).filter((r) => r.section === s.id).map(systemPart);
