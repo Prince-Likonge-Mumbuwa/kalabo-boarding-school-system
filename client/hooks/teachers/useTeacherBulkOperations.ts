@@ -217,7 +217,8 @@ export const useTeacherBulkOperations = () => {
         throw new Error('Generated PDF is empty');
       }
 
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      // A copy backed by a plain ArrayBuffer, the only kind Blob accepts.
+      const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
