@@ -214,6 +214,54 @@ export interface AiTeacher {
   lastSeenAt: string;
 }
 
+// ── Finances (same shapes as the AI server's FinanceService) ────────────────
+
+export type SchoolTerm = 'Term 1' | 'Term 2' | 'Term 3';
+export interface Voided { at: string; reason: string }
+
+/** A teacher's fee for one term (ZMW). "grant": recorded when access was granted. */
+export interface FeePayment {
+  id: string;
+  teacherUid: string;
+  teacherName: string;
+  teacherEmail: string;
+  term: SchoolTerm;
+  year: number;
+  amount: number;
+  receivedOn: string;
+  recordedAt: string;
+  source: 'grant' | 'manual';
+  reference?: string;
+  note?: string;
+  voided?: Voided;
+}
+
+/** Money paid to a service provider (ZMW). */
+export interface ServicePayment {
+  id: string;
+  paidOn: string;
+  provider: string;
+  description: string;
+  amount: number;
+  reference?: string;
+  recordedAt: string;
+  voided?: Voided;
+}
+
+export interface FinanceView {
+  termFee: number;
+  payments: FeePayment[];
+  expenses: ServicePayment[];
+  summary: {
+    currentTerm: { term: SchoolTerm; year: number };
+    received: number;
+    paidOut: number;
+    balance: number;
+    byTerm: { term: SchoolTerm; year: number; received: number; paidOut: number; teachers: number }[];
+    unpaid: { uid: string; name: string; email: string }[];
+  };
+}
+
 /** The class levels a curriculum document can cover, in teaching order (same list as the AI server). */
 export const LEVELS = ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Grade 8', 'Grade 9', 'Grade 10', 'Grade 11', 'Grade 12'] as const;
 export type Level = (typeof LEVELS)[number];
@@ -279,6 +327,8 @@ export interface SuperAdminOverview {
   documents: CurriculumDocument[];
   maps?: CurriculumMapSummary[];
   modules?: TeachingModuleSummary[];
+  /** Missing from AI servers older than the finances section. */
+  finance?: FinanceView;
   usage: UsageSummary;
   system: {
     nvidiaConfigured: boolean;

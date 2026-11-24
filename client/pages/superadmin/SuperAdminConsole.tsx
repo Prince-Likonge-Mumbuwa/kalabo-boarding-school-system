@@ -16,12 +16,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, BarChart3, LayoutDashboard, Library, ListTree, LogOut, Sparkles, Users } from 'lucide-react';
+import { AlertTriangle, BarChart3, LayoutDashboard, Library, ListTree, LogOut, Sparkles, Users, Wallet } from 'lucide-react';
 import { SCHOOL_LOGO_URL } from '@/components/ai/brand';
 import { Card, Skeleton } from '@/components/ai/ui';
 import { AccessTab } from '@/components/superadmin/AccessTab';
 import { CurriculumTab } from '@/components/superadmin/CurriculumTab';
 import { FeaturesTab } from '@/components/superadmin/FeaturesTab';
+import { FinanceTab } from '@/components/superadmin/FinanceTab';
 import { OverviewTab } from '@/components/superadmin/OverviewTab';
 import { SyllabusTab } from '@/components/superadmin/SyllabusTab';
 import { UsageTab } from '@/components/superadmin/UsageTab';
@@ -37,6 +38,7 @@ const SECTIONS = [
   { id: 'features', label: 'AI features', icon: Sparkles },
   { id: 'access', label: 'Access', icon: Users },
   { id: 'usage', label: 'Usage', icon: BarChart3 },
+  { id: 'finances', label: 'Finances', icon: Wallet },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]['id'];
 
@@ -85,7 +87,8 @@ export default function SuperAdminConsole() {
 
   const waiting = data?.teachers.filter((t) => t.access === 'pending').length ?? 0;
   const drafts = data?.maps?.filter((m) => m.status === 'draft').length ?? 0;
-  const badge = (id: SectionId) => (id === 'access' && waiting > 0 ? waiting : id === 'syllabus' && drafts > 0 ? drafts : null);
+  const unpaid = data?.finance?.summary.unpaid.length ?? 0;
+  const badge = (id: SectionId) => (id === 'access' && waiting > 0 ? waiting : id === 'syllabus' && drafts > 0 ? drafts : id === 'finances' && unpaid > 0 ? unpaid : null);
   const current = SECTIONS.find((s) => s.id === section)!;
 
   let body: ReactNode;
@@ -116,6 +119,7 @@ export default function SuperAdminConsole() {
         {section === 'features' && <FeaturesTab settings={data.settings} />}
         {section === 'access' && <AccessTab teachers={data.teachers} settings={data.settings} />}
         {section === 'usage' && <UsageTab usage={data.usage} teachers={data.teachers} />}
+        {section === 'finances' && <FinanceTab finance={data.finance} />}
       </>
     );
 
