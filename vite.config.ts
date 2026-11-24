@@ -17,6 +17,9 @@ function versionFile(): Plugin {
   };
 }
 
+/** Libraries of the AI document figures (see manualChunks): kept out of the start-up "vendor" file. */
+const LAZY_FIGURE_LIBS = /[\\/]node_modules[\\/](\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?(mermaid|@mermaid-js|langium|chevrotain|@chevrotain|chevrotain-allstar|vscode-[a-z-]+|cytoscape[a-z-]*|layout-base|cose-base|dagre-d3-es|elkjs|khroma|katex|stylis|dayjs|marked|ts-dedent|@braintree|@iconify|@upsetjs|es-toolkit|lodash-es|d3|d3-[a-z-]+|delaunator|robust-predicates|mathjax-full|mj-context-menu|speech-rule-engine|wicked-good-xpath|smiles-drawer|mathjs|complex\.js|decimal\.js|escape-latex|fraction\.js|javascript-natural-sort|seedrandom|tiny-emitter|typed-function|roughjs|points-on-curve|points-on-path|path-data-parser|hachure-fill|topojson-client)[\\/]/;
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
@@ -47,6 +50,11 @@ export default defineConfig(({ mode }) => ({
           // Charts: leave to the bundler so they load only with the pages
           // that draw charts (results analysis).
           if (/[\\/](recharts[a-z-]*|d3-[a-z]+|victory-vendor|internmap|decimal\.js-light|react-smooth|recharts-scale)[\\/]/.test(id)) return;
+          // Figure and maths libraries for AI documents (Mermaid, MathJax,
+          // smiles-drawer, mathjs, map drawing) and everything they bring
+          // with them: several MB, loaded only when a document has figures
+          // or maths. None of them imports React.
+          if (LAZY_FIGURE_LIBS.test(id)) return;
           // Face recognition engine (~4 MB incl. WebAssembly): loaded only
           // when a teacher opens Scan faces / Enrol faces, never at start.
           if (/[\\/]onnxruntime-(web|common)[\\/]/.test(id)) return;

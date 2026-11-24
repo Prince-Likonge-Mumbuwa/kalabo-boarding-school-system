@@ -11,6 +11,7 @@
 const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { requireAdmin } = require('../lib/requireAdmin');
 const { validateZambianNumber } = require('../lib/phone');
 const { formatSMSMessage } = require('../lib/messageFormatter');
 const { dispatchMessage } = require('../lib/dispatch');
@@ -31,6 +32,9 @@ exports.bulkSendSms = onRequest(
   },
   async (req, res) => {
     try {
+      // Only a signed-in administrator may use this (it spends SMS credit / shows guardians' numbers).
+      if (!(await requireAdmin(req, res))) return;
+
       const { classId, term, year } = req.body;
       if (!classId || !term || !year) {
         return res.status(400).json({ success: false, error: 'Missing classId, term, or year' });

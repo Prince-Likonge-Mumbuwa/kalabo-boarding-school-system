@@ -78,7 +78,7 @@ export const useSchoolTeachers = (classId?: string) => {
       return slots.map(slot => ({ slot, authority: engine.resolveAuthority(slot, now) }));
     },
     staleTime: 30 * 1000,
-    refetchInterval: 5 * 60 * 1000,
+    refetchInterval: 15 * 60 * 1000, // whole-school read: teachers change rarely
   });
 
   // ── Assign: single subject ──────────────────────────────────────

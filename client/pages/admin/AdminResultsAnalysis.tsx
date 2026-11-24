@@ -1112,11 +1112,8 @@ export default function AdminResultsAnalysis() {
       const { generateResultsAnalysisPDF } = await import('@/services/pdf/resultsAnalysisPDFLib');
       const pdfBytes = await generateResultsAnalysisPDF(pdfData);
 
-      const arrayBuffer = pdfBytes.buffer.slice(
-        pdfBytes.byteOffset,
-        pdfBytes.byteOffset + pdfBytes.byteLength
-      );
-      const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
+      // A copy backed by a plain ArrayBuffer, the only kind Blob accepts.
+      const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
 
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');

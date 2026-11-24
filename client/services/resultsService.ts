@@ -414,6 +414,9 @@ export const GRADE_SYSTEM = {
  */
 export const normalizeSubjectName = makeSubjectNormalizer(SUBJECT_NORMALIZATION_MAP);
 
+/** The school's standard subject names (one per subject, no aliases), A to Z. Used by the AI curriculum library. */
+export const SCHOOL_SUBJECTS: string[] = [...new Set(Object.values(SUBJECT_NORMALIZATION_MAP))].sort((x, y) => x.localeCompare(y));
+
 /** Is this one of the school's known subjects (a value of the subject list)? */
 const KNOWN_SUBJECTS = new Set(Object.values(SUBJECT_NORMALIZATION_MAP));
 export const isKnownSubject = (name: string): boolean => KNOWN_SUBJECTS.has(name);

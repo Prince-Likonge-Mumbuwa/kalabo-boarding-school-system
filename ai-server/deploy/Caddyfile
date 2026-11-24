@@ -1,0 +1,24 @@
+# Caddy: HTTPS in front of the AI server.
+# {$AI_DOMAIN} is read from the environment (deploy/.env), e.g. ai.kalaboboarding.com.
+# Caddy fetches and renews the certificate for it automatically, as long as the
+# domain's DNS "A" record points at this VPS and ports 80 and 443 are open.
+
+{$AI_DOMAIN} {
+	# Uploads: curriculum PDFs (up to 25 MB) and scanned scripts (up to 12 pages).
+	request_body {
+		max_size 60MB
+	}
+
+	reverse_proxy ai:5050 {
+		# Send each piece of a document to the browser as soon as it is written
+		# (the generators stream their answer), never hold it back in a buffer.
+		flush_interval -1
+	}
+
+	# Basic protections for an API that browsers call.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+}

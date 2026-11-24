@@ -145,7 +145,8 @@ describe('timetable problem', () => {
       departmentOf: (s: string) => (s === 'maths' ? 'Mathematics' : null),
       signoffs: [so],
     });
-    expect(r.noDepartment).toEqual(['silozi']);
+    // The subject's name, as the Readiness panel shows it (not its id).
+    expect(r.noDepartment).toEqual(['Silozi']);
     expect(r.blockers).toEqual([]);
     expect(r.ready).toBe(true);
   });

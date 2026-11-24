@@ -1,0 +1,51 @@
+# The AI server on the VPS: two containers.
+#
+#   caddy  the front door. Gets a free HTTPS certificate for AI_DOMAIN from
+#          Let's Encrypt, renews it by itself, and passes requests to "ai".
+#   ai     the AI server + ChromaDB (built from ../Dockerfile). Not reachable
+#          from the internet directly, only through caddy.
+#
+# Run from this folder (ai-server/deploy):
+#   docker compose up -d --build      start, or rebuild after an update
+#   docker compose logs -f ai         watch the server's messages
+#   docker compose ps                 see whether both are running
+#
+# AI_DOMAIN comes from the file deploy/.env (written by setup-vps.sh).
+
+name: catalyst-ai
+
+services:
+  ai:
+    build: ..
+    restart: unless-stopped
+    env_file: ../.env            # ai-server/.env: keys and settings, never in the image
+    volumes:
+      - ../storage:/app/storage   # ai-server/storage on the VPS: all saved data
+      - ../../public/geo:/app/geo:ro   # the website's map data, read-only
+    expose:
+      - "5050"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [ai]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      AI_DOMAIN: ${AI_DOMAIN:?Set AI_DOMAIN in deploy/.env, e.g. ai.kalaboboarding.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data           # the HTTPS certificates
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  caddy-data:
+  caddy-config:

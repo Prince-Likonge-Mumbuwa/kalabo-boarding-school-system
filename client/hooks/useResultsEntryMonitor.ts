@@ -63,7 +63,7 @@ interface UseResultsEntryMonitorOptions {
   enabled?: boolean;
 }
 
-const AUTHORITY_TICK_MS = 3 * 60 * 1000; // whole-school read: every 3 min, Refresh for now
+const AUTHORITY_TICK_MS = 15 * 60 * 1000; // whole-school read (costs many Firestore reads): every 15 min, Refresh for now
 
 const EXAM_NAMES: Record<ExamType, string> = {
   week4: 'Week 4 Test',
@@ -108,7 +108,7 @@ export const useResultsEntryMonitor = (options: UseResultsEntryMonitorOptions = 
     queryKey: ['results_monitor', term, year, classList.map(c => c.id).join(',')],
     enabled: enabled && !classesLoading && !teachersLoading,
     refetchInterval: enabled ? AUTHORITY_TICK_MS : false,
-    staleTime: 30 * 1000,
+    staleTime: 5 * 60 * 1000,
     queryFn: () => loadMonitorData(term, year, classList, teacherInfo),
   });
 

@@ -44,6 +44,14 @@ const MyTimetable = lazy(() => import("./pages/teacher/MyTimetable"));
 const MyDepartment = lazy(() => import("./pages/teacher/MyDepartment"));
 const TeacherTimetableBuilder = lazy(() => import("./pages/teacher/TimetableBuilderPage"));
 
+// AI Tools (served by the separate AI server in ai-server/, not Firebase)
+const AiTools = lazy(() => import("./pages/teacher/ai/AiTools"));
+const AiFeature = lazy(() => import("./pages/teacher/ai/AiFeature"));
+const EFile = lazy(() => import("./pages/teacher/ai/EFile"));
+const EFileDocument = lazy(() => import("./pages/teacher/ai/EFileDocument"));
+const SuperAdminSignIn = lazy(() => import("./pages/superadmin/SuperAdminSignIn"));
+const SuperAdminConsole = lazy(() => import("./pages/superadmin/SuperAdminConsole"));
+
 // Settings Page (works for both admin and teacher)
 const Settings = lazy(() => import("./pages/Settings"));
 
@@ -243,12 +251,39 @@ const App = () => (
               </ProtectedRoute>
             } />
 
+            {/* AI Tools: lesson plans, schemes of work, assessments, records of work, eFile */}
+            <Route path="/dashboard/teacher/ai" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <AiTools />
+              </ProtectedRoute>
+            } />
+            <Route path="/dashboard/teacher/ai/efile" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <EFile />
+              </ProtectedRoute>
+            } />
+            <Route path="/dashboard/teacher/ai/efile/:id" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <EFileDocument />
+              </ProtectedRoute>
+            } />
+            <Route path="/dashboard/teacher/ai/:feature" element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <AiFeature />
+              </ProtectedRoute>
+            } />
+
             {/* Teacher Settings */}
             <Route path="/dashboard/teacher/settings" element={
               <ProtectedRoute allowedRoles={['teacher']}>
                 <Settings />
               </ProtectedRoute>
             } />
+
+            {/* SuperAdmin (AI features, usage, access). Signs in to the AI server,
+                not Firebase, so these pages do their own sign-in check. */}
+            <Route path="/superadmin" element={<SuperAdminSignIn />} />
+            <Route path="/superadmin/console" element={<SuperAdminConsole />} />
 
             {/* Catch-all route */}
             <Route path="*" element={<NotFound />} />

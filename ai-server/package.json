@@ -1,0 +1,42 @@
+{
+  "name": "kalabo-ai-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n chroma,server -c magenta,cyan \"npm run chroma\" \"npm run dev:server\"",
+    "dev:server": "tsx watch src/index.ts",
+    "chroma": "node scripts/start-chroma.mjs",
+    "start": "tsx src/index.ts",
+    "start:prod": "concurrently --kill-others -n chroma,server \"node scripts/start-chroma.mjs\" \"tsx src/index.ts\"",
+    "create-superadmin": "tsx scripts/create-superadmin.ts",
+    "check-deepinfra": "tsx scripts/check-deepinfra.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "read-module": "tsx scripts/read-module.ts"
+  },
+  "dependencies": {
+    "chromadb": "^3.5.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "jose": "^6.2.17",
+    "mathjs": "^15.2.0",
+    "multer": "^2.5.0",
+    "openai": "^7.57.0",
+    "pdfjs-dist": "^6.5.438",
+    "sharp": "^0.35.5",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^26.6.6",
+    "concurrently": "^10.0.7",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

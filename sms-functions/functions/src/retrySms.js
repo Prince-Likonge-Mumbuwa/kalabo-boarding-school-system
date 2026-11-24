@@ -5,6 +5,7 @@
 const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { requireAdmin } = require('./lib/requireAdmin');
 const { dispatchMessage } = require('./lib/dispatch');
 
 const AT_API_KEY   = defineSecret('AT_API_KEY');
@@ -27,6 +28,9 @@ exports.retrySms = onRequest(
   },
   async (req, res) => {
     try {
+      // Only a signed-in administrator may use this (it spends SMS credit / shows guardians' numbers).
+      if (!(await requireAdmin(req, res))) return;
+
       const { messageId, messageIds } = req.body || {};
 
       let ids = [];

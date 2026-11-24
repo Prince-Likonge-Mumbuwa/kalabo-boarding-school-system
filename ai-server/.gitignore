@@ -1,0 +1,4 @@
+node_modules
+.env
+# Everything the AI server saves: the superAdmin account, curriculum PDFs, settings
+storage

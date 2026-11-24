@@ -15,7 +15,7 @@ beforeEach(() => vi.resetModules());
 
 describe('school logo', () => {
   it('loads the copy bundled with the app and puts it in a PDF', async () => {
-    const fetchMock = vi.fn(async () => reply(png));
+    const fetchMock = vi.fn(async (_url: string) => reply(png));
     vi.stubGlobal('fetch', fetchMock);
     const { embedSchoolLogo, SCHOOL_LOGO_URL } = await import('./schoolLogo');
     const doc = await PDFDocument.create();

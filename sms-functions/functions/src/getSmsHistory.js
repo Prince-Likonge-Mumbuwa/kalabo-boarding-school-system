@@ -4,6 +4,7 @@
 
 const { onRequest } = require('firebase-functions/v2/https');
 const { getFirestore } = require('firebase-admin/firestore');
+const { requireAdmin } = require('./lib/requireAdmin');
 
 const db = getFirestore();
 const MAX_LIMIT = 200;
@@ -12,6 +13,9 @@ exports.getSmsHistory = onRequest(
   { cors: true, invoker: 'public', timeoutSeconds: 120, memory: '512MiB' },
   async (req, res) => {
     try {
+      // Only a signed-in administrator may use this (it spends SMS credit / shows guardians' numbers).
+      if (!(await requireAdmin(req, res))) return;
+
       const {
         limit = 50,
         status,

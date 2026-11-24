@@ -9,6 +9,7 @@
 const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { requireAdmin } = require('../lib/requireAdmin');
 const { resolveStudent } = require('../lib/studentResolver');
 const { validateZambianNumber } = require('../lib/phone');
 const { formatSMSMessage } = require('../lib/messageFormatter');
@@ -28,6 +29,9 @@ exports.sendSingleSms = onRequest(
   },
   async (req, res) => {
     try {
+      // Only a signed-in administrator may use this (it spends SMS credit / shows guardians' numbers).
+      if (!(await requireAdmin(req, res))) return;
+
       const { studentId, term, year } = req.body;
       if (!studentId || !term || !year) {
         return res.status(400).json({

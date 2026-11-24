@@ -1,0 +1,11 @@
+# Kept out of the Docker image: packages are installed fresh inside it, and
+# secrets and data stay on the server's disk (mounted when the container runs).
+node_modules
+.env
+.env.*
+!.env.example
+storage
+tmp
+deploy
+dist
+*.log

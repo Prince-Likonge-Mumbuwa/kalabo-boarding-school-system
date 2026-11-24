@@ -4,7 +4,9 @@ const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 
 // All functions deploy to us-central1
-setGlobalOptions({ region: 'us-central1' });
+// maxInstances caps how many copies of any function may run at once, so a bug or a flood of
+// requests cannot run up a big Google Cloud bill (the free tier is generous for a school this size).
+setGlobalOptions({ region: 'us-central1', maxInstances: 5 });
 
 if (!admin.apps.length) admin.initializeApp();
 
@@ -20,6 +22,10 @@ exports.retryFailedSMSWorker = require('./src/scheduled/retryWorker').retryFaile
 exports.sendAnnouncement = require('./src/http/sendAnnouncement').sendAnnouncement;
 exports.getSmsHistory = require('./src/getSmsHistory').getSmsHistory;
 exports.retrySms     = require('./src/retrySms').retrySms;
+
+// Parent Portal and Sponsor Portal (signed-out visitors; the database is closed to them).
+// Its code is built by `npm run build:portal` into src/portal/portalCore.cjs (committed).
+exports.portal = require('./src/portal/portal').portal;
 
 // ── Attendance ────────────────────────────────────────────────────────
 // src/attendance/triggers.js is not in this folder. Loading it is guarded so
