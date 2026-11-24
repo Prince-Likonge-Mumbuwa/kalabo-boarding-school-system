@@ -38,9 +38,12 @@ export default defineConfig(({ mode }) => ({
         // File names: name.HASH.js. (Changed from name-HASH.js in Oct 2026 so
         // that every file got an address no cache had ever seen: during a
         // broken deploy, caches had saved the app page under the old names.)
-        entryFileNames: "assets/[name].[hash].js",
-        chunkFileNames: "assets/[name].[hash].js",
-        assetFileNames: "assets/[name].[hash][extname]",
+        // ".b" added 24 Nov 2026 for the same reason: during an outage the
+        // Hostinger CDN answered 429 marked "immutable, 1 year", and browsers
+        // kept those errors under the vendor/firebase/css names (white page).
+        entryFileNames: "assets/[name].b.[hash].js",
+        chunkFileNames: "assets/[name].b.[hash].js",
+        assetFileNames: "assets/[name].b.[hash][extname]",
         // Big libraries in their own files: cached by the browser across
         // app updates, and PDF code is only downloaded when a PDF is made.
         manualChunks(id) {
