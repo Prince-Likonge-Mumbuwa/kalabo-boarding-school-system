@@ -32,6 +32,68 @@ export interface TeacherRecord {
   lastSeenAt: string;
 }
 
+// ── Finances (storage/finance.json, see FinanceService) ─────────────────────
+
+export type SchoolTerm = "Term 1" | "Term 2" | "Term 3";
+
+/** An entry taken out of the totals. It stays in the books with the reason. */
+export interface Voided { at: string; reason: string }
+
+/** A teacher's fee for one term. All amounts are ZMW. */
+export interface FeePayment {
+  id: string;
+  teacherUid: string;
+  teacherName: string;
+  teacherEmail: string;
+  term: SchoolTerm;
+  year: number;
+  amount: number;
+  receivedOn: string; // YYYY-MM-DD
+  recordedAt: string;
+  /** "grant": recorded when access was granted; "manual": entered by the superAdmin. */
+  source: "grant" | "manual";
+  reference?: string; // receipt, mobile money or bank reference
+  note?: string;
+  voided?: Voided;
+}
+
+/** Money paid to a service the system runs on (DeepInfra, Hostinger, the domain ...). ZMW. */
+export interface ServicePayment {
+  id: string;
+  paidOn: string; // YYYY-MM-DD
+  provider: string;
+  description: string;
+  amount: number;
+  reference?: string;
+  recordedAt: string;
+  voided?: Voided;
+}
+
+export interface FinanceData {
+  /** The fee for one term, ZMW. */
+  termFee: number;
+  payments: FeePayment[];
+  expenses: ServicePayment[];
+}
+
+export interface FinanceSummary {
+  currentTerm: { term: SchoolTerm; year: number };
+  /** Totals of the entries that are not voided. */
+  received: number;
+  paidOut: number;
+  balance: number;
+  byTerm: { term: SchoolTerm; year: number; received: number; paidOut: number; teachers: number }[];
+  /** Granted teachers with no fee recorded for the current term. */
+  unpaid: { uid: string; name: string; email: string }[];
+}
+
+export interface FinanceView {
+  termFee: number;
+  payments: FeePayment[];
+  expenses: ServicePayment[];
+  summary: FinanceSummary;
+}
+
 /**
  * The class levels a curriculum document can cover, in teaching order.
  * A document covers one level ("Form 2") or a run of them ("Form 1" to "Form 4").

@@ -11,6 +11,7 @@ import { CurriculumMapService } from "./services/curriculum/CurriculumMapService
 import { looksLikeModule } from "./services/curriculum/ModuleParser.js";
 import { TeachingModuleService } from "./services/curriculum/TeachingModuleService.js";
 import { EFileService } from "./services/EFileService.js";
+import { FinanceService } from "./services/FinanceService.js";
 import { FigureLibrary } from "./services/figures/FigureLibrary.js";
 import { VisionService } from "./services/ai/VisionService.js";
 import { GenerationService } from "./services/generation/GenerationService.js";
@@ -41,6 +42,7 @@ export interface Services {
   indexing: IndexingService;
   generation: GenerationService;
   efile: EFileService;
+  finance: FinanceService;
   figures: FigureLibrary;
   vision: VisionService;
 }
@@ -91,6 +93,7 @@ export function createServices(config: AppConfig, overrides: Overrides = {}): Se
     indexing,
     generation,
     efile: new EFileService(config.dataDir),
+    finance: new FinanceService(config.dataDir),
     figures: new FigureLibrary(config.dataDir),
     vision: new VisionService(config),
   };

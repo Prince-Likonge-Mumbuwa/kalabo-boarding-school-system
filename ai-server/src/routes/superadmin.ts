@@ -19,6 +19,13 @@
  *   POST   /curriculum/:id/module read a CDC teaching module again (also done automatically when it is indexed)
  *   GET    /modules/:id           one teaching module, everything that was read from it
  *   PUT    /modules/:id/active    { active: true|false } — switch a teaching module on or off
+ *
+ * Finances (see FinanceService; the books are also in GET /overview):
+ *   POST   /finance/payments              record a teacher's term fee by hand
+ *   POST   /finance/payments/:id/void     { reason } — take a payment out of the totals (it stays listed)
+ *   POST   /finance/expenses              record a payment to a service provider
+ *   POST   /finance/expenses/:id/void     { reason }
+ *   PUT    /finance/fee                   { amount } — the fee for one term (ZMW)
  */
 import fs from "node:fs";
 import { Router } from "express";
@@ -76,7 +83,30 @@ const approveSchema = z.object({ approved: z.boolean() });
 
 const activeSchema = z.object({ active: z.boolean() });
 
-export function superAdminRoutes({ config, superAdmin, settings, access, curriculum, maps, modules, pdf, usage, indexing, store, embedder, generation }: Services): Router {
+// Finances. Amounts are ZMW, at most 2 decimals; dates are YYYY-MM-DD.
+const amountSchema = z.number().positive().max(10_000_000).transform((n) => Math.round(n * 100) / 100);
+const daySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dates look like 2026-11-24");
+const optionalText = (max: number) => z.string().trim().max(max).optional().transform((v) => v || undefined);
+const paymentSchema = z.object({
+  teacherUid: z.string().trim().min(1).max(200),
+  term: z.enum(["Term 1", "Term 2", "Term 3"]),
+  year: z.number().int().min(2020).max(2100),
+  amount: amountSchema.optional(),
+  receivedOn: daySchema.optional(),
+  reference: optionalText(120),
+  note: optionalText(500),
+});
+const expenseSchema = z.object({
+  paidOn: daySchema,
+  provider: z.string().trim().min(1, "who was paid?").max(120),
+  description: z.string().trim().min(1, "what was it for?").max(300),
+  amount: amountSchema,
+  reference: optionalText(120),
+});
+const voidSchema = z.object({ reason: z.string().trim().min(3, "give a short reason").max(300) });
+const feeSchema = z.object({ amount: amountSchema });
+
+export function superAdminRoutes({ config, superAdmin, settings, access, curriculum, maps, modules, pdf, usage, indexing, store, embedder, generation, finance }: Services): Router {
   const router = Router();
   const upload = multer({
     storage: multer.memoryStorage(), // held in memory just long enough to be checked
@@ -96,9 +126,11 @@ export function superAdminRoutes({ config, superAdmin, settings, access, curricu
   router.use(requireSuperAdmin(superAdmin));
 
   router.get("/overview", async (_req, res) => {
+    const teachers = await access.list();
     res.json({
       settings: await settings.get(),
-      teachers: await access.list(),
+      teachers,
+      finance: await finance.view(teachers),
       documents: await curriculum.list(),
       maps: await maps.list(),
       modules: await modules.list(),
@@ -116,8 +148,37 @@ export function superAdminRoutes({ config, superAdmin, settings, access, curricu
     res.json(await settings.update(settingsSchema.parse(req.body)));
   });
 
+  // Granting access counts as the teacher paying the term fee (once per term; see FinanceService).
   router.put("/teachers/:uid", async (req, res) => {
-    res.json(await access.setAccess(String(req.params.uid), accessSchema.parse(req.body).access));
+    const uid = String(req.params.uid);
+    const wanted = accessSchema.parse(req.body).access;
+    const before = (await access.list()).find((t) => t.uid === uid)?.access;
+    const teacher = await access.setAccess(uid, wanted);
+    if (wanted === "granted" && before !== "granted") await finance.recordGrant(teacher);
+    res.json(teacher);
+  });
+
+  router.post("/finance/payments", async (req, res) => {
+    const input = paymentSchema.parse(req.body);
+    const teacher = (await access.list()).find((t) => t.uid === input.teacherUid);
+    if (!teacher) throw new AppError(404, "Teacher not found.", "not_found");
+    res.json(await finance.addPayment({ ...input, teacher }));
+  });
+
+  router.post("/finance/payments/:id/void", async (req, res) => {
+    res.json(await finance.void("payment", idSchema.parse(req.params.id), voidSchema.parse(req.body).reason));
+  });
+
+  router.post("/finance/expenses", async (req, res) => {
+    res.json(await finance.addExpense(expenseSchema.parse(req.body)));
+  });
+
+  router.post("/finance/expenses/:id/void", async (req, res) => {
+    res.json(await finance.void("expense", idSchema.parse(req.params.id), voidSchema.parse(req.body).reason));
+  });
+
+  router.put("/finance/fee", async (req, res) => {
+    res.json({ termFee: await finance.setTermFee(feeSchema.parse(req.body).amount) });
   });
 
   router.post("/curriculum", upload.array("files"), async (req, res) => {

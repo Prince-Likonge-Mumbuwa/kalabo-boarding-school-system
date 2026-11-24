@@ -55,7 +55,7 @@ export function AccessTab({ teachers, settings }: { teachers: AiTeacher[]; setti
 
       <Card padded={false}>
         <div className="p-5 pb-4 sm:p-6 sm:pb-4">
-          <CardTitle title="Teachers" hint="Everyone who has opened AI Tools." />
+          <CardTitle title="Teachers" hint="Everyone who has opened AI Tools. Granting access records the teacher's term fee in Finances (once per term)." />
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="-mx-1 flex gap-1 overflow-x-auto px-1">
               {(['all', 'pending', 'granted', 'revoked'] as const).map((f) => (

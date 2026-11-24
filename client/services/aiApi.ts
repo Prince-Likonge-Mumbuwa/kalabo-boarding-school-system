@@ -6,6 +6,7 @@
 //   - the superAdmin: signs in to the AI server itself and sends that
 //     session token (kept in sessionStorage, so it ends with the browser tab).
 import type {
+  FeePayment, SchoolTerm, ServicePayment,
   AccessState, AiSettings, AiTeacher, ClassCurriculum, CurriculumDocument, CurriculumMap, DocType, EFileDocument,
   EFileEntry, EFileMeta, EFileScan, RemedialWorkResult, EFileSectionId, EFileSummary, FeatureKey, FigureDetails, GeneratorKey, LessonEvaluationAnswers, LibraryFigure, MapTopic, PictureSuggestion, Source, SuperAdminOverview, TeacherAiSession,
 } from '@/types/ai';
@@ -267,6 +268,14 @@ export const superAdminApi = {
     call<AiSettings>('/superadmin/settings', readToken(), json('PUT', patch)),
   setAccess: (uid: string, access: AccessState) =>
     call<AiTeacher>(`/superadmin/teachers/${encodeURIComponent(uid)}`, readToken(), json('PUT', { access })),
+  // Finances (ZMW). Entries are never deleted, only voided with a reason.
+  recordFee: (input: { teacherUid: string; term: SchoolTerm; year: number; amount?: number; receivedOn?: string; reference?: string; note?: string }) =>
+    call<FeePayment>('/superadmin/finance/payments', readToken(), json('POST', input)),
+  recordExpense: (input: { paidOn: string; provider: string; description: string; amount: number; reference?: string }) =>
+    call<ServicePayment>('/superadmin/finance/expenses', readToken(), json('POST', input)),
+  voidFinanceEntry: (kind: 'payment' | 'expense', id: string, reason: string) =>
+    call<unknown>(`/superadmin/finance/${kind === 'payment' ? 'payments' : 'expenses'}/${id}/void`, readToken(), json('POST', { reason })),
+  setTermFee: (amount: number) => call<{ termFee: number }>('/superadmin/finance/fee', readToken(), json('PUT', { amount })),
   uploadCurriculum: (files: File[], labels: { subject: string; levels: string[]; docType: DocType }) => {
     const form = new FormData();
     form.append('subject', labels.subject);
