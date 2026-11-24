@@ -1,7 +1,7 @@
 // @/types/ai.ts — data shapes shared with the AI server (mirror of
 // ai-server/src/types.ts). Keep the two files in step.
 
-export const FEATURE_KEYS = ['lessonPlan', 'schemeOfWork', 'assessment', 'recordOfWork', 'eFile'] as const;
+export const FEATURE_KEYS = ['lessonPlan', 'schemeOfWork', 'assessment', 'recordOfWork', 'learnerNotes', 'eFile'] as const;
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
 
 export interface AiSettings {
@@ -382,7 +382,8 @@ export interface PictureSuggestion {
 export type EFileSectionId =
   | 'vision' | 'mission' | 'workPlan' | 'timetable' | 'classList' | 'syllabus' | 'lessonGrid'
   | 'schemesOfWork' | 'lessonPlans' | 'recordsOfWork' | 'assessmentRecords'
-  | 'homework' | 'progressChart' | 'questionSamples' | 'markingKeys' | 'scriptSamples' | 'analysisSheet' | 'remedialPlan' | 'miscellaneous';
+  | 'homework' | 'progressChart' | 'questionSamples' | 'markingKeys' | 'scriptSamples' | 'analysisSheet' | 'remedialPlan' | 'miscellaneous'
+  | 'learnerNotes';
 
 /** What happened to the remedial work when an evaluation was saved (AI server, PUT /efile/:id/evaluation). */
 export type RemedialWorkResult =
@@ -546,6 +547,8 @@ export const EFILE_SECTIONS: EFileSectionInfo[] = [
     description: 'Anything else for the file: circulars, CPD (TGM / SBCPD) records, lesson observation reports, notices.',
     template: '## ________\n| Item | Detail |\n|---|---|\n| Date | |\n| Subject | |\n| Details | |',
   },
+  // Not one of the Ministry's sections: kept after them so the file's numbering stays as on the official form.
+  { id: 'learnerNotes', ref: '12', label: 'Section 12', title: 'Learner Notes', source: 'ai', feature: 'learnerNotes', description: 'Class notes given to learners, by sub-topic or whole topic, with their practice exercises.' },
 ];
 
 export const efileSection = (id: EFileSectionId) => EFILE_SECTIONS.find((s) => s.id === id)!;

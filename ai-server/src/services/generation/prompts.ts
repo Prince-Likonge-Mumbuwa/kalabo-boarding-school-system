@@ -17,7 +17,7 @@
  * Assessment Criteria, Homework, Lesson Evaluation), and the modules'
  * scenario-based assessments with 4-level rubrics.
  */
-import { type FigureExtras, figureGuide } from "./figures.js";
+import { type FigureExtras, figureGuide, notesFigureGuide } from "./figures.js";
 import type { FeatureKey, RetrievedChunk } from "../../types.js";
 import { WORKED_KEY_FORMAT, eczStyleFor, isWorkedSubject } from "./eczStyle.js";
 import { followUpInstructions, type FollowUpKind } from "./followUp.js";
@@ -57,7 +57,7 @@ STRICT RULES:
 8. When an OFFICIAL SYLLABUS block is given, it is the approved curriculum: use its topic and sub-topic names and codes, and its specific competences and expected standards, exactly as written (never reword or renumber them).
 9. When a TEACHING MODULE block is given, it is the Ministry's approved lesson design: build the lesson from its learning activities, environments, materials, methods, "How to conduct" steps, hook, key terms and content tips, adapted to the class and the time. Do not contradict it.
 10. Set scenarios in real Zambian contexts (a market in Lusaka, a clinic in Chipata, a farm in Mkushi, a school tuck shop), with local names.
-11. Output only the document body, in Markdown: section headings with ## (and ### inside a section); bullet lists with "- "; numbered lists with "1. "; bold with **; tables in Markdown pipe format with a header row; inside a table cell, separate items with <br>. No introduction, no closing remarks, no code fences (except the figure and code blocks an assessment task explicitly allows).
+11. Output only the document body, in Markdown: section headings with ## (and ### inside a section); bullet lists with "- "; numbered lists with "1. "; bold with **; tables in Markdown pipe format with a header row; inside a table cell, separate items with <br>. No introduction, no closing remarks, no code fences (except the figure and code blocks an assessment or learner-notes task explicitly allows).
 12. Plan and check everything silently before you write. Your output is the finished document, written once from the first heading to the last: never write notes to yourself, doubts, corrections ("Wait", "Actually", "Let's recalc", "We'll change …"), comments about the figures or their JSON, or a second version. If a number does not work, change the question so that everything agrees, and write only the result.
 13. Never use HTML (no &nbsp;, &emsp; or other entities, no <br> outside table cells) and never indent with spaces: put each part (a), (b) and each sub-part (i), (ii) on its own new line, and write a list of conditions as separate lines ("- T is at most 6 cm from Y").`;
 
@@ -254,7 +254,59 @@ The notes usually come from the teacher's lesson plans, one line per lesson: "da
 
 Do not add lessons, dates, exercises or results that are not in the teacher's notes. Leave unknown cells as "________".`,
   },
+
+  // Notes a teacher hands to learners: one sub-topic (a section) or a whole topic (a chapter).
+  learnerNotes: {
+    fields: ["topic"], // plus subTopic / subTopicCode; no sub-topic means the whole topic
+    searchQuery: (i) => `${i.topic}${i.subTopic ? `: ${i.subTopic}` : ""}. Explanations, definitions, key facts, worked examples, diagrams and everyday examples for learners.`,
+    topK: 14,
+    maxChars: 14000,
+    title: (i) => `Learner notes: ${i.subTopic ? `${i.subTopic} (${i.topic})` : i.topic}`,
+    instructions: (i, ctx) => notesTask(i, ctx),
+  },
 };
+
+function notesTask(i: Inputs, ctx: PromptContext): string {
+  const whole = !i.subTopic;
+  const scope = whole ? `the whole topic "${i.topic}" (a chapter: every sub-topic, in syllabus order)` : `the sub-topic "${i.subTopic}" of the topic "${i.topic}"`;
+  const from = ctx.syllabus ? "the OFFICIAL SYLLABUS block" : "the excerpts";
+  return `Write class notes for LEARNERS on ${scope}. The teacher prints them or shares them with the class; learners study from them on their own.
+
+Subject: ${i.subject}
+Class: ${classOf(i)} (curriculum level: ${i.level})
+Topic: ${i.topic}
+${whole ? "Scope: the whole topic" : `Sub-topic: ${i.subTopic}`}
+
+WHO READS THIS: learners in ${classOf(i)}, not the teacher. Write clearly and simply for their level: short sentences, one idea at a time, everyday Zambian examples (a market in Mongu, a farm in Kalabo, a phone, a bicycle). Put each new term in **bold** the first time it appears and explain it at once. No teaching instructions (no "the teacher will…", no lesson stages, no activities for the teacher to run).
+
+CONTENT: cover every specific competence of the ${whole ? "topic" : "sub-topic"} in ${from}, so that a learner who studies these notes can reach the expected standard. Use the TEACHING MODULE's content tips and key terms where given, and facts from the excerpts. Stay at this class level: do not add content the syllabus leaves for later classes. Explain why and how, not only what. Where a fact is not in the sources and you are not certain of it, mark it "(teacher to confirm)".
+
+Use exactly this layout, starting with the first ## heading:
+
+## Learning Outcomes
+"By the end of these notes you should be able to:" then a bullet list, one per specific competence, in words learners understand.
+
+${whole
+    ? `Then one ## section per sub-topic, in syllabus order, headed with ${ctx.syllabus ? 'its code and name (e.g. "## 2.1.1 Spreadsheets")' : "its name"}, each with ### parts for its main ideas.`
+    : "Then two to five ## sections, one per main idea of the sub-topic, in a sensible teaching order, with ### parts where helpful."}
+In these sections: explanations, definitions, examples, step-by-step worked examples (show every step), comparison tables where things are compared, and figures where a picture helps. Write all maths and units with TeX between $…$, and chemical formulae and equations with \\ce{…}.
+
+## Key Terms
+A table: Term | Meaning. Every bold term from the notes, in the order they appear.
+
+## Summary
+Five to eight bullet points: the main things to remember.
+
+## Practice Exercise
+Six to ten numbered questions on these notes, from easy to harder: recall, explain, and apply to a Zambian situation${/math|physic|chem/i.test(i.subject) ? ", with calculations" : ""}. These are practice questions, not a test: write no marks (nothing like "[1]" or "[2 marks]") and no answer lines.
+
+## Answers (Teacher's Copy)
+The answer to every Practice Exercise question, numbered the same; working shown step by step for calculations. This section is printed on its own page so the teacher can keep it back.
+
+LENGTH: ${whole ? "about two to three printed pages for each sub-topic" : "about two to four printed pages"} before the Practice Exercise. Complete, but no padding.
+
+${notesFigureGuide(i.subject)}`;
+}
 
 /** Where the learning objectives of a test come from. */
 const objectives = (ctx: PromptContext) =>

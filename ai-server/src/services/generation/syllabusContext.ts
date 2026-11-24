@@ -99,6 +99,28 @@ export function buildSyllabusContext(
     };
   }
 
+  // Learner notes: one sub-topic (a section), or with no sub-topic chosen the whole topic (a chapter).
+  if (feature === "learnerNotes") {
+    if (inputs.subTopic || inputs.subTopicCode) {
+      const found = findSubTopic(map.topics, inputs);
+      if (!found) return null;
+      return {
+        block: `${header(map)}\nTOPIC ${found.topic.code} ${found.topic.name}\n${describeSubTopic(found.sub, "full")}`,
+        searchHint: found.sub.competences.map((c) => c.text).join(". "),
+        topicCodes: [found.topic.code],
+        topics: [{ ...found.topic, subTopics: [found.sub] }],
+      };
+    }
+    const topic = map.topics.find((t) => t.code === inputs.topic || (inputs.topic && norm(t.name) === norm(inputs.topic)));
+    if (!topic) return null;
+    return {
+      block: `${header(map)}\n${describeTopics([topic], "full")}`,
+      searchHint: topic.subTopics.map((s) => s.name).join(", "),
+      topicCodes: [topic.code],
+      topics: [topic],
+    };
+  }
+
   if (feature === "assessment") {
     const chosen = pickTopics(map.topics, inputs);
     if (chosen.length === 0) return null;

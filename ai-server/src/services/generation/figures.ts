@@ -144,6 +144,22 @@ const SUBJECT: Record<Family, string> = {
   general: `Use a figure where reading or interpreting it is the skill being tested: a chart of data, a diagram of a process, a timeline or a map.`,
 };
 
+/**
+ * Figures in learner notes: the same drawing types as assessments, used to
+ * teach rather than to test (parts named in words, not blanked with letters).
+ */
+export function notesFigureGuide(subject: string): string {
+  const fam = familyOf(subject);
+  const extra = fam === "maths" ? `\n\n${MATHS_FIGURES}` : fam === "geography" || fam === "science" || fam === "biology" ? `\n\n${SCENE_FIGURES(fam)}` : "";
+  return `${HOW}${extra}
+
+FIGURES IN LEARNER NOTES (these rules come first; the text above is written for test papers, so where it speaks of questions, letters and the Marking Key, apply it only to the Practice Exercise and its answers):
+- Use 1 to 4 figures where a picture makes the idea clearer: a labelled structure, a process or cycle, a graph, a chart of data, a map, a timeline, a structural formula. Use none if the content is purely verbal. Never draw with characters.
+- Figures in the notes teach: name every part in words (scene "labels" with words, or leave "labels" out for a fully labelled scene); no letters standing for hidden answers and no "blanks".
+- Introduce each figure in the sentence before it ("Figure 1 shows the parts of a flowering plant.") and explain it after.
+- Never write a caption line such as "Figure 1: …" under a figure: the app prints the number and title itself.`;
+}
+
 /** The part of the assessment task about figures. */
 export function figureGuide(subject: string, mode: string | undefined, extras: FigureExtras = {}): string {
   const m = (mode ?? "none").toLowerCase();
