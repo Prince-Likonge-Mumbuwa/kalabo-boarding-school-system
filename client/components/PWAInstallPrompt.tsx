@@ -141,6 +141,9 @@ export function PWAInstallPrompt() {
 
   if (!showPrompt) return null;
 
+  // The superAdmin pages are not part of the installable school app.
+  if (window.location.pathname.startsWith('/superadmin')) return null;
+
   // iOS-specific installation instructions
   if (isIOS) {
     return (
