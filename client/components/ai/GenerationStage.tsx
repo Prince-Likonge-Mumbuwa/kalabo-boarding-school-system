@@ -29,9 +29,12 @@ const OUTLINES: Record<GeneratorKey, string[]> = {
   schemeOfWork: ['Weekly Plan'],
   assessment: ['Paper Details', 'Instructions to Candidates', 'Section', 'Marking Key', 'Specification Grid'],
   recordOfWork: ['Work Covered'],
+  // '*': the notes' own sections, whose headings depend on the topic.
+  learnerNotes: ['Learning Outcomes', '*', 'Key Terms', 'Summary', 'Practice Exercise', 'Answers'],
 };
 const OUTLINE_LABELS: Partial<Record<GeneratorKey, string[]>> = {
   assessment: ['Paper details', 'Instructions to candidates', 'Questions, section by section', 'Marking key', 'Specification grid'],
+  learnerNotes: ['Learning outcomes', 'The notes, section by section', 'Key terms', 'Summary', 'Practice exercise', 'Answers (teacher’s copy)'],
 };
 
 /** How far the document has got: the outline item being written now (by the ## headings so far). */
@@ -39,8 +42,11 @@ export function writingPosition(feature: GeneratorKey, content: string): { index
   const outline = OUTLINES[feature];
   const headings = [...content.matchAll(/^##\s+(.+)$/gm)].map((m) => m[1].trim());
   let index = -1;
+  const any = outline.indexOf('*');
   for (const h of headings) {
-    const k = outline.findIndex((o) => h.toLowerCase().startsWith(o.toLowerCase()));
+    let k = outline.findIndex((o) => o !== '*' && h.toLowerCase().startsWith(o.toLowerCase()));
+    // A heading the outline does not name, after the step before '*': the free-form part.
+    if (k === -1 && any > 0 && index >= any - 1) k = any;
     if (k > index) index = k;
   }
   const last = headings[headings.length - 1] ?? '';

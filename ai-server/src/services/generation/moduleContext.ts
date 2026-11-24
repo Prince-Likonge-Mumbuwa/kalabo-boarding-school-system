@@ -145,6 +145,39 @@ export function assessmentModuleBlock(guides: ModuleGuide[], cbc: "formative" | 
   return `TEACHING MODULE: what learners were taught, activity by activity, and how the Ministry assesses it.${numbering}\n\n${parts.join("\n\n")}`;
 }
 
+/**
+ * Learner notes: the subject knowledge in the module (introductions, key
+ * terms, learning points and content tips), not how to run the lessons.
+ * A whole topic has several sub-topics, so each part is kept short.
+ */
+export function notesModuleBlock(guides: ModuleGuide[]): string {
+  if (!guides.length) return "";
+  const each = guides.length > 1 ? 0.5 : 1; // shorter excerpts when the whole topic is covered
+  const seenTopics = new Set<string>();
+  const parts = guides.map((g) => {
+    const frame = seenTopics.has(g.topic.code)
+      ? ""
+      : [
+          `TOPIC ${g.topic.code}: ${g.topic.name}`,
+          g.topic.overview && `Overview: ${cut(g.topic.overview, 600 * each)}`,
+          g.topic.keyTerms.length && `Key terms:\n${list(g.topic.keyTerms.map((k) => `${k.term}: ${cut(k.meaning, 220)}`))}`,
+        ].filter(Boolean).join("\n");
+    seenTopics.add(g.topic.code);
+    const knowledge = g.sub.activities.flatMap((a) => [
+      ...a.learningPoints.map((p) => `Learning point (${a.title}): ${cut(p, 300)}`),
+      ...(a.contentTip ? [`Content tip (${a.title}): ${cut(a.contentTip.replace(/\n/g, " "), 900 * each)}`] : []),
+    ]);
+    return [
+      frame,
+      `SUB-TOPIC ${g.sub.code}: ${g.sub.name} (module ${pages(g)})`,
+      g.sub.introduction && `Introduction: ${cut(g.sub.introduction, 900 * each)}`,
+      g.sub.expectedStandards.length && `Expected standard: ${g.sub.expectedStandards.join("; ")}`,
+      knowledge.length && `Subject knowledge from the module:\n${list(knowledge)}`,
+    ].filter(Boolean).join("\n");
+  });
+  return `TEACHING MODULE: "${guides[0].title || guides[0].documentName}" (Ministry of Education, Curriculum Development Centre). Its subject knowledge for these sub-topics; base the notes on it, in words learners understand. Use the OFFICIAL SYLLABUS codes, not the module's, if they differ.\n\n${parts.join("\n\n")}`;
+}
+
 export function schemeModuleBlock(guides: ModuleGuide[]): string {
   if (!guides.length) return "";
   const parts = guides.map((g) => {

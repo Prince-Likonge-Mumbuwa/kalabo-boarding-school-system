@@ -17,6 +17,7 @@
 // in through `PdfKit`, so the layout can also run in tests (efilePDF.spec.ts).
 import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFImage, type PDFPage, type RGB } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import { startsTeacherPage } from '@/lib/teacherPage';
 
 // ───────────────────────────── Inputs ─────────────────────────────
 
@@ -80,7 +81,7 @@ export interface PdfFileInfo {
 
 export type Inline = { t: 'text'; s: string; bold?: boolean; italic?: boolean; code?: boolean } | { t: 'math'; tex: string } | { t: 'br' };
 export type Block =
-  | { b: 'h'; level: number; inline: Inline[] }
+  | { b: 'h'; level: number; inline: Inline[]; newPage?: boolean }
   | { b: 'p'; inline: Inline[] }
   | { b: 'list'; ordered: boolean; start: number; items: Inline[][] }
   | { b: 'table'; head: Inline[][] | null; rows: Inline[][][] }
@@ -145,7 +146,7 @@ export function parseBlocks(source: string): Block[] {
     const line = lines[i];
     if (!line.trim()) { i++; continue; }
     const h = /^(#{1,4})\s+(.*)$/.exec(line);
-    if (h) { blocks.push({ b: 'h', level: h[1].length, inline: parseInline(h[2]) }); i++; continue; }
+    if (h) { blocks.push({ b: 'h', level: h[1].length, inline: parseInline(h[2]), newPage: startsTeacherPage(line) }); i++; continue; }
     const open = FENCE.exec(line);
     if (open) {
       const lang = open[1].toLowerCase();
@@ -365,6 +366,7 @@ class Writer {
     for (let k = 0; k < blocks.length; k++) {
       const b = blocks[k];
       if (b.b === 'h') {
+        if (b.newPage) this.newPage(); // learner notes: the answers go on their own page
         const size = b.level === 1 ? 14 : b.level === 2 ? 12.5 : b.level === 3 ? 11.2 : BODY;
         // Never leave a heading alone at the foot of a page.
         this.need(size * 1.6 + 46);

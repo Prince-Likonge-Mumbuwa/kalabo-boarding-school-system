@@ -61,6 +61,9 @@ export default defineConfig(({ mode }) => ({
           // Face recognition engine (~4 MB incl. WebAssembly): loaded only
           // when a teacher opens Scan faces / Enrol faces, never at start.
           if (/[\\/]onnxruntime-(web|common)[\\/]/.test(id)) return;
+          // 3D (three.js and React Three Fiber): only the superAdmin console's
+          // usage chart draws in 3D, so it loads with that chart, never at start.
+          if (/[\\/](three|@react-three|react-reconciler|its-fine|suspend-react|react-use-measure)[\\/]/.test(id)) return;
           // Everything else shared — React itself, the router, icons, UI
           // primitives and small helpers — goes in ONE file. React must not
           // be split into its own file: the router (React file) and the UI

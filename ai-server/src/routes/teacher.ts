@@ -257,7 +257,7 @@ export function teacherRoutes({ config, teacherVerifier, settings, access, usage
           content = more.content;
         }
       }
-      if (feature === "assessment" && hasFigures(content)) {
+      if ((feature === "assessment" || feature === "learnerNotes") && hasFigures(content)) {
         send({ type: "status", message: "Checking diagrams…" });
         const report = await processFigures(content, {
           geo: await loadGeoNames(config.geoDir),

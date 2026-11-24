@@ -3,7 +3,8 @@
 // documents are counted separately because each one is a paid NVIDIA call.
 import { Activity, BarChart3, Sparkles, Users } from 'lucide-react';
 import { AI_FEATURES } from '@/components/ai/aiFeatures';
-import { Card, CardTitle, EmptyState, Stat } from '@/components/ai/ui';
+import { Card, CardTitle, EmptyState } from '@/components/ai/ui';
+import { KpiCard } from './fx';
 import type { AiTeacher, UsageSummary } from '@/types/ai';
 import { cn } from '@/lib/utils';
 
@@ -22,10 +23,10 @@ export function UsageTab({ usage, teachers }: { usage: UsageSummary; teachers: A
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <Stat icon={<Sparkles size={20} />} label="Generated, 30 days" value={usage.generatedLast30Days.toLocaleString()} />
-        <Stat icon={<BarChart3 size={20} />} label="Generated, all time" value={usage.generated.toLocaleString()} />
-        <Stat icon={<Users size={20} />} label="Active teachers" value={usage.byTeacher.length} hint="Used a tool at least once" />
-        <Stat icon={<Activity size={20} />} label="All activity, 30 days" value={usage.last30Days.toLocaleString()} hint="Opening and generating" />
+        <KpiCard tone="sky" icon={<Sparkles size={20} />} label="Generated, 30 days" value={usage.generatedLast30Days} />
+        <KpiCard tone="violet" delay={60} icon={<BarChart3 size={20} />} label="Generated, all time" value={usage.generated} />
+        <KpiCard tone="emerald" delay={120} icon={<Users size={20} />} label="Active teachers" value={usage.byTeacher.length} hint="Used a tool at least once" />
+        <KpiCard tone="amber" delay={180} icon={<Activity size={20} />} label="All activity, 30 days" value={usage.last30Days} hint="Opening and generating" />
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-2">
         <Card>

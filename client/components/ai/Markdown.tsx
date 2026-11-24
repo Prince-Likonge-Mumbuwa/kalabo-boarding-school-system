@@ -16,6 +16,7 @@ import type { ReactNode } from 'react';
 import { Figure } from './figures/Figure';
 import { MathText } from './figures/MathText';
 import { parseFigure } from './figures/spec';
+import { startsTeacherPage } from '@/lib/teacherPage';
 
 /**
  * **bold**, *italic*, `code`, <br> and maths inside one line. Maths is
@@ -145,7 +146,7 @@ export function Markdown({ source }: { source: string }) {
     if (heading) {
       const level = heading[1].length;
       const Tag = (['h2', 'h3', 'h4', 'h5'] as const)[level - 1];
-      blocks.push(<Tag key={key} className={`doc-h${level}`}>{inline(heading[2], key)}</Tag>);
+      blocks.push(<Tag key={key} className={`doc-h${level}${startsTeacherPage(line) ? ' doc-new-page' : ''}`}>{inline(heading[2], key)}</Tag>);
       i++;
       continue;
     }

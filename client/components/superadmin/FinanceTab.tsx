@@ -6,13 +6,16 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowDownCircle, ArrowUpCircle, Download, Receipt, Scale, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardTitle, EmptyState, Field, Pill, Stat, TextInput } from '@/components/ai/ui';
+import { Card, CardTitle, EmptyState, Field, Pill, TextInput } from '@/components/ai/ui';
+import { KpiCard } from './fx';
 import { superAdminApi } from '@/services/aiApi';
 import type { FeePayment, FinanceView, ServicePayment } from '@/types/ai';
 import { cn } from '@/lib/utils';
 import { useOverviewAction } from './useOverviewAction';
 
 const zmw = (n: number) => `ZMW ${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** Headline amounts: whole kwacha without ".00", so they fit on one line. */
+const zmwShort = (n: number) => (Math.round(n * 100) % 100 === 0 ? `ZMW ${Math.round(n).toLocaleString('en-US')}` : zmw(n));
 const day = (ymd: string) => new Date(`${ymd}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 const today = () => {
   const d = new Date();
@@ -98,10 +101,10 @@ export function FinanceTab({ finance }: { finance?: FinanceView }) {
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <Stat icon={<ArrowDownCircle size={20} />} label="Received, all time" value={zmw(summary.received)} hint="Teacher fees" />
-        <Stat icon={<ArrowUpCircle size={20} />} label="Paid to providers" value={zmw(summary.paidOut)} hint="All time" />
-        <Stat icon={<Scale size={20} />} label="Balance on hand" value={<span className={cn(summary.balance < 0 && 'text-red-700')}>{zmw(summary.balance)}</span>} hint="Received minus paid" />
-        <Stat icon={<Wallet size={20} />} label={`Received, ${current}`} value={zmw(thisTerm?.received ?? 0)} hint={`${thisTerm?.teachers ?? 0} teacher${thisTerm?.teachers === 1 ? '' : 's'} paid`} />
+        <KpiCard tone="emerald" icon={<ArrowDownCircle size={20} />} label="Received, all time" value={summary.received} format={zmwShort} hint="Teacher fees" />
+        <KpiCard tone="rose" delay={60} icon={<ArrowUpCircle size={20} />} label="Paid to providers" value={summary.paidOut} format={zmwShort} hint="All time" />
+        <KpiCard tone={summary.balance < 0 ? 'rose' : 'navy'} delay={120} icon={<Scale size={20} />} label="Balance on hand" value={summary.balance} format={zmwShort} hint={summary.balance < 0 ? 'Spent more than received' : 'Received minus paid'} />
+        <KpiCard tone="amber" delay={180} icon={<Wallet size={20} />} label={`Received, ${current}`} value={thisTerm?.received ?? 0} format={zmwShort} hint={`${thisTerm?.teachers ?? 0} teacher${thisTerm?.teachers === 1 ? '' : 's'} paid`} />
       </div>
 
       {summary.unpaid.length > 0 && (

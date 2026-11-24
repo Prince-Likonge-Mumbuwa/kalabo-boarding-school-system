@@ -20,7 +20,7 @@ const num = (name: string, fallback: number) => {
 };
 
 /** The jobs the writer does, and how much thinking and text each needs. */
-export const JOBS = ["lessonPlan", "schemeOfWork", "assessment", "recordOfWork", "keyCheck", "evaluation", "workPlan", "syllabusGrid", "figureRepair", "remedialWork"] as const;
+export const JOBS = ["lessonPlan", "schemeOfWork", "assessment", "recordOfWork", "learnerNotes", "keyCheck", "evaluation", "workPlan", "syllabusGrid", "figureRepair", "remedialWork"] as const;
 export type Job = (typeof JOBS)[number];
 export type Effort = "off" | "low" | "full";
 const JOB_DEFAULTS: Record<Job, { effort: Effort; maxTokens: number; fast: boolean }> = {
@@ -30,6 +30,8 @@ const JOB_DEFAULTS: Record<Job, { effort: Effort; maxTokens: number; fast: boole
   lessonPlan: { effort: "off", maxTokens: 6000, fast: false },
   schemeOfWork: { effort: "off", maxTokens: 9000, fast: false },
   recordOfWork: { effort: "off", maxTokens: 4000, fast: true },
+  // A whole topic is several sub-topics of notes: room for a long document, no thinking needed.
+  learnerNotes: { effort: "off", maxTokens: 16000, fast: false },
   evaluation: { effort: "off", maxTokens: 1200, fast: true },
   remedialWork: { effort: "off", maxTokens: 1800, fast: true },
   workPlan: { effort: "off", maxTokens: 5000, fast: true },

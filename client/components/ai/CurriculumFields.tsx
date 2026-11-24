@@ -26,7 +26,8 @@ const WIDE = 'sm:col-span-2 lg:col-span-1 xl:col-span-2';
 
 // ── Topic + sub-topic ───────────────────────────────────────────────────────
 
-export function TopicPicker({ topics, values, set, disabled }: { topics: MapTopic[]; values: Values; set: SetValues; disabled: boolean }) {
+/** `wholeTopic`: the sub-topic may be left as "Whole topic" (learner notes for a chapter). */
+export function TopicPicker({ topics, values, set, disabled, wholeTopic = false }: { topics: MapTopic[]; values: Values; set: SetValues; disabled: boolean; wholeTopic?: boolean }) {
   const topic = topics.find((t) => t.name === values.topic) ?? topics.find((t) => !t.name && t.code === values.topic);
   const sub = topic?.subTopics.find((s) => s.code === values.subTopicCode);
   return (
@@ -35,7 +36,7 @@ export function TopicPicker({ topics, values, set, disabled }: { topics: MapTopi
         <Select id="ai-topic" required disabled={disabled} value={topic?.code ?? ''}
           onChange={(e) => {
             const t = topics.find((x) => x.code === e.target.value);
-            const only = t?.subTopics.length === 1 ? t.subTopics[0] : undefined;
+            const only = t?.subTopics.length === 1 && !wholeTopic ? t.subTopics[0] : undefined;
             set({ topic: t?.name || t?.code || '', subTopic: only ? only.name || only.code : '', subTopicCode: only?.code ?? '' });
           }}>
           <option value="" disabled>Choose a topic</option>
@@ -43,12 +44,14 @@ export function TopicPicker({ topics, values, set, disabled }: { topics: MapTopi
         </Select>
       </Field>
       <Field label="Sub-topic" htmlFor="ai-subtopic" className={WIDE}>
-        <Select id="ai-subtopic" required disabled={disabled || !topic} value={sub?.code ?? ''}
+        <Select id="ai-subtopic" required={!wholeTopic} disabled={disabled || !topic} value={sub?.code ?? ''}
           onChange={(e) => {
             const s = topic?.subTopics.find((x) => x.code === e.target.value);
             set({ subTopic: s ? s.name || s.code : '', subTopicCode: s?.code ?? '' }); // a sub-topic the syllabus left unnamed is sent by its code
           }}>
-          <option value="" disabled>{topic ? 'Choose a sub-topic' : 'Choose a topic first'}</option>
+          {wholeTopic
+            ? <option value="">{topic ? `Whole topic (all ${topic.subTopics.length} sub-topics)` : 'Choose a topic first'}</option>
+            : <option value="" disabled>{topic ? 'Choose a sub-topic' : 'Choose a topic first'}</option>}
           {topic?.subTopics.map((s) => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
         </Select>
       </Field>

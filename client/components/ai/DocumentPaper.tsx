@@ -92,6 +92,7 @@ export const DOC_CSS = `
 .doc-table th{background:#f1f5f9;color:#334155;font-weight:600;text-align:left;padding:8px 10px;border:1px solid #e2e8f0;vertical-align:bottom}
 .doc-table td{padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top}
 .doc-figure{margin:14px 0 16px;text-align:center;break-inside:avoid;page-break-inside:avoid}
+.doc-new-page{break-before:page;page-break-before:always}
 .doc-figure-art{margin:0 auto;max-width:100%}
 .doc-figure-art svg{width:100%;height:auto;display:block;margin:0 auto}
 .doc-figure-cap{font-family:"Times New Roman",Tinos,serif;font-size:13px;font-weight:600;margin-top:6px;color:#111}
@@ -185,7 +186,7 @@ function Sheet({ header, content, writing, caret }: { header: DocHeader; content
           </tr>
         </tbody>
       </table>
-      <Markdown source={header.feature === 'assessment' ? shown : withoutCitations(shown)} />
+      <Markdown source={header.feature === 'assessment' || header.feature === 'learnerNotes' ? shown : withoutCitations(shown)} />
       {writing && <WritingCaret label={caret ?? 'Writing…'} />}
     </div>
   );

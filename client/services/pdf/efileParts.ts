@@ -30,7 +30,7 @@ export function documentPart(d: EFileDocument): PdfDocumentPart {
       ],
     },
     // Older documents may still hold the model's notes or a first draft (cleanStream.ts).
-    markdown: d.feature === 'assessment' ? cleanDocument(d.content).content : withoutCitations(cleanDocument(d.content).content),
+    markdown: d.feature === 'assessment' || d.feature === 'learnerNotes' ? cleanDocument(d.content).content : withoutCitations(cleanDocument(d.content).content),
     landscape: d.feature === 'schemeOfWork',
   };
 }

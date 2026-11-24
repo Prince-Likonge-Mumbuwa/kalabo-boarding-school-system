@@ -3,7 +3,7 @@
 // which every generator has).
 //
 // The box names must match `fields` in ai-server/src/services/generation/prompts.ts.
-import { BookOpenCheck, CalendarDays, ClipboardList, FileQuestion, FolderOpen, type LucideIcon } from 'lucide-react';
+import { BookOpenCheck, CalendarDays, ClipboardList, FileQuestion, FolderOpen, NotebookPen, type LucideIcon } from 'lucide-react';
 import type { FeatureKey } from '@/types/ai';
 
 export interface AiField {
@@ -63,6 +63,7 @@ const tones = {
   amber: { icon: 'bg-amber-50 text-amber-600 ring-1 ring-inset ring-amber-100', soft: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500' },
   emerald: { icon: 'bg-emerald-50 text-emerald-600 ring-1 ring-inset ring-emerald-100', soft: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
   slate: { icon: 'bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200', soft: 'bg-slate-100', text: 'text-slate-700', dot: 'bg-slate-500' },
+  rose: { icon: 'bg-rose-50 text-rose-600 ring-1 ring-inset ring-rose-100', soft: 'bg-rose-50', text: 'text-rose-700', dot: 'bg-rose-500' },
 } satisfies Record<string, Tone>;
 
 // One period at Kalabo Boarding is 40 minutes.
@@ -142,6 +143,15 @@ export const AI_FEATURES: AiFeatureInfo[] = [
         placeholder: 'Filled in from your lesson plans for this week, or type one lesson per line, e.g.\nMon 18 Jan: SUM and AVERAGE, class exercise',
         hint: 'The AI only formats what is here; it never invents lessons. Add anything the plans do not show (e.g. a lesson missed).',
       },
+    ],
+  },
+  {
+    key: 'learnerNotes', slug: 'learner-notes', label: 'Learner Notes', shelf: 'Learner notes', icon: NotebookPen, tone: tones.rose,
+    description: 'Class notes for learners on one sub-topic or a whole topic, from the syllabus and teaching module.',
+    outputs: ['Explanations, examples & diagrams', 'Key terms and summary', 'Practice exercise, answers on a separate page'],
+    fields: [
+      { name: 'topic', label: 'Topic', kind: 'topic', placeholder: 'e.g. Spreadsheets' },
+      { name: 'subTopic', label: 'Sub-topic', kind: 'subTopic', optional: true, placeholder: 'Leave empty for the whole topic', hint: 'Leave empty for notes on the whole topic (a chapter).' },
     ],
   },
   {

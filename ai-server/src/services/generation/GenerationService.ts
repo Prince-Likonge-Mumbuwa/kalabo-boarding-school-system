@@ -25,7 +25,7 @@ import type { CurriculumMapService } from "../curriculum/CurriculumMapService.js
 import { type ModuleGuide, type TeachingModuleService, resolveCurriculum } from "../curriculum/TeachingModuleService.js";
 import { labelKey } from "../rag/DocumentChunker.js";
 import type { RetrievalFocus, RetrievalService } from "../rag/RetrievalService.js";
-import { assessmentModuleBlock, chosenActivities, lessonModuleBlock, moduleReference, schemeModuleBlock } from "./moduleContext.js";
+import { assessmentModuleBlock, chosenActivities, lessonModuleBlock, moduleReference, notesModuleBlock, schemeModuleBlock } from "./moduleContext.js";
 import { buildSyllabusContext, parseSections } from "./syllabusContext.js";
 import type { FigureExtras } from "./figures.js";
 import { GENERATORS, type GeneratorKey, type Inputs, SYSTEM_PROMPT, buildUserMessage, cbcKindOf } from "./prompts.js";
@@ -78,7 +78,7 @@ export class GenerationService {
       const target = syllabus?.topics[0]?.subTopics[0] ?? { code: inputs.subTopicCode, name: inputs.subTopic };
       const guide = await this.modules.guideFor(inputs.subject, inputs.level, { code: target.code, name: target.name || inputs.subTopic }, numbering);
       if (guide) guides = [guide];
-    } else if (this.modules && (feature === "assessment" || feature === "schemeOfWork") && syllabus?.topics.length)
+    } else if (this.modules && (feature === "assessment" || feature === "schemeOfWork" || feature === "learnerNotes") && syllabus?.topics.length)
       guides = await this.modules.guidesForTopics(inputs.subject, inputs.level, syllabus.topics, numbering);
 
     let module: { block: string; reference?: string; activities?: string[]; termPicked?: number } | null = null;
@@ -91,6 +91,7 @@ export class GenerationService {
       };
     } else if (feature === "assessment" && guides.length) module = { block: assessmentModuleBlock(guides, cbcKindOf(inputs)) };
     else if (feature === "schemeOfWork" && guides.length) module = { block: schemeModuleBlock(guides), termPicked: syllabus?.termPicked };
+    else if (feature === "learnerNotes" && guides.length) module = { block: notesModuleBlock(guides) };
     else if (feature === "schemeOfWork" && syllabus?.termPicked) module = { block: "", termPicked: syllabus.termPicked };
 
     // Search first: the module's own pages on these sub-topics, then passages tagged

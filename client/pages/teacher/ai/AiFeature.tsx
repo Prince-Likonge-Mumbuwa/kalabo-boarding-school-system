@@ -275,7 +275,10 @@ function Generator({ feature, session }: { feature: AiFeatureInfo; session: Teac
                 case 'topic':
                   if (subjectOk && curriculum.isLoading) return <Skeleton key={field.name} className="h-[4.5rem] sm:col-span-2 lg:col-span-1 xl:col-span-2" />;
                   // A new sub-topic has other activities: the ticks are cleared.
-                  return map ? <TopicPicker key={field.name} topics={map.topics} values={values} set={(p) => setMany({ ...p, activities: '' })} disabled={busy} /> : typed;
+                  return map ? (
+                    <TopicPicker key={field.name} topics={map.topics} values={values} set={(p) => setMany({ ...p, activities: '' })} disabled={busy}
+                      wholeTopic={feature.fields.some((f) => f.kind === 'subTopic' && f.optional)} />
+                  ) : typed;
                 case 'subTopic':
                   return map || (subjectOk && curriculum.isLoading) ? null : typed;
                 case 'topics':

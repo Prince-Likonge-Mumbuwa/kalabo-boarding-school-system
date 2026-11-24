@@ -5,7 +5,7 @@
  */
 
 /** The AI tools a teacher can be given. The superAdmin switches each on or off. */
-export const FEATURE_KEYS = ["lessonPlan", "schemeOfWork", "assessment", "recordOfWork", "eFile"] as const;
+export const FEATURE_KEYS = ["lessonPlan", "schemeOfWork", "assessment", "recordOfWork", "learnerNotes", "eFile"] as const;
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
 
 export interface AiSettings {
@@ -232,9 +232,10 @@ export const EFILE_SECTION_IDS = [
   "vision", "mission", "workPlan", "timetable", "classList", "syllabus", "lessonGrid",
   "schemesOfWork", "lessonPlans", "recordsOfWork", "assessmentRecords",
   "homework", "progressChart", "questionSamples", "markingKeys", "scriptSamples", "analysisSheet", "remedialPlan", "miscellaneous",
+  "learnerNotes",
 ] as const;
 /** Sections filled by AI documents (or made of parts): teachers' entries never go there. */
-export const EFILE_AI_SECTIONS: readonly string[] = ["schemesOfWork", "lessonPlans", "recordsOfWork", "assessmentRecords", "markingKeys"]; // Question Samples also take the teacher's own papers
+export const EFILE_AI_SECTIONS: readonly string[] = ["schemesOfWork", "lessonPlans", "recordsOfWork", "assessmentRecords", "markingKeys", "learnerNotes"]; // Question Samples also take the teacher's own papers
 export type EFileSectionId = (typeof EFILE_SECTION_IDS)[number];
 
 /** Something the teacher writes into a section of their file (a CPD record, an observation report…). */
